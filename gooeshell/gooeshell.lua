@@ -44,7 +44,9 @@ end
 local prefs = core.preferences(read_json(settings_path))
 local bindings = core.bindings(read_json(shortcuts_path))
 local hosts = {}
-for _, record in ipairs(read_json(hosts_path) or {}) do
+local saved_hosts = read_json(hosts_path)
+if type(saved_hosts) ~= 'table' then saved_hosts = {} end
+for _, record in ipairs(saved_hosts) do
   local host = core.valid_host(record)
   if host then hosts[#hosts + 1] = host end
 end
@@ -77,11 +79,12 @@ local function message(window, pane, title, detail)
     { { id = 'ok', label = detail }, { id = 'close', label = '返回终端' } }, function() end)
 end
 
-local function prompt(window, pane, description, initial, callback)
+local function prompt(window, pane, description, initial, callback, cancel)
   window:perform_action(act.PromptInputLine {
     description = description, initial_value = initial or '', prompt = '> ',
     action = wezterm.action_callback(function(w, p, line)
-      if line ~= nil then callback(w, p, core.trim(line)) end
+      if line ~= nil then callback(w, p, core.trim(line))
+      elseif cancel then cancel(w, p) end
     end),
   }, pane)
 end
@@ -93,11 +96,14 @@ local function persist(window, pane, path, data)
 end
 
 local function font(p)
-  return wezterm.font_with_fallback {
-    { family = p.english_font, weight = p.font_weight },
-    { family = p.chinese_font, scale = p.chinese_scale },
-    'Symbols Nerd Font Mono', 'Noto Color Emoji',
-  }
+  local families = { { family = p.english_font, weight = p.font_weight } }
+  for _, fallback in ipairs { 'Consolas', 'JetBrains Mono' } do
+    if fallback ~= p.english_font then families[#families + 1] = { family = fallback, weight = p.font_weight } end
+  end
+  families[#families + 1] = { family = p.chinese_font, scale = p.chinese_scale }
+  families[#families + 1] = 'Symbols Nerd Font Mono'
+  families[#families + 1] = 'Noto Color Emoji'
+  return wezterm.font_with_fallback(families)
 end
 
 local function set_font_override(window, p)
@@ -358,7 +364,7 @@ show_fonts = function(window, pane, draft, original)
           if not value or value < lower or value > upper then message(w2, p2, '数值范围', '请输入范围内的数字。'); w2:set_config_overrides(original); return end
           draft[key] = value
           font_preview(w2, p2, draft, original)
-        end)
+        end, function(w2) w2:set_config_overrides(original) end)
     elseif id == 'weight' then
       selector(w, p, '英文字重', {
         { id = 'Regular', label = '常规 Regular' }, { id = 'Medium', label = '中等 Medium' }, { id = 'Bold', label = '粗体 Bold' },
@@ -535,7 +541,7 @@ end)
 
 wezterm.on('gui-startup', function(cmd)
   local _, pane, window = wezterm.mux.spawn_window(cmd or {})
-  if prefs.welcome and not (cmd and cmd.args and #cmd.args > 0) then
+  if prefs.welcome and os.getenv('GOOESHELL_NO_WELCOME') ~= '1' and not (cmd and cmd.args and #cmd.args > 0) then
     wezterm.time.call_after(0.25, function()
       local gui = window:gui_window()
       if gui then handlers.menu(gui, pane) end
@@ -598,10 +604,15 @@ if prefs.background_image ~= '' then
   config.window_background_image = prefs.background_image
   config.window_background_image_hsb = { brightness = prefs.background_brightness, saturation = 0.8, hue = 1.0 }
 end
-config.mouse_bindings = {
-  { event = { Up = { streak = 1, button = 'Left' } }, mods = 'NONE',
-    action = prefs.copy_on_select and act.CompleteSelection 'Clipboard' or act.Nop },
-}
+config.mouse_bindings = {}
+for _, mods in ipairs { 'NONE', 'SHIFT', 'ALT', 'SHIFT|ALT' } do
+  for streak = 1, 3 do
+    config.mouse_bindings[#config.mouse_bindings + 1] = {
+      event = { Up = { streak = streak, button = 'Left' } }, mods = mods,
+      action = prefs.copy_on_select and act.CompleteSelection 'Clipboard' or act.Nop,
+    }
+  end
+end
 if prefs.right_click_paste then
   config.mouse_bindings[#config.mouse_bindings + 1] = {
     event = { Down = { streak = 1, button = 'Right' } }, mods = 'NONE', action = act.PasteFrom 'Clipboard',

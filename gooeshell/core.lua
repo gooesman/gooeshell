@@ -61,7 +61,7 @@ function M.valid_host(record)
 end
 
 M.defaults = {
-  english_font = 'JetBrains Mono', chinese_font = 'Microsoft YaHei',
+  english_font = 'DejaVu Sans Mono', chinese_font = 'Microsoft YaHei',
   font_size = 13, chinese_scale = 1.0, font_weight = 'Regular',
   line_height = 1.05, show_tab_bar = true, show_status = true,
   background_image = '', background_brightness = 0.16,
