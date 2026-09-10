@@ -1,51 +1,55 @@
 # gooeshell
 
-Windows 优先的原生 SSH 终端与 SFTP 工作区，基于 WezTerm。
+Windows 优先的图形 SSH 终端与文件工作区。默认纯黑终端，下方是可以收起的本地 / 远程双栏资源管理器。
 
-默认纯黑；字体、快捷键、连接和文件操作尽量保持直接。
+当前图形版源码位于 **[desktop/](desktop/)**，采用 Electron、React、TypeScript、xterm.js WebGL 和 ssh2。SSH 与文件操作在后台 Worker 中执行，终端输出有流量控制。
 
-## 运行
+## 使用
 
-从本仓库 **Actions → gooeshell Windows** 的成功构建下载 `gooeshell-windows-x64`，解压其中的 ZIP 到可写目录，双击 **gooeshell.exe**。
+从本仓库 **Releases** 或 **Actions → gooeshell Windows** 下载 `gooeshell-windows-x64.zip`，完整解压后双击 **gooeshell.exe**，无需安装 Node.js。
 
-首次启动打开操作菜单，可新建 SSH 连接或使用本地终端。连接信息保存在便携目录 `gooeshell/data`，不保存密码。文件面板通过独立 SSH 连接工作，因此首次打开可能需要再次认证。
+点击“新建连接”，填写主机、端口、用户名，选择密码、私钥或 SSH Agent。首次连接会显示 SHA-256 指纹，可仅信任本次或保存。密码和私钥口令只留在当前连接内存中，不写入配置；取消“允许保存服务器指纹”后仅能临时信任。
 
-## 第一版范围
+## 图形界面
 
-- WezTerm 原生终端、中文输入、纯黑背景和字体回退。
-- SSH 连接向导、已保存主机、永久或本次会话的主机指纹记录。
-- 中英文字体选择、字号与窗口布局设置。
-- 快捷键设置与冲突检查；Ctrl+C 保持终端中断语义。
-- 无边框全屏、纯终端布局、文件侧栏。
-- 独立 Rust SFTP 文件面板：目录导航、上传和下载。
+- **终端与文件**：多标签终端、可拖动高度的下方文件区；本地、远程可分别折叠，也可收起整个文件区让终端填满空间。目录、滚动位置与后台传输保留，选中文件时不会移动列表行。
+- **文件传输**：本地与远程目录同时浏览，系统文件选择器上传，双栏之间拖拽上传 / 下载，从 Windows 资源管理器拖入上传。支持目录递归、进度、取消和校验后续传。
+- **右键操作**：打开目录、预览 / 编辑文本、重命名、创建目录、查看和修改权限；`.sh` 可普通运行、给所有者添加执行位后运行，或单次 sudo 运行。
+- **权限解释**：所有者、用户组、其他用户的读 / 写 / 执行复选框，显示八进制权限和含义。默认不递归，不增加 setuid / setgid。
+- **按次 sudo**：普通操作遇到权限不足时，可选择输入 sudo 密码重试。密码不进入命令行、终端历史或配置；本次授权结束后不缓存。
+- **外观与输入**：DejaVu Sans Mono 随包提供；中英文字体、字号、行高、纯黑 / 背景图、UTF-8 / GB18030 / Big5、无边框全屏与纯终端模式。
+- **快捷键**：图形设置页直接捕获键盘按键，也可绑定鼠标中键、右键及侧键；显示冲突和普通单键对终端输入的影响。
 
-快捷键：`Ctrl+Shift+P` 操作菜单，`Ctrl+Shift+E` 文件面板，`F11` 全屏，`Ctrl+Shift+F11` 纯终端，`Ctrl+Shift+C/V` 复制粘贴。以程序内快捷键设置为准。
+默认键位：`Ctrl+Shift+N` 新建连接、`Ctrl+,` 设置、`Ctrl+Shift+E` 收起 / 展开文件区、`F11` 全屏、`Ctrl+Shift+F11` 纯终端、`Ctrl+Shift+C/V` 复制 / 粘贴。显式鼠标绑定优先于“右键粘贴”偏好；文件列表右键保留文件菜单。
 
-这是首个可体验版本。开发中的功能和验证结果记录在 `VALIDATION.md`；不能把目标设计当成已经实现的能力。尚不宣称公网零延迟，也不以渲染技术名称作为性能测试结果。
+## 当前边界
 
-## 构建
+- **sudo 文件能力**：支持目录浏览、文本读写、权限、重命名、新建目录与脚本运行；需要服务器有 Python 3 和 sudo，不安装或驻留远端服务。`requiretty` 策略不支持，明确报错。sudo 大文件传输尚未接入。
+- **续传**：保留 `.gooeshell.part`，续传前逐字节比较全部已有内容，完成后再次核对；校验会增加网络流量。不覆盖已有最终目标。下载发布需要本地文件系统支持硬链接；NTFS 可用。
+- **文本编辑**：UTF-8、最大 2 MiB；大文件仅预览，二进制或非 UTF-8 拒绝编辑。终端编码设置不改变文件编码。
+- **脚本运行**：非交互执行，显示输出和退出码，最长约 60 秒、输出上限 2 MiB；交互式或长期任务请在终端运行。赋执行位成功但运行失败时，权限修改可能已生效。
+- **连接**：直接连接 IP 或域名；当前不读取 OpenSSH 配置别名、ProxyJump 或代理规则。不含本地 PowerShell / CMD 终端。
+- **拖拽**：支持应用内双栏及 Explorer → 远程；远程文件直接拖出到外部 Explorer 尚未支持，可下载到本地栏选择的目录。
+- 命令历史仍使用远程 Shell 的 ↑ / ↓ / Ctrl+R，尚无跨服务器历史库、一键公钥部署或重启后自动恢复传输队列。
+- 输入延迟仍需在实际服务器与网络下对比，不宣称公网零延迟或比 Xshell 更快。
 
-使用 Rust stable 的 MSVC 工具链、Visual Studio C++ Build Tools、Windows SDK 和 Strawberry Perl：
+tmux 已在本机真实 SSH、Linux PTY 环境验证启动、分屏、尺寸变化和连续输出。已修正原始字节转发、鼠标协议输入和重复窗口尺寸通知，启用低延迟 TCP 发送；用户报告的偶发画面停留尚未稳定复现，不将这些验证视为所有环境均已解决。测试详情见 [VALIDATION.md](VALIDATION.md)。
+
+## 开发
+
+需要 Node.js 22：
 
 ```powershell
-git clone --recurse-submodules https://github.com/gooesman/gooeshell.git
-cd gooeshell
-cargo build --locked --release -p wezterm -p wezterm-gui -p gooeshell-launcher -p gooeshell-files
-cargo test --locked --release -p gooeshell-files -p gooeshell-launcher
+git clone https://github.com/gooesman/gooeshell.git
+cd gooeshell/desktop
+npm ci
+npm run dev
 ```
 
-便携包的完整打包步骤见 `.github/workflows/gooeshell-windows.yml`。GitHub Actions 使用 `windows-2025`，保留上游静态 C 运行时设置。
+`npm run build` 完整类型检查并构建；`npm test` 运行测试；`npm run pack` 输出 `desktop/release/win-unpacked/gooeshell.exe`。真实 SFTP 测试使用仅绑定 `127.0.0.1` 的临时服务器，CI 自动启动；Linux helper 在 Ubuntu 上实测。
 
-## 源码结构
+## 来源
 
-- `gooeshell/`：产品设置、交互菜单、启动脚本和配置测试。
-- `gooeshell-launcher/`：原生 Windows 启动入口。
-- `gooeshell-files/`：独立连接的 SFTP 文件面板。
-- `wezterm-gui/`、`term/`、`window/` 等：上游终端、渲染和窗口代码。
-- `DESIGN.md`、`FONT-KEYBOARD.md`：产品设计与功能边界。
+图形版新增代码采用 [MIT](desktop/LICENSE)。DejaVu 字体保留原始许可证；Electron、xterm.js、ssh2 等保留各依赖许可。来源见 [UPSTREAM.md](UPSTREAM.md)。
 
-## 来源与许可
-
-原始 WezTerm 来源、导入提交和第三方说明见 [UPSTREAM.md](UPSTREAM.md)。保留上游 [LICENSE.md](LICENSE.md)、`licenses/` 及各组件许可证。原始项目说明见 [README-UPSTREAM.md](README-UPSTREAM.md)。新增 gooeshell 代码使用 MIT 许可证。
-
-仓库不包含参考软件的字体资源、用户私钥、连接配置、传输文件或本机构建工具。
+仓库根目录保留早期 WezTerm 原生原型，说明见 [README-NATIVE-PROTOTYPE.md](README-NATIVE-PROTOTYPE.md)；它不再是默认图形版构建。旧设计文档记录目标和前期方案，不能视为已完成能力。

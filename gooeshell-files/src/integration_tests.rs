@@ -5,7 +5,7 @@ use crate::{transfer, ui::Ui};
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use ssh2::{HashType, Session, Sftp};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -20,6 +20,7 @@ struct MockTerminal {
     confirmation: bool,
     cancel_next_progress: bool,
     rendered: Vec<String>,
+    scripted_input: VecDeque<InputEvent>,
 }
 
 impl Terminal for MockTerminal {
@@ -61,6 +62,9 @@ impl Terminal for MockTerminal {
         Ok(())
     }
     fn poll_input(&mut self, wait: Option<Duration>) -> termwiz::Result<Option<InputEvent>> {
+        if let Some(input) = self.scripted_input.pop_front() {
+            return Ok(Some(input));
+        }
         let key = if wait.is_some() {
             if !self.cancel_next_progress {
                 return Ok(None);
@@ -81,6 +85,44 @@ impl Terminal for MockTerminal {
     fn waker(&self) -> TerminalWaker {
         panic!("mock terminal has no asynchronous waker")
     }
+}
+
+#[test]
+fn explicit_authentication_choice_and_secret_prompt() -> Result<()> {
+    let key = |key| {
+        InputEvent::Key(KeyEvent {
+            key,
+            modifiers: Modifiers::NONE,
+        })
+    };
+    let mut ui = Ui::new(MockTerminal {
+        scripted_input: VecDeque::from([key(KeyCode::Escape)]),
+        ..Default::default()
+    })?;
+    // No TCP connection exists: cancelling the menu must not start authentication.
+    let session = Session::new()?;
+    assert!(crate::authenticate_interactively(&mut ui, &session, "test-user").is_err());
+    assert!(ui
+        .terminal
+        .rendered
+        .iter()
+        .any(|text| text.contains("K  选择私钥文件")));
+    assert!(ui
+        .terminal
+        .rendered
+        .iter()
+        .any(|text| text.contains("P  使用登录密码")));
+
+    let secret = "fixture-secret-must-not-be-rendered";
+    ui.terminal.scripted_input =
+        VecDeque::from([InputEvent::Paste(secret.to_string()), key(KeyCode::Enter)]);
+    assert_eq!(ui.prompt("私钥口令", "", true)?.as_deref(), Some(secret));
+    assert!(ui
+        .terminal
+        .rendered
+        .iter()
+        .all(|text| !text.contains(secret)));
+    Ok(())
 }
 
 struct Fixture {

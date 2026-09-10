@@ -1,0 +1,11 @@
+import {spawn} from 'node:child_process';
+import {createServer} from 'vite';
+import electron from 'electron';
+const compiler = spawn(process.execPath,['node_modules/typescript/bin/tsc','-p','tsconfig.main.json'],{stdio:'inherit'});
+const code = await new Promise(resolve=>compiler.on('exit',resolve));
+if(code) process.exit(code);
+const server=await createServer(); await server.listen();
+const env={...process.env,GOOESHELL_DEV_URL:'http://127.0.0.1:5173'};
+delete env.ELECTRON_RUN_AS_NODE;
+const app=spawn(electron,['.'],{stdio:'inherit',env});
+app.on('exit',async code=>{await server.close();process.exit(code||0);});

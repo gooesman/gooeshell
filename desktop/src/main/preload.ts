@@ -1,0 +1,21 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { DesktopApi, AppEvent } from '../shared/types';
+const call = (method:string,...args:unknown[]) => ipcRenderer.invoke('gooeshell:call',method,args);
+const api: DesktopApi = {
+  initial:()=>call('initial'),saveProfile:p=>call('saveProfile',p),deleteProfile:id=>call('deleteProfile',id),
+  saveSettings:s=>call('saveSettings',s),connect:r=>call('connect',r),disconnect:id=>call('disconnect',id),
+  confirmHostKey:(id,d)=>call('confirmHostKey',id,d),localList:p=>call('localList',p),remoteList:r=>call('remoteList',r),
+  chooseFiles:o=>call('chooseFiles',o),showInFolder:p=>call('showInFolder',p),transfer:r=>call('transfer',r),
+  cancelTransfer:id=>call('cancelTransfer',id),readFile:r=>call('readFile',r),writeFile:r=>call('writeFile',r),
+  chmod:r=>call('chmod',r),runFile:r=>call('runFile',r),mkdir:r=>call('mkdir',r),rename:r=>call('rename',r),
+  fonts:()=>call('fonts'),backgroundData:p=>call('backgroundData',p),fullscreen:()=>call('fullscreen'),
+  readClipboard:()=>call('readClipboard'),writeClipboard:text=>call('writeClipboard',text),
+  minimize:()=>ipcRenderer.send('gooeshell:window','minimize'),maximize:()=>ipcRenderer.send('gooeshell:window','maximize'),closeWindow:()=>ipcRenderer.send('gooeshell:window','close'),
+  terminalInput:(id,data)=>ipcRenderer.send('gooeshell:terminal','terminalInput',[id,data]),
+  terminalBinaryInput:(id,data)=>ipcRenderer.send('gooeshell:terminal','terminalBinaryInput',[id,data]),
+  terminalResize:(id,cols,rows)=>ipcRenderer.send('gooeshell:terminal','terminalResize',[id,cols,rows]),
+  terminalAck:(id,bytes)=>ipcRenderer.send('gooeshell:terminal','terminalAck',[id,bytes]),
+  pathForFile:file=>webUtils.getPathForFile(file),
+  onEvent:handler=>{ const listener=(_event:unknown,data:AppEvent)=>handler(data); ipcRenderer.on('gooeshell:event',listener);return()=>ipcRenderer.removeListener('gooeshell:event',listener);}
+};
+contextBridge.exposeInMainWorld('gooeshell',api);

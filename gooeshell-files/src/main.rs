@@ -119,6 +119,109 @@ fn verify_host<T: Terminal>(ui: &mut Ui<T>, session: &Session, args: &Args) -> R
     }
 }
 
+fn authenticate_private_key<T: Terminal>(
+    ui: &mut Ui<T>,
+    session: &Session,
+    username: &str,
+    identity: &Path,
+) -> Result<bool> {
+    if !identity.is_file() {
+        bail!("私钥文件不存在或不是普通文件：{}", identity.display());
+    }
+    if session
+        .userauth_pubkey_file(username, None, identity, None)
+        .is_ok()
+    {
+        return Ok(session.authenticated());
+    }
+    let Some(passphrase) = ui.prompt("私钥口令（无回显；Esc 返回）", "", true)? else {
+        return Ok(false);
+    };
+    session
+        .userauth_pubkey_file(username, None, identity, Some(&passphrase))
+        .with_context(|| {
+            format!(
+                "私钥认证失败：{}\n请检查私钥口令，并确认服务器已允许该公钥登录用户 {username}。",
+                identity.display(),
+            )
+        })?;
+    Ok(session.authenticated())
+}
+
+fn suggested_private_key() -> String {
+    // Suggest only one familiar path. Do not enumerate or submit identities.
+    dirs_next::home_dir()
+        .map(|home| home.join(".ssh").join("id_ed25519"))
+        .filter(|path| path.is_file())
+        .map(|path| path.display().to_string())
+        .unwrap_or_default()
+}
+
+fn authenticate_interactively<T: Terminal>(
+    ui: &mut Ui<T>,
+    session: &Session,
+    username: &str,
+) -> Result<()> {
+    loop {
+        ui.draw(
+            "选择文件连接的认证方式",
+            &[
+                (format!("登录用户：{username}"), false),
+                ("SSH Agent 未完成认证，请选择：".into(), false),
+                ("P  使用登录密码".into(), false),
+                ("K  选择私钥文件".into(), false),
+                ("私钥仅在你选择后用于当前连接。".into(), false),
+            ],
+            "P 密码 · K 私钥文件 · Esc 取消",
+        )?;
+        let result = match ui.terminal.poll_input(None)? {
+            Some(InputEvent::Key(KeyEvent {
+                key: KeyCode::Escape,
+                ..
+            })) => {
+                bail!("已取消文件连接认证");
+            }
+            Some(InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('p' | 'P'),
+                ..
+            })) => {
+                let Some(password) = ui.prompt("登录密码（无回显；Esc 返回）", "", true)?
+                else {
+                    continue;
+                };
+                session
+                    .userauth_password(username, &password)
+                    .context("密码认证失败；请确认密码正确且服务器允许密码登录")
+                    .map(|_| session.authenticated())
+            }
+            Some(InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('k' | 'K'),
+                ..
+            })) => {
+                let Some(path) = ui.prompt("私钥文件完整路径", &suggested_private_key(), false)?
+                else {
+                    continue;
+                };
+                let path = path.trim_matches('"');
+                if path.is_empty() {
+                    ui.message(
+                        "私钥路径不能为空",
+                        "请选择 .ssh 目录中的私钥文件，例如 id_ed25519；不要选择 .pub 公钥文件。",
+                    )?;
+                    continue;
+                }
+                authenticate_private_key(ui, session, username, Path::new(path))
+            }
+            _ => continue,
+        };
+        match result {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error) => ui.message("认证未完成", &format!("{error:#}"))?,
+        }
+    }
+}
+
 fn connect<T: Terminal>(ui: &mut Ui<T>, args: &Args) -> Result<(Session, Sftp)> {
     if args.host.trim().is_empty() || args.user.trim().is_empty() || args.port == 0 {
         bail!("主机、用户名不能为空，端口必须有效");
@@ -150,29 +253,13 @@ fn connect<T: Terminal>(ui: &mut Ui<T>, args: &Args) -> Result<(Session, Sftp)> 
     session.handshake().context("SSH 握手失败")?;
     verify_host(ui, &session, args)?;
     if let Some(identity) = &args.identity {
-        if !identity.is_file() {
-            bail!("私钥文件不存在：{}", identity.display())
-        }
-        if session
-            .userauth_pubkey_file(&args.user, None, identity, None)
-            .is_err()
-        {
-            let passphrase = ui
-                .prompt("私钥口令（无回显）", "", true)?
-                .context("已取消认证")?;
-            session
-                .userauth_pubkey_file(&args.user, None, identity, Some(&passphrase))
-                .context("公钥认证失败")?;
+        if !authenticate_private_key(ui, &session, &args.user, identity)? {
+            bail!("已取消私钥认证");
         }
     } else {
         let _ = session.userauth_agent(&args.user);
         if !session.authenticated() {
-            let password = ui
-                .prompt("登录密码（无回显）", "", true)?
-                .context("已取消认证")?;
-            session
-                .userauth_password(&args.user, &password)
-                .context("密码认证失败")?;
+            authenticate_interactively(ui, &session, &args.user)?;
         }
     }
     if !session.authenticated() {

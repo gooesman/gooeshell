@@ -43,13 +43,17 @@ end
 
 local prefs = core.preferences(read_json(settings_path))
 local bindings = core.bindings(read_json(shortcuts_path))
-local hosts = {}
-local saved_hosts = read_json(hosts_path)
-if type(saved_hosts) ~= 'table' then saved_hosts = {} end
-for _, record in ipairs(saved_hosts) do
-  local host = core.valid_host(record)
-  if host then hosts[#hosts + 1] = host end
+local function load_hosts()
+  local result = {}
+  local saved = read_json(hosts_path)
+  if type(saved) ~= 'table' then return result end
+  for _, record in ipairs(saved) do
+    local host = core.valid_host(record)
+    if host then result[#result + 1] = host end
+  end
+  return result
 end
+local hosts = load_hosts()
 
 local function global_map(name)
   return wezterm.GLOBAL['gooeshell.' .. name] or {}
@@ -123,7 +127,8 @@ end
 
 local function save_host(window, pane, host)
   local updated, found = {}, false
-  for _, entry in ipairs(hosts) do
+  -- Other gooeshell windows may have saved a host since this config was loaded.
+  for _, entry in ipairs(load_hosts()) do
     if core.target_label(entry) == core.target_label(host) then updated[#updated + 1] = core.copy(host); found = true
     else updated[#updated + 1] = entry end
   end
@@ -190,6 +195,7 @@ connect = function(window, pane, after)
 end
 
 show_hosts = function(window, pane, after)
+  hosts = load_hosts()
   local choices = { { id = 'new', label = '+ 新建 SSH 连接' } }
   for index, host in ipairs(hosts) do
     choices[#choices + 1] = { id = tostring(index), label = core.target_label(host)
@@ -220,8 +226,10 @@ handlers.manage_hosts = function(window, pane)
     }, function(w2, p2, operation)
       if operation == 'trust' then choose_trust(w2, p2, host, start_ssh)
       elseif operation == 'remove' then
-        local updated = core.copy(hosts)
-        table.remove(updated, index)
+        local updated = {}
+        for _, entry in ipairs(load_hosts()) do
+          if core.target_label(entry) ~= core.target_label(host) then updated[#updated + 1] = entry end
+        end
         if persist(w2, p2, hosts_path, updated) then hosts = updated; show_hosts(w2, p2) end
       end
     end)
@@ -234,6 +242,29 @@ local function pane_by_id(tab, id)
   end
 end
 
+local function leave_zen(window, current_pane)
+  local state = global_map('zen')[tostring(window:window_id())]
+  if not state then return false end
+  local overrides = window:get_config_overrides() or {}
+  local previous = state.ui or {}
+  overrides.enable_tab_bar = previous.enable_tab_bar
+  overrides.window_decorations = previous.window_decorations
+  overrides.window_padding = previous.window_padding
+  -- Restore the tab that entered zen, even if the user has switched tabs since.
+  for _, tab in ipairs(window:mux_window():tabs()) do
+    if tab:tab_id() == state.tab_id then
+      local previous_pane = state.zoomed and pane_by_id(tab, state.pane_id)
+      if previous_pane then previous_pane:activate() end
+      tab:set_zoomed(state.zoomed == true)
+      if previous_pane and current_pane:tab():tab_id() ~= tab:tab_id() then current_pane:activate() end
+      break
+    end
+  end
+  set_global('zen', window:window_id(), nil)
+  window:set_config_overrides(overrides)
+  return true
+end
+
 local function open_files(window, pane, host)
   local executable = bin_dir .. '/gooeshell-files.exe'
   local exists = io.open(executable, 'rb')
@@ -242,6 +273,7 @@ local function open_files(window, pane, host)
   local trust_file = host.known_hosts or known_hosts_for(host)
   if not trust_file then message(window, pane, '需要启动器', '请通过 gooeshell.exe 启动后使用仅本次信任。'); return end
   local ok, err = pcall(function()
+    pane:tab():set_zoomed(false)
     local files = pane:split {
       direction = 'Left', size = 0.38, top_level = true, domain = 'DefaultDomain',
       args = { executable, '--host', host.host, '--user', host.user, '--port', tostring(host.port) },
@@ -257,6 +289,7 @@ local function open_files(window, pane, host)
 end
 
 handlers.files = function(window, pane)
+  local was_zen = leave_zen(window, pane)
   local tab = pane:tab()
   local state = global_map('files')[tostring(tab:tab_id())]
   if state then
@@ -265,7 +298,7 @@ handlers.files = function(window, pane)
     if file_pane and terminal then
       terminal:activate()
       -- Zoom only hides the file pane; active transfers continue in its own process.
-      window:perform_action(act.SetPaneZoomState(not (file_zoomed or terminal_zoomed)), terminal)
+      tab:set_zoomed(not was_zen and not (file_zoomed or terminal_zoomed))
       return
     end
   end
@@ -277,7 +310,7 @@ end
 local function list_fonts()
   local cached = wezterm.GLOBAL['gooeshell.fonts']
   if cached then return cached end
-  local found = { ['JetBrains Mono'] = true, ['Fira Code'] = true, ['Roboto'] = true }
+  local found = { ['DejaVu Sans Mono'] = true, ['JetBrains Mono'] = true, ['Fira Code'] = true, ['Roboto'] = true }
   local ok, stdout = wezterm.run_child_process {
     bin_dir .. '/wezterm.exe', '--config-file', app_dir .. '/gooeshell.lua', 'ls-fonts', '--list-system',
   }
@@ -476,22 +509,25 @@ handlers.next_tab = function(w, p) w:perform_action(act.ActivateTabRelative(1), 
 handlers.previous_tab = function(w, p) w:perform_action(act.ActivateTabRelative(-1), p) end
 handlers.fullscreen = function(w, p) w:perform_action(act.ToggleFullScreen, p) end
 handlers.zen = function(window, pane)
-  local active = global_map('zen')[tostring(window:window_id())]
+  if leave_zen(window, pane) then return end
   local overrides = window:get_config_overrides() or {}
-  if active then
-    overrides.enable_tab_bar, overrides.window_decorations = nil, nil
-    overrides.window_padding = nil
-    window:perform_action(act.SetPaneZoomState(active.zoomed), pane)
-    set_global('zen', window:window_id(), nil)
-  else
-    local zoomed = false
-    for _, info in ipairs(pane:tab():panes_with_info()) do zoomed = zoomed or info.is_zoomed end
-    set_global('zen', window:window_id(), { zoomed = zoomed })
-    overrides.enable_tab_bar = false
-    overrides.window_decorations = 'RESIZE'
-    overrides.window_padding = { left = 4, right = 4, top = 4, bottom = 4 }
-    window:perform_action(act.SetPaneZoomState(true), pane)
+  local tab, zoomed = pane:tab(), false
+  for _, info in ipairs(tab:panes_with_info()) do zoomed = zoomed or info.is_zoomed end
+  set_global('zen', window:window_id(), {
+    zoomed = zoomed, tab_id = tab:tab_id(), pane_id = pane:pane_id(),
+    ui = { enable_tab_bar = overrides.enable_tab_bar, window_decorations = overrides.window_decorations,
+      window_padding = overrides.window_padding },
+  })
+  -- A pure terminal should reveal the shell when invoked from its file companion.
+  local files = global_map('files')[tostring(tab:tab_id())]
+  if files and pane:pane_id() == files.file then
+    local terminal = pane_by_id(tab, files.terminal)
+    if terminal then terminal:activate() end
   end
+  overrides.enable_tab_bar = false
+  overrides.window_decorations = 'RESIZE'
+  overrides.window_padding = { left = 4, right = 4, top = 4, bottom = 4 }
+  tab:set_zoomed(true)
   window:set_config_overrides(overrides)
 end
 
@@ -557,7 +593,7 @@ config.font_dirs = { app_dir .. '/fonts' }
 config.harfbuzz_features = { 'calt=0', 'clig=0', 'liga=0' }
 config.use_ime = true
 config.adjust_window_size_when_changing_font_size = false
-config.front_end = 'WebGpu'
+config.front_end = 'OpenGL'
 config.max_fps = 120
 config.animation_fps = 1
 config.default_cursor_style = 'SteadyBlock'
@@ -580,6 +616,9 @@ config.tab_max_width = 36
 config.tab_bar_at_bottom = false
 config.status_update_interval = 1500
 config.disable_default_key_bindings = true
+-- Match explicit shortcuts by key position: Shift+comma and Ctrl+Alt+letters
+-- must work without depending on the produced character, Caps Lock or the IME.
+config.key_map_preference = 'Physical'
 config.keys = keys
 config.default_prog = { os.getenv('GOOESHELL_DEFAULT_SHELL') or 'powershell.exe', '-NoLogo' }
 config.default_cwd = wezterm.home_dir

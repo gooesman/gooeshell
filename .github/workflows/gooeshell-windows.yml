@@ -1,105 +1,80 @@
 name: gooeshell Windows
-
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'ci/upstream-workflows/**'
-
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/gooeshell-windows.yml'
+      - 'gooeshell-files/tests-support/**'
 permissions:
   contents: read
-
 concurrency:
   group: gooeshell-windows-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  portable:
+  windows:
     runs-on: windows-2025
-    timeout-minutes: 60
-    env:
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: '2'
-      CARGO_PROFILE_RELEASE_DEBUG: '0'
-      CARGO_PROFILE_RELEASE_LTO: 'off'
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '256'
-      CARGO_INCREMENTAL: '0'
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          submodules: recursive
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
         with:
-          shared-key: gooeshell-windows-release
-          cache-on-failure: true
-      - name: Test transfer logic
+          python-version: '3.12'
+      - run: npm ci --no-audit --no-fund
+      - name: SSH, SFTP and permission tests
         shell: pwsh
         run: |
-          $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
-          cargo test --locked --release -p gooeshell-files -p gooeshell-launcher
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build native Windows application
-        shell: pwsh
-        run: |
-          $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
-          cargo build --locked --release -p wezterm -p wezterm-gui -p gooeshell-launcher -p gooeshell-files
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Validate real SFTP roundtrips and recovery
-        shell: pwsh
-        run: |
-          python -m pip install --disable-pip-version-check -r gooeshell-files/tests-support/requirements.txt
+          python -m pip install --disable-pip-version-check -r ../gooeshell-files/tests-support/requirements.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Path test-output -Force | Out-Null
           $ready = Join-Path $pwd 'test-output/sftp.ready'
-          $fixture = Start-Process -FilePath (Get-Command python).Source -WindowStyle Hidden -PassThru -ArgumentList @('gooeshell-files/tests-support/sftp_fixture.py','--root','test-output/sftp','--ready',$ready,'--lifetime','600') -RedirectStandardOutput test-output/server.log -RedirectStandardError test-output/server-error.log
+          $server = Start-Process -FilePath (Get-Command python).Source -WindowStyle Hidden -PassThru -ArgumentList @('../gooeshell-files/tests-support/sftp_fixture.py','--root','test-output/sftp','--ready',$ready,'--lifetime','600') -RedirectStandardOutput test-output/fixture.log -RedirectStandardError test-output/fixture-error.log
           try {
-            for ($i = 0; $i -lt 100 -and -not (Test-Path -LiteralPath $ready); $i++) {
-              if ($fixture.HasExited) { Get-Content test-output/server-error.log; throw 'SFTP fixture exited' }
+            for ($i=0; $i -lt 100 -and -not (Test-Path -LiteralPath $ready); $i++) {
+              if ($server.HasExited) { Get-Content test-output/fixture-error.log; throw 'Fixture failed' }
               Start-Sleep -Milliseconds 100
             }
-            if (-not (Test-Path -LiteralPath $ready)) { throw 'SFTP fixture did not become ready' }
+            if (-not (Test-Path -LiteralPath $ready)) { throw 'Fixture was not ready' }
             $env:GOOESHELL_SFTP_TEST_READY = $ready
-            $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
-            cargo test --locked --release -p gooeshell-files loopback_sftp_roundtrip_and_resume -- --ignored --nocapture --test-threads=1
-            if ($LASTEXITCODE -ne 0) { throw 'SFTP integration test failed' }
-          } finally {
-            New-Item -ItemType File -Path "$ready.stop" -Force | Out-Null
-          }
-      - name: Validate terminal configuration and interactions
+            npm test
+            if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+          } finally { New-Item -ItemType File -Path "$ready.stop" -Force | Out-Null }
+      - name: Build Windows portable application
+        run: npm run pack
+      - name: Bundle portable directory
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path gooeshell/tests/tmp -Force | Out-Null
-          $env:GOOESHELL_DATA_DIR = Join-Path $pwd 'gooeshell/tests/tmp'
-          $result = & target/release/wezterm.exe --config-file gooeshell/tests/runtime_spec.lua show-keys 2>&1 | Out-String
-          Write-Output $result
-          if ($result -notmatch 'PASS: real WezTerm config' -or $result -notmatch 'PASS: 42') { throw 'Lua runtime test did not pass' }
-      - name: Package portable application
-        shell: pwsh
-        run: |
-          $bundle = 'dist/gooeshell-windows-x64'
-          New-Item -ItemType Directory -Path $bundle -Force | Out-Null
-          foreach ($name in @('gooeshell.exe','gooeshell-files.exe','wezterm.exe','wezterm-gui.exe','conpty.dll','OpenConsole.exe','libEGL.dll','libGLESv2.dll')) {
-            Copy-Item -LiteralPath "target/release/$name" -Destination $bundle
-          }
-          Copy-Item -LiteralPath 'assets/windows/mesa' -Destination $bundle -Recurse
-          Copy-Item -LiteralPath 'gooeshell' -Destination $bundle -Recurse
-          # Test fixture state is not part of the portable application.
-          $testState = Join-Path $pwd "$bundle/gooeshell/tests/tmp"
-          $bundleRoot = [IO.Path]::GetFullPath((Join-Path $pwd $bundle))
-          if (Test-Path -LiteralPath $testState) {
-            if (-not [IO.Path]::GetFullPath($testState).StartsWith($bundleRoot + [IO.Path]::DirectorySeparatorChar)) { throw 'Unexpected test-state path' }
-            Remove-Item -LiteralPath $testState -Recurse -Force
-          }
-          Copy-Item -LiteralPath 'licenses' -Destination $bundle -Recurse
-          Copy-Item -LiteralPath 'LICENSE.md','UPSTREAM.md','README.md' -Destination $bundle
-          git rev-parse HEAD | Set-Content "$bundle/BUILD.txt"
-          Compress-Archive -Path "$bundle/*" -DestinationPath 'dist/gooeshell-windows-x64.zip'
+          git rev-parse HEAD | Set-Content release/win-unpacked/BUILD.txt
+          Compress-Archive -Path release/win-unpacked/* -DestinationPath release/gooeshell-windows-x64.zip
+          Get-FileHash release/gooeshell-windows-x64.zip -Algorithm SHA256 | Format-List | Out-File release/SHA256.txt
       - uses: actions/upload-artifact@v4
         with:
           name: gooeshell-windows-x64
-          path: dist/gooeshell-windows-x64.zip
+          path: |
+            desktop/release/gooeshell-windows-x64.zip
+            desktop/release/SHA256.txt
           retention-days: 30
+  linux-helper-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --import tsx --test tests/remote-helper.test.ts tests/store.test.ts tests/local-files-store.test.ts tests/ssh-session.test.ts tests/terminal-flow.test.ts

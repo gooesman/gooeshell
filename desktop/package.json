@@ -1,0 +1,77 @@
+{
+  "name": "gooeshell",
+  "version": "0.2.0-preview.2",
+  "private": true,
+  "description": "Graphical SSH and SFTP workspace for Windows",
+  "author": "gooesman",
+  "license": "MIT",
+  "main": "dist-main/main/main.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.main.json",
+    "build": "npm run build:main && tsc -p tsconfig.json && vite build",
+    "dev": "node scripts/dev.mjs",
+    "start": "electron .",
+    "test": "tsx --test tests/*.test.ts",
+    "pack": "npm run build && electron-builder --win dir --x64"
+  },
+  "dependencies": {
+    "@xterm/xterm": "6.0.0",
+    "@xterm/addon-fit": "latest",
+    "@xterm/addon-search": "latest",
+    "@xterm/addon-webgl": "0.19.0",
+    "iconv-lite": "latest",
+    "lucide-react": "latest",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "ssh2": "1.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/ssh2": "latest",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3",
+    "tsx": "latest",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.0"
+  },
+  "build": {
+    "appId": "com.gooesman.gooeshell",
+    "productName": "gooeshell",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-main/**",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": "dir",
+      "signAndEditExecutable": false
+    },
+    "extraFiles": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE-gooeshell.txt"
+      },
+      {
+        "from": "../UPSTREAM.md",
+        "to": "UPSTREAM.md"
+      },
+      {
+        "from": "../README.md",
+        "to": "README.md"
+      },
+      {
+        "from": "../VALIDATION.md",
+        "to": "VALIDATION.md"
+      }
+    ]
+  }
+}

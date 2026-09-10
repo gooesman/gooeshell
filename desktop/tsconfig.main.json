@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "CommonJS", "moduleResolution": "Node",
+    "strict": true, "esModuleInterop": true, "skipLibCheck": true,
+    "outDir": "dist-main", "rootDir": "src",
+    "lib": ["ES2022", "DOM"], "types": ["node"]
+  },
+  "include": ["src/main", "src/shared"]
+}
