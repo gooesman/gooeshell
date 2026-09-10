@@ -62,7 +62,7 @@ jobs:
           Copy-Item -LiteralPath 'LICENSE.md','UPSTREAM.md','README.md' -Destination $bundle
           git rev-parse HEAD | Set-Content "$bundle/BUILD.txt"
           Compress-Archive -Path "$bundle/*" -DestinationPath 'dist/gooeshell-windows-x64.zip'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: gooeshell-windows-x64
           path: dist/gooeshell-windows-x64.zip
