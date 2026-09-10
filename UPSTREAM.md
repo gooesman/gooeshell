@@ -15,4 +15,6 @@ Original WezTerm executable names are retained inside the portable bundle for co
 
 The DejaVu Sans Mono files in `gooeshell/fonts/` are unmodified files from the official DejaVu 2.37 release. See that directory's README and original license for provenance.
 
+The graphical application bundles DejaVu Sans Mono 2.37, JetBrains Mono 2.304, and IBM Plex Mono with regular and bold faces in `desktop/public/fonts/`. That directory contains the upstream revisions, original licenses, and provenance in its README. System fonts are enumerated from the user's computer and are not redistributed.
+
 The import preserves dependency submodule URLs and commits. Clone with `--recurse-submodules`.

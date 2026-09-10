@@ -6,6 +6,9 @@ import {WebglAddon} from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import {api,isPreview} from './api';
 import {terminalTheme} from './terminal-theme';
+import {terminalFontFamily,terminalFontLoads} from '../shared/fonts';
+import './terminal-fonts.css';
+import './fonts.css';
 import type {AppSettings,SessionInfo} from '../shared/types';
 export function keyChord(e:KeyboardEvent){
  const names:Record<string,string>={Equal:'=',Minus:'-',Comma:',',Period:'.',Space:'Space'};
@@ -19,16 +22,17 @@ export function mouseChord(e:MouseEvent){
 }
 function decode(value:string){const raw=atob(value);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
 export default function TerminalView({session,settings,active,onFontSizeChange}:{session:SessionInfo;settings:AppSettings;active:boolean;onFontSizeChange?:(size:number)=>void}){
- const host=useRef<HTMLDivElement>(null);const term=useRef<Terminal|null>(null);const requestFit=useRef<(()=>void)|null>(null);const search=useRef<SearchAddon|null>(null);const current=useRef(settings);const fontCallback=useRef(onFontSizeChange);
+ const host=useRef<HTMLDivElement>(null);const term=useRef<Terminal|null>(null);const requestFit=useRef<(()=>void)|null>(null);const fontsReady=useRef(false);const search=useRef<SearchAddon|null>(null);const current=useRef(settings);const fontCallback=useRef(onFontSizeChange);
  const [searchOpen,setSearchOpen]=useState(false);const [query,setQuery]=useState('');const [background,setBackground]=useState('');
  current.current=settings;fontCallback.current=onFontSizeChange;
  useEffect(()=>{
-  const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:`"${settings.fontFamily}", "${settings.chineseFont}", monospace`,fontSize:settings.fontSize,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme),macOptionIsMeta:false});
+  fontsReady.current=false;
+  const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:'monospace',fontSize:settings.fontSize,fontWeight:settings.fontWeight,fontWeightBold:700,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme),macOptionIsMeta:false});
   const element=host.current!;
   term.current=terminal;const fitter=new FitAddon();const finder=new SearchAddon();search.current=finder;terminal.loadAddon(fitter);terminal.loadAddon(finder);terminal.open(element);
   try{const gpu=new WebglAddon();gpu.onContextLoss(()=>gpu.dispose());terminal.loadAddon(gpu);}catch{/* xterm's standard renderer remains usable when GPU is unavailable. */}
   let disposed=false;let resizeFrame=0;let lastSize='';
-  const resize=()=>{resizeFrame=0;if(disposed||element.clientWidth===0||element.clientHeight===0)return;fitter.fit();const size=`${terminal.cols}x${terminal.rows}`;if(size!==lastSize){lastSize=size;api.terminalResize(session.id,terminal.cols,terminal.rows);}};
+  const resize=()=>{resizeFrame=0;if(disposed||!fontsReady.current||element.clientWidth===0||element.clientHeight===0)return;fitter.fit();const size=`${terminal.cols}x${terminal.rows}`;if(size!==lastSize){lastSize=size;api.terminalResize(session.id,terminal.cols,terminal.rows);}};
   const scheduleResize=()=>{if(!disposed&&!resizeFrame)resizeFrame=requestAnimationFrame(resize);};
   requestFit.current=scheduleResize;
   const observer=new ResizeObserver(scheduleResize);observer.observe(element);scheduleResize();
@@ -56,7 +60,18 @@ export default function TerminalView({session,settings,active,onFontSizeChange}:
   element.addEventListener('mousedown',mouse,true);element.addEventListener('contextmenu',context);terminal.focus();
   return()=>{disposed=true;cancelAnimationFrame(resizeFrame);remove();input.dispose();binaryInput.dispose();selection.dispose();observer.disconnect();element.removeEventListener('mousedown',mouse,true);element.removeEventListener('contextmenu',context);terminal.dispose();term.current=null;search.current=null;requestFit.current=null;};
  },[session.id]);
- useEffect(()=>{if(term.current){term.current.options.fontFamily=`"${settings.fontFamily}", "${settings.chineseFont}", monospace`;term.current.options.fontSize=settings.fontSize;term.current.options.lineHeight=settings.lineHeight;term.current.options.cursorBlink=settings.cursorBlink;requestFit.current?.();}},[settings.fontFamily,settings.chineseFont,settings.fontSize,settings.lineHeight,settings.cursorBlink]);
+ useEffect(()=>{
+  const terminal=term.current;if(!terminal)return;let cancelled=false;fontsReady.current=false;
+  // Load both regular text and ANSI bold faces before measuring the terminal grid.
+  // A late font swap must not leave cached fallback glyphs or incorrect tmux dimensions.
+  void Promise.all(terminalFontLoads(settings).map(font=>document.fonts.load(font,'M中文'))).catch(()=>undefined).then(()=>{
+   if(cancelled||term.current!==terminal)return;
+   terminal.options.fontFamily=terminalFontFamily(settings);terminal.options.fontSize=settings.fontSize;terminal.options.fontWeight=settings.fontWeight;terminal.options.fontWeightBold=700;terminal.options.lineHeight=settings.lineHeight;
+   terminal.clearTextureAtlas();terminal.refresh(0,terminal.rows-1);fontsReady.current=true;requestFit.current?.();
+  });
+  return()=>{cancelled=true;};
+ },[session.id,settings.fontFamily,settings.chineseFont,settings.fontSize,settings.fontWeight,settings.lineHeight]);
+ useEffect(()=>{if(term.current)term.current.options.cursorBlink=settings.cursorBlink;},[settings.cursorBlink]);
  useEffect(()=>{if(term.current)term.current.options.theme=terminalTheme(settings.theme);},[settings.theme]);
  useEffect(()=>{let cancelled=false;if(!settings.backgroundImage){setBackground('');return;}void api.backgroundData(settings.backgroundImage).then(data=>{if(!cancelled)setBackground(data);}).catch(()=>setBackground(''));return()=>{cancelled=true;};},[settings.backgroundImage]);
  useEffect(()=>{if(active){requestFit.current?.();const frame=requestAnimationFrame(()=>term.current?.focus());return()=>cancelAnimationFrame(frame);}},[active]);

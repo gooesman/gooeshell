@@ -1,8 +1,8 @@
 import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {defaultSettings} from '../shared/defaults';
-import type {HostProfile,AppSettings} from '../shared/types';
+import {defaultSettings,migrateDefaultShortcuts} from '../shared/defaults';
+import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference} from '../shared/types';
 export function cleanProfile(input:HostProfile):HostProfile {
   if(!input||typeof input!=='object')throw new Error('连接配置无效');
   const text=(s:unknown,max=255)=>typeof s==='string'&&!/[\0\r\n]/.test(s)&&s.length<=max?s.trim():'';
@@ -16,11 +16,36 @@ export function cleanSettings(input:AppSettings):AppSettings {
   const result=structuredClone(defaultSettings);
   if(!input||typeof input!=='object')return result;
   if(input.theme==='dark'||input.theme==='light')result.theme=input.theme;
+  if(input.fontWeight===400||input.fontWeight===700)result.fontWeight=input.fontWeight;
   for(const field of ['fontFamily','chineseFont','backgroundImage'] as const)if(typeof input[field]==='string'&&input[field].length<2048&&!input[field].includes('\0'))result[field]=input[field];
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
-  for(const field of ['cursorBlink','copyOnSelect','rightClickPaste'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
+  for(const field of ['cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
   for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=input.shortcuts[id];
+  for(const id of ['previousTab','nextTab']){
+    if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)continue;
+    const binding=result.shortcuts[id].toLowerCase();
+    if(Object.entries(result.shortcuts).some(([other,value])=>other!==id&&value.toLowerCase()===binding))result.shortcuts[id]='';
+  }
+  result.shortcuts=migrateDefaultShortcuts(result.shortcuts,Number.isSafeInteger(input.shortcutSchemaVersion)?input.shortcutSchemaVersion:undefined);
   return result;
+}
+const historyLimit=30;
+const historyEndpoint=(profile:HostProfile)=>JSON.stringify([profile.host.toLowerCase(),profile.port,profile.username]);
+function cleanHistory(input:unknown):ConnectionHistoryEntry[]{
+  if(!Array.isArray(input))return[];
+  const entries=input.flatMap(value=>{
+    try{
+      if(!value||typeof value!=='object'||!Number.isSafeInteger(value.connectedAt)||value.connectedAt<=0||value.connectedAt>8.64e15)return[];
+      return[{profile:cleanProfile(value.profile),connectedAt:value.connectedAt}];
+    }catch{return[];}
+  }).sort((a,b)=>b.connectedAt-a.connectedAt);
+  const seen=new Set<string>();
+  return entries.filter(entry=>{const endpoint=historyEndpoint(entry.profile);if(seen.has(endpoint))return false;seen.add(endpoint);return true;}).slice(0,historyLimit);
+}
+const preferenceEndpoint=(value:{host:string;port:number})=>JSON.stringify([value.host.toLowerCase(),value.port]);
+function cleanHostKeyPreference(input:HostKeyPreference):HostKeyPreference{
+  if(!input||typeof input!=='object'||typeof input.host!=='string'||!input.host.trim()||input.host.length>255||/[\0\r\n]/.test(input.host)||!Number.isInteger(input.port)||input.port<1||input.port>65535||typeof input.skipVerification!=='boolean')throw new Error('请填写有效的服务器地址、端口和指纹选项');
+  return{host:input.host.trim().toLowerCase(),port:input.port,skipVerification:input.skipVerification};
 }
 export class Store {
   private readonly writes=new Map<string,Promise<unknown>>();
@@ -39,6 +64,29 @@ export class Store {
     finally{await fs.unlink(temp).catch(()=>{});}
   }
   async profiles():Promise<HostProfile[]>{const saved=await this.read('profiles.json');if(!Array.isArray(saved))return[];return saved.flatMap(p=>{try{return[cleanProfile(p)];}catch{return[];}});}
+  async history():Promise<ConnectionHistoryEntry[]>{return cleanHistory(await this.read('connection-history.json'));}
+  async recordConnection(profile:HostProfile){
+    const safe=cleanProfile(profile);
+    return this.serial('connection-history.json',async()=>{
+      const all=await this.history();
+      const entry:ConnectionHistoryEntry={profile:safe,connectedAt:Date.now()};
+      await this.write('connection-history.json',[entry,...all.filter(previous=>historyEndpoint(previous.profile)!==historyEndpoint(safe))].slice(0,historyLimit));
+    });
+  }
+  async clearHistory(){return this.serial('connection-history.json',()=>this.write('connection-history.json',[]));}
+  async hostKeyPreferences():Promise<HostKeyPreference[]>{
+    const input=await this.read('host-key-preferences.json');if(!Array.isArray(input))return[];
+    const preferences=new Map<string,HostKeyPreference>();
+    for(const value of input){try{const safe=cleanHostKeyPreference(value);const key=preferenceEndpoint(safe);if(safe.skipVerification)preferences.set(key,safe);else preferences.delete(key);}catch{}}
+    return[...preferences.values()];
+  }
+  async setHostKeyPreference(preference:HostKeyPreference){
+    const safe=cleanHostKeyPreference(preference);
+    return this.serial('host-key-preferences.json',async()=>{
+      const all=(await this.hostKeyPreferences()).filter(value=>preferenceEndpoint(value)!==preferenceEndpoint(safe));
+      await this.write('host-key-preferences.json',safe.skipVerification?[...all,safe]:all);
+    });
+  }
   async settings():Promise<AppSettings>{return cleanSettings(await this.read('settings.json'));}
   async saveProfile(profile:HostProfile){const safe=cleanProfile(profile);return this.serial('profiles.json',async()=>{const all=await this.profiles();await this.write('profiles.json',[...all.filter(p=>p.id!==safe.id),safe]);});}
   async deleteProfile(id:string){return this.serial('profiles.json',async()=>{await this.write('profiles.json',(await this.profiles()).filter(p=>p.id!==id));});}

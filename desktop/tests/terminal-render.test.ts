@@ -7,7 +7,7 @@ import { createServer as createNetServer } from 'node:net';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
-test('actual TerminalView renders isolated tmux, preserves it across themes and sends terminal query replies', { skip: process.env.GOOESHELL_RENDER_WSL_TEST === '1' ? false : 'Set GOOESHELL_RENDER_WSL_TEST=1 with Electron, built main, Ubuntu-24.04 and tmux installed', timeout: 65_000 }, async t => {
+test('actual TerminalView preserves tmux across themes and bold fonts, and sends terminal query replies', { skip: process.env.GOOESHELL_RENDER_WSL_TEST === '1' ? false : 'Set GOOESHELL_RENDER_WSL_TEST=1 with Electron, built main, Ubuntu-24.04 and tmux installed', timeout: 65_000 }, async t => {
   const root = process.cwd();
   const artifacts = await fs.mkdtemp(path.resolve('../.build/terminal-render-'));
   const report = path.join(artifacts, 'result.json');
@@ -38,6 +38,11 @@ test('actual TerminalView renders isolated tmux, preserves it across themes and 
   assert.equal(result.acked, result.bytes);
   assert.equal(result.lightTheme.sameTerminal, true);
   assert.equal(result.darkTheme.sameTerminal, true);
+  assert.equal(result.boldFont.sameTerminal, true);
+  assert.equal(result.boldFont.fontWeight, 700);
+  assert.equal(result.regularFont.sameTerminal, true);
+  assert.equal(result.regularFont.fontWeight, 400);
+  assert.match(result.regularFont.text, /RENDER_BOLD_RESPONSIVE/);
   assert.match(result.darkTheme.text, /RENDER_LIGHT_RESPONSIVE/);
   assert.match(result.after.text, /RENDER_STILL_RESPONSIVE/);
 });

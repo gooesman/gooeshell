@@ -1,0 +1,83 @@
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono-Bold.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/fonts/IBMPlexMono-Bold.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+}
+.font-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 23px;
+}
+.font-label-row label {
+  margin: 0;
+}
+.font-recommended-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+.font-recommended-option {
+  font-weight: 700;
+}
+.font-recommendations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.font-recommendation {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--surface);
+  font-size: 10px;
+  cursor: pointer;
+}
+.font-recommendation:hover,
+.font-recommendation.selected {
+  border-color: var(--text-muted);
+  color: var(--text);
+  background: var(--surface-raised);
+}
+.font-recommendation.selected {
+  font-weight: 600;
+}
+.font-help {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.font-family-field {
+  align-content: start;
+}

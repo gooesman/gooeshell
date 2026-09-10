@@ -5,6 +5,9 @@ export interface HostProfile {
 }
 export interface AppSettings {
   theme: 'dark' | 'light';
+  showConnectionHistory: boolean; filesToggleIconOnly: boolean;
+  fontWeight: 400 | 700;
+  shortcutSchemaVersion: number;
   fontFamily: string; chineseFont: string; fontSize: number; lineHeight: number;
   cursorBlink: boolean; copyOnSelect: boolean; rightClickPaste: boolean;
   backgroundImage: string; backgroundOpacity: number;
@@ -12,9 +15,13 @@ export interface AppSettings {
 }
 export interface InitialState {
   profiles: HostProfile[]; settings: AppSettings; localHome: string; version: string;
+  connectionHistory: ConnectionHistoryEntry[];
+  hostKeyPreferences: HostKeyPreference[];
 }
+export interface ConnectionHistoryEntry { profile: HostProfile; connectedAt: number; }
+export interface HostKeyPreference { host: string; port: number; skipVerification: boolean; }
 export interface SessionInfo { id: string; profile: HostProfile; }
-export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; }
+export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; }
 export interface FileEntry {
   name: string; path: string; type: 'directory' | 'file' | 'symlink';
   size: number; modified: number; mode?: number; owner?: string; group?: string;
@@ -45,6 +52,9 @@ export interface DesktopApi {
   initial(): Promise<InitialState>;
   saveProfile(profile: HostProfile): Promise<void>;
   deleteProfile(id: string): Promise<void>;
+  connectionHistory(): Promise<ConnectionHistoryEntry[]>;
+  clearConnectionHistory(): Promise<void>;
+  setHostKeyPreference(preference: HostKeyPreference): Promise<void>;
   saveSettings(settings: AppSettings): Promise<void>;
   connect(request: ConnectRequest): Promise<SessionInfo>;
   disconnect(sessionId: string): Promise<void>;

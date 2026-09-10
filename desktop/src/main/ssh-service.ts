@@ -18,6 +18,7 @@ type TrustStore = { version: 1; hosts: Record<string, TrustedHost> };
 interface Session {
   id: string;
   profile: HostProfile;
+  skipHostKeyVerification: boolean;
   credentials: Pick<ConnectConfig, 'password' | 'privateKey' | 'passphrase' | 'agent'>;
   fingerprint?: string;
   clients: Set<Client>;
@@ -101,8 +102,10 @@ export class SshService {
       if (session.fingerprint === fingerprint) return true;
       throw new Error('此会话的后续连接返回了不同的服务器指纹，连接已拒绝，请重新连接并核实服务器身份。');
     }
-    const store = await this.trustStore();
-    const previousFingerprint = store.hosts[endpoint(session.profile)]?.fingerprint;
+    if (session.skipHostKeyVerification) { session.fingerprint = fingerprint; return true; }
+    const previousFingerprint = session.profile.rememberHost
+      ? (await this.trustStore()).hosts[endpoint(session.profile)]?.fingerprint
+      : undefined;
     if (previousFingerprint === fingerprint) { session.fingerprint = fingerprint; return true; }
     const requestId = randomUUID();
     const decision = await new Promise<HostKeyDecision>(resolve => {
@@ -178,7 +181,7 @@ export class SshService {
       credentials.agent = process.env.SSH_AUTH_SOCK || (process.platform === 'win32' ? '\\\\.\\pipe\\openssh-ssh-agent' : undefined);
       if (!credentials.agent) throw new Error('SSH Agent 未配置，请选择密码或私钥认证');
     } else throw new Error('不支持的认证方式');
-    const session: Session = { id: randomUUID(), profile, credentials, clients: new Set(), pendingBytes: 0, terminalReady: false, terminalCols: 100, terminalRows: 30, closed: false };
+    const session: Session = { id: randomUUID(), profile, skipHostKeyVerification: request.skipHostKeyVerification === true, credentials, clients: new Set(), pendingBytes: 0, terminalReady: false, terminalCols: 100, terminalRows: 30, closed: false };
     this.sessions.set(session.id, session);
     try {
       const client = await this.openClient(session);

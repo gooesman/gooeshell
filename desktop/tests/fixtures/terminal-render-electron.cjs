@@ -32,7 +32,7 @@ const inspect = () => window.webContents.executeJavaScript(`(() => {
   if (!t) return null;
   const b=t.buffer.active; const lines=[];
   for(let i=b.viewportY;i<Math.min(b.length,b.viewportY+t.rows);i++) lines.push(b.getLine(i)?.translateToString(true)||'');
-  return {text:lines.join('\\n'),renderedText:window.__fixtureLastRenderedText,cols:t.cols,rows:t.rows,type:b.type,renders:window.__fixtureRenders,canvas:document.querySelectorAll('canvas').length,synchronized:t.modes.synchronizedOutputMode,visibility:document.visibilityState,theme:document.documentElement.dataset.theme,foreground:t.options.theme.foreground,cursor:t.options.theme.cursor,background:getComputedStyle(document.querySelector('.terminal-instance')).backgroundColor,layers:[...document.querySelectorAll('.xterm,.xterm-viewport,.xterm-scrollable-element,.xterm-screen,canvas')].map(el=>({class:el.className,background:getComputedStyle(el).backgroundColor})),sameTerminal:!window.__fixtureOriginalTerminal||t===window.__fixtureOriginalTerminal};
+  return {text:lines.join('\\n'),renderedText:window.__fixtureLastRenderedText,cols:t.cols,rows:t.rows,type:b.type,renders:window.__fixtureRenders,canvas:document.querySelectorAll('canvas').length,synchronized:t.modes.synchronizedOutputMode,visibility:document.visibilityState,theme:document.documentElement.dataset.theme,foreground:t.options.theme.foreground,cursor:t.options.theme.cursor,fontFamily:t.options.fontFamily,fontWeight:t.options.fontWeight,fontWeightBold:t.options.fontWeightBold,fontFaces:[...document.fonts].map(face=>({family:face.family,weight:face.weight,status:face.status})),background:getComputedStyle(document.querySelector('.terminal-instance')).backgroundColor,layers:[...document.querySelectorAll('.xterm,.xterm-viewport,.xterm-scrollable-element,.xterm-screen,canvas')].map(el=>({class:el.className,background:getComputedStyle(el).backgroundColor})),sameTerminal:!window.__fixtureOriginalTerminal||t===window.__fixtureOriginalTerminal};
 })()`);
 const input = data => window.webContents.executeJavaScript(`window.__fixtureTerminal.input(${JSON.stringify(data)},true)`);
 
@@ -133,6 +133,25 @@ async function run() {
   assert.equal(metrics.darkTheme.type, 'alternate');
   assert.match(metrics.darkTheme.text, /RENDER_LIGHT_RESPONSIVE/);
   assert.equal(metrics.darkTheme.background, metrics.before.background);
+  phase = 'live font family and bold changes preserve tmux';
+  await window.webContents.executeJavaScript('window.__fixtureSetFont("JetBrains Mono",700)');
+  await until(async () => { const state = await inspect(); return state?.fontWeight === 700 && state.fontFamily.includes('JetBrains Mono') && state.fontFaces.some(face => face.family.includes('JetBrains Mono') && face.weight === '700' && face.status === 'loaded'); }, phase);
+  await input("printf 'RENDER_%s\\n' BOLD_RESPONSIVE\r");
+  await until(async () => (await inspect())?.renderedText?.includes('RENDER_BOLD_RESPONSIVE'), 'input after bold font');
+  metrics.boldFont = await inspect();
+  assert.equal(metrics.boldFont.sameTerminal, true);
+  assert.equal(metrics.boldFont.type, 'alternate');
+  assert.equal(metrics.boldFont.fontWeightBold, 700);
+  assert.ok(metrics.boldFont.fontFaces.some(face => face.family.includes('JetBrains Mono') && face.weight === '400' && face.status === 'loaded'), 'xterm must measure the real regular face, never an unloaded fallback');
+  assert.ok(Math.abs(metrics.boldFont.cols - metrics.before.cols) <= 3, 'the two fonts have similar monospaced cell widths; a much wider grid indicates fallback measurement');
+  await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await fs.writeFile(reportFile + '.bold.png', (await window.webContents.capturePage()).toPNG());
+  await window.webContents.executeJavaScript('window.__fixtureSetFont("DejaVu Sans Mono",400)');
+  await until(async () => { const state = await inspect(); return state?.fontWeight === 400 && state.fontFamily.includes('DejaVu Sans Mono') && state.cols === metrics.before.cols && state.rows === metrics.before.rows; }, 'restore regular font and terminal grid');
+  metrics.regularFont = await inspect();
+  assert.equal(metrics.regularFont.sameTerminal, true);
+  assert.equal(metrics.regularFont.type, 'alternate');
+  assert.match(metrics.regularFont.text, /RENDER_BOLD_RESPONSIVE/);
   phase = 'tmux split';
   await input('\x02"');
   await input("printf 'RENDER_%s\\n' SPLIT_READY\r");

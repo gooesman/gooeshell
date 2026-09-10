@@ -6,6 +6,7 @@ import {Worker} from 'node:worker_threads';
 import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {Store,cleanProfile} from './store';
+import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,renameLocalPath} from './local-files';
 import type {AppEvent,FileListing,RemoteRequest} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let shuttingDown=false;
@@ -18,9 +19,9 @@ async function localList(directory:string):Promise<FileListing>{
  return {path:actual,entries:result.filter((x):x is NonNullable<typeof x>=>x!==null).sort((a,b)=>Number(b.type==='directory')-Number(a.type==='directory')||a.name.localeCompare(b.name,'zh-CN'))};
 }
 async function fonts():Promise<string[]>{
- const known=['DejaVu Sans Mono','Cascadia Code','Cascadia Mono','Consolas','Courier New','JetBrains Mono','Microsoft YaHei','Microsoft YaHei UI','Microsoft JhengHei','SimSun','Noto Sans SC'];
+ const known=[...bundledFontFamilies];
  if(process.platform!=='win32')return known;
- return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve([...new Set([...known,...(Array.isArray(data)?data:[])])].sort());}catch{resolve(known);}}));
+ return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve(availableFontFamilies(Array.isArray(data)?data:typeof data==='string'?[data]:[]));}catch{resolve(known);}}));
 }
 const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','chmod','runFile']);
 app.whenReady().then(async()=>{
@@ -40,11 +41,22 @@ app.whenReady().then(async()=>{
   if(remoteMethods.has(method))return remote(method,...args);
   const value:any=args[0];
   switch(method){
-   case 'initial':return{profiles:await store.profiles(),settings:await store.settings(),localHome:os.homedir(),version:app.getVersion()};
+   case 'initial':return{profiles:await store.profiles(),settings:await store.settings(),connectionHistory:await store.history(),hostKeyPreferences:await store.hostKeyPreferences(),localHome:os.homedir(),version:app.getVersion()};
    case 'saveProfile':return store.saveProfile(value);
    case 'deleteProfile':return store.deleteProfile(value);
+   case 'connectionHistory':return store.history();
+   case 'clearConnectionHistory':return store.clearHistory();
+   case 'setHostKeyPreference':return store.setHostKeyPreference(value);
    case 'saveSettings':return store.saveSettings(value);
-   case 'connect':return remote('connect',{...value,profile:cleanProfile(value.profile)});
+   case 'connect':{
+    const profile=cleanProfile(value.profile);
+    const skipHostKeyVerification=(await store.hostKeyPreferences()).some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
+    const effectiveProfile=skipHostKeyVerification?{...profile,rememberHost:false}:profile;
+    const connected=await remote('connect',{...value,profile:effectiveProfile,skipHostKeyVerification});
+    try{await store.recordConnection(profile);}
+    catch{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'服务器已连接，但连接历史未能保存。'});}
+    return{...connected,profile};
+   }
    case 'localList':return localList(value||os.homedir());
    case 'chooseFiles':{const result=await dialog.showOpenDialog(win,{title:value?.title,properties:value?.directory?['openDirectory']:value?.multiple?['openFile','multiSelections']:['openFile']});return result.canceled?[]:result.filePaths;}
    case 'showInFolder':shell.showItemInFolder(localPath(value));return;
