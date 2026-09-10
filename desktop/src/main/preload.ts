@@ -11,6 +11,7 @@ const api: DesktopApi = {
   cancelTransfer:id=>call('cancelTransfer',id),readFile:r=>call('readFile',r),writeFile:r=>call('writeFile',r),
   chmod:r=>call('chmod',r),runFile:r=>call('runFile',r),mkdir:r=>call('mkdir',r),rename:r=>call('rename',r),
   fonts:()=>call('fonts'),backgroundData:p=>call('backgroundData',p),fullscreen:()=>call('fullscreen'),
+  fontCatalog:()=>call('fontCatalog'),
   readClipboard:()=>call('readClipboard'),writeClipboard:text=>call('writeClipboard',text),
   minimize:()=>ipcRenderer.send('gooeshell:window','minimize'),maximize:()=>ipcRenderer.send('gooeshell:window','maximize'),closeWindow:()=>ipcRenderer.send('gooeshell:window','close'),
   terminalInput:(id,data)=>ipcRenderer.send('gooeshell:terminal','terminalInput',[id,data]),

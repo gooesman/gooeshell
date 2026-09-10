@@ -1,17 +1,21 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { Server } = require('ssh2');
-const { generateKeyPairSync, randomUUID } = require('node:crypto');
+const { generateKeyPairSync, randomUUID, createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { SshService } = require('../../dist-main/main/ssh-service.js');
+const { systemFontCatalog } = require('../../dist-main/main/font-catalog.js');
 
 const url = process.env.GOOESHELL_RENDER_URL;
 const reportFile = process.env.GOOESHELL_RENDER_REPORT;
 const userData = process.env.GOOESHELL_RENDER_DATA;
 if (!url || new URL(url).hostname !== '127.0.0.1' || !reportFile || !userData) throw new Error('Explicit isolated fixture paths and a loopback URL are required');
 app.setPath('userData', userData);
+// Pixel comparisons need an integer grid. At fractional Windows scaling xterm's
+// canvas ResizeObserver can round the backing store differently after a refresh.
+app.commandLine.appendSwitch('force-device-scale-factor','1');
 const socketName = `gooeshell-test-${randomUUID()}`;
 const connections = new Set();
 const metrics = { socketName, queries: [], bytes: 0, acked: 0, resize: [], rendererErrors: [], console: [] };
@@ -32,9 +36,77 @@ const inspect = () => window.webContents.executeJavaScript(`(() => {
   if (!t) return null;
   const b=t.buffer.active; const lines=[];
   for(let i=b.viewportY;i<Math.min(b.length,b.viewportY+t.rows);i++) lines.push(b.getLine(i)?.translateToString(true)||'');
-  return {text:lines.join('\\n'),renderedText:window.__fixtureLastRenderedText,cols:t.cols,rows:t.rows,type:b.type,renders:window.__fixtureRenders,canvas:document.querySelectorAll('canvas').length,synchronized:t.modes.synchronizedOutputMode,visibility:document.visibilityState,theme:document.documentElement.dataset.theme,foreground:t.options.theme.foreground,cursor:t.options.theme.cursor,fontFamily:t.options.fontFamily,fontWeight:t.options.fontWeight,fontWeightBold:t.options.fontWeightBold,fontFaces:[...document.fonts].map(face=>({family:face.family,weight:face.weight,status:face.status})),background:getComputedStyle(document.querySelector('.terminal-instance')).backgroundColor,layers:[...document.querySelectorAll('.xterm,.xterm-viewport,.xterm-scrollable-element,.xterm-screen,canvas')].map(el=>({class:el.className,background:getComputedStyle(el).backgroundColor})),sameTerminal:!window.__fixtureOriginalTerminal||t===window.__fixtureOriginalTerminal};
+  return {text:lines.join('\\n'),renderedText:window.__fixtureLastRenderedText,cols:t.cols,rows:t.rows,type:b.type,renders:window.__fixtureRenders,canvas:document.querySelectorAll('canvas').length,synchronized:t.modes.synchronizedOutputMode,visibility:document.visibilityState,theme:document.documentElement.dataset.theme,foreground:t.options.theme.foreground,cursor:t.options.theme.cursor,fontFamily:t.options.fontFamily,fontWeight:t.options.fontWeight,fontWeightBold:t.options.fontWeightBold,fontSelection:window.__fixtureFontSelection,fontWarning:document.querySelector('.terminal-font-warning')?.textContent||'',fontFaces:[...document.fonts].map(face=>({family:face.family,weight:face.weight,status:face.status})),background:getComputedStyle(document.querySelector('.terminal-instance')).backgroundColor,layers:[...document.querySelectorAll('.xterm,.xterm-viewport,.xterm-scrollable-element,.xterm-screen,canvas')].map(el=>({class:el.className,background:getComputedStyle(el).backgroundColor})),sameTerminal:!window.__fixtureOriginalTerminal||t===window.__fixtureOriginalTerminal};
 })()`);
 const input = data => window.webContents.executeJavaScript(`window.__fixtureTerminal.input(${JSON.stringify(data)},true)`);
+const settleFrame = () => window.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+const pixelSamples = {english:'PIXEL_LATIN_ABCabc0123',chinese:'中文终端字体独立粗体'};
+async function selectFonts(selection,label){
+  const previous=(await inspect()).fontFamily;
+  await window.webContents.executeJavaScript(`window.__fixtureSetFontSelection(${JSON.stringify(selection)})`);
+  await until(async()=>{
+    const state=await inspect();
+    return state?.fontFamily!==previous&&state.fontFamily.startsWith('"GooeshellTerminal')&&!state.fontWarning&&Object.entries(selection).every(([key,value])=>state.fontSelection[key]===value);
+  },label);
+  await settleFrame();
+  // Allow the device-pixel ResizeObserver and the remote tmux redraw to settle
+  // after a family changes the cell dimensions before recording a baseline.
+  await delay(120);
+  await settleFrame();
+}
+async function captureFontSamples(label){
+  await settleFrame();
+  const geometry=await window.webContents.executeJavaScript(`(()=>{
+    const terminal=window.__fixtureTerminal,buffer=terminal.buffer.active,rect=terminal.element.querySelector('.xterm-screen').getBoundingClientRect();
+    const samples=${JSON.stringify(pixelSamples)},rows={};
+    for(const [name,text] of Object.entries(samples)){
+      let row=-1;for(let index=buffer.viewportY;index<Math.min(buffer.length,buffer.viewportY+terminal.rows);index++)if(buffer.getLine(index)?.translateToString(true).trim()===text){row=index-buffer.viewportY;break;}
+      if(row<0)throw new Error('Missing pixel sample: '+name);
+      rows[name]={row,x:rect.left,y:rect.top+row*rect.height/terminal.rows,width:rect.width,height:rect.height/terminal.rows};
+    }
+    return{innerWidth:window.innerWidth,rows};
+  })()`);
+  // Read inside the real render callback before Chromium clears the non-preserved
+  // WebGL buffer. This avoids screenshot compositor resampling at fractional DPI.
+  const renderedPixels=await window.webContents.executeJavaScript(`new Promise(resolve=>{
+    const terminal=window.__fixtureTerminal,rows=${JSON.stringify(geometry.rows)};
+    const listener=terminal.onRender(()=>{
+      listener.dispose();const gl=[...terminal.element.querySelectorAll('.xterm-screen canvas')].map(canvas=>canvas.getContext('webgl2')).find(Boolean);
+      if(!gl)throw new Error('Actual WebGL renderer is required for font pixel assertions');
+      const width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,rowHeight=height/terminal.rows,result={};
+      for(const [name,geometry] of Object.entries(rows)){
+        const top=Math.round(geometry.row*rowHeight),bottom=Math.round((geometry.row+1)*rowHeight),data=new Uint8Array(width*(bottom-top)*4);
+        gl.readPixels(0,height-bottom,width,bottom-top,gl.RGBA,gl.UNSIGNED_BYTE,data);
+        let hash=2166136261,ink=0;for(let index=0;index<data.length;index++){hash=Math.imul(hash^data[index],16777619);if(index%4!==3)ink+=data[index];}
+        result[name]={hash:(hash>>>0).toString(16),ink,width,height:bottom-top};
+      }
+      resolve(result);
+    });
+    terminal.refresh(0,terminal.rows-1);
+  })`);
+  const screenshot=await window.webContents.capturePage();
+  await fs.writeFile(reportFile+'.'+label+'.png',screenshot.toPNG());
+  const scale=screenshot.getSize().width/geometry.innerWidth,result={state:await inspect()};
+  for(const [name,rect] of Object.entries(geometry.rows)){
+    const x=Math.round(rect.x*scale),y=Math.round(rect.y*scale),width=Math.round(rect.width*scale),height=Math.round((rect.y+rect.height)*scale)-y;
+    const image=screenshot.crop({x,y,width,height}),data=image.toBitmap();let ink=0;
+    for(let index=0;index<data.length;index++)if(index%4!==3)ink+=data[index];
+    result[name]={...renderedPixels[name],composited:{hash:createHash('sha256').update(data).digest('hex'),ink,width,height}};
+    await fs.writeFile(reportFile+'.'+label+'.'+name+'.png',image.toPNG());
+  }
+  return result;
+}
+function verifyChineseOnly(before,after){
+  assert.equal(after.state.sameTerminal,true);
+  assert.equal(after.state.type,'alternate');
+  assert.equal(after.state.cols,before.state.cols);
+  assert.equal(after.state.rows,before.state.rows);
+  assert.equal(after.state.fontWeight,400,'xterm logical normal weight stays 400');
+  assert.equal(after.state.fontSelection.chineseFontWeight,700);
+  assert.equal(after.english.hash,before.english.hash,'Chinese weight must not change actual English pixels');
+  assert.notEqual(after.chinese.hash,before.chinese.hash,'Chinese pixels must change when a real bold face is selected');
+  assert.ok(after.chinese.ink>before.chinese.ink*1.15,'Chinese bold must add visible stroke weight');
+}
 
 async function run() {
   await app.whenReady();
@@ -46,6 +118,7 @@ async function run() {
       const remote = accept(); let dimensions = { cols: 100, rows: 30 };
       remote.on('pty', (accept, _reject, info) => { dimensions = info; accept?.(); });
       remote.on('window-change', (accept, _reject, info) => {
+        metrics.firstResizeMs??=Date.now()-started;
         dimensions = info; metrics.resize.push({ cols: info.cols, rows: info.rows });
         bridge?.stdin.write(JSON.stringify({ resize: [info.cols, info.rows] }) + '\n'); accept?.();
       });
@@ -88,6 +161,15 @@ async function run() {
     assert.equal(event.sender, window.webContents);
     session = await service.connect({ profile, password: 'loopback-only' }); return session;
   });
+  ipcMain.handle('terminal-fixture:font-catalog',async event=>{
+    assert.equal(event.sender,window.webContents);
+    const catalog=systemFontCatalog();
+    await until(()=>metrics.resize.length>0,'terminal resizes before the full font catalog is returned',2_000);
+    const result=await catalog;
+    metrics.catalogReturnedMs=Date.now()-started;
+    assert.ok(metrics.firstResizeMs<=metrics.catalogReturnedMs);
+    return result;
+  });
   ipcMain.on('terminal-fixture:call', (event, method, args) => {
     if (event.sender !== window.webContents || !['terminalInput', 'terminalBinaryInput', 'terminalResize', 'terminalAck'].includes(method)) return;
     if (method === 'terminalAck') metrics.acked += args[1];
@@ -102,6 +184,8 @@ async function run() {
   await until(() => metrics.queries.length === 3, phase);
   phase = 'tmux alternate buffer';
   await until(async () => (await inspect())?.type === 'alternate', phase);
+  await until(async () => {const state=await inspect();return state?.fontFamily.startsWith('"GooeshellTerminal')&&!state.fontWarning;},'physical font catalog and composite family',35_000);
+  await settleFrame();
   await input("printf 'RENDER_%s\\n' TMUX_READY\r");
   await until(async () => (await inspect())?.text.includes('RENDER_TMUX_READY'), 'rendered tmux prompt');
   metrics.tmuxReadyMs = Date.now() - started;
@@ -133,21 +217,39 @@ async function run() {
   assert.equal(metrics.darkTheme.type, 'alternate');
   assert.match(metrics.darkTheme.text, /RENDER_LIGHT_RESPONSIVE/);
   assert.equal(metrics.darkTheme.background, metrics.before.background);
+  phase='independent Chinese weight keeps English pixels';
+  await input(`printf '%s\\n' '${pixelSamples.english}' '${pixelSamples.chinese}'\r`);
+  await until(async()=>{const state=await inspect();return state?.renderedText?.includes(pixelSamples.chinese);},'rendered multilingual pixel samples');
+  metrics.chineseRegular=await captureFontSamples('chinese-regular');
+  await selectFonts({chineseFontWeight:700},phase);
+  metrics.chineseBold=await captureFontSamples('chinese-bold');
+  verifyChineseOnly(metrics.chineseRegular,metrics.chineseBold);
+  phase='Chinese weight overrides a Latin family containing CJK glyphs';
+  await selectFonts({fontFamily:'Microsoft YaHei',fontWeight:400,chineseFontWeight:400},'system Latin font baseline');
+  metrics.systemChineseRegular=await captureFontSamples('system-chinese-regular');
+  await selectFonts({chineseFontWeight:700},phase);
+  metrics.systemChineseBold=await captureFontSamples('system-chinese-bold');
+  verifyChineseOnly(metrics.systemChineseRegular,metrics.systemChineseBold);
+  await input("printf 'RENDER_%s\\n' CHINESE_WEIGHT_RESPONSIVE\r");
+  await until(async()=>(await inspect())?.renderedText?.includes('RENDER_CHINESE_WEIGHT_RESPONSIVE'),'input after independent Chinese weight');
+  await selectFonts({fontFamily:'DejaVu Sans Mono',fontWeight:400,chineseFontWeight:400},'restore bundled font');
   phase = 'live font family and bold changes preserve tmux';
-  await window.webContents.executeJavaScript('window.__fixtureSetFont("JetBrains Mono",700)');
-  await until(async () => { const state = await inspect(); return state?.fontWeight === 700 && state.fontFamily.includes('JetBrains Mono') && state.fontFaces.some(face => face.family.includes('JetBrains Mono') && face.weight === '700' && face.status === 'loaded'); }, phase);
+  await selectFonts({fontFamily:'JetBrains Mono',fontWeight:700},phase);
   await input("printf 'RENDER_%s\\n' BOLD_RESPONSIVE\r");
   await until(async () => (await inspect())?.renderedText?.includes('RENDER_BOLD_RESPONSIVE'), 'input after bold font');
   metrics.boldFont = await inspect();
   assert.equal(metrics.boldFont.sameTerminal, true);
   assert.equal(metrics.boldFont.type, 'alternate');
+  assert.equal(metrics.boldFont.fontWeight,400);
+  assert.equal(metrics.boldFont.fontSelection.fontWeight,700);
   assert.equal(metrics.boldFont.fontWeightBold, 700);
-  assert.ok(metrics.boldFont.fontFaces.some(face => face.family.includes('JetBrains Mono') && face.weight === '400' && face.status === 'loaded'), 'xterm must measure the real regular face, never an unloaded fallback');
+  const alias=metrics.boldFont.fontFamily.split(',')[0].replaceAll('"','');
+  assert.ok(metrics.boldFont.fontFaces.some(face => face.family.replaceAll('"','')===alias && face.weight === '400' && face.status === 'loaded'), 'xterm must measure the loaded composite normal slot');
   assert.ok(Math.abs(metrics.boldFont.cols - metrics.before.cols) <= 3, 'the two fonts have similar monospaced cell widths; a much wider grid indicates fallback measurement');
   await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   await fs.writeFile(reportFile + '.bold.png', (await window.webContents.capturePage()).toPNG());
-  await window.webContents.executeJavaScript('window.__fixtureSetFont("DejaVu Sans Mono",400)');
-  await until(async () => { const state = await inspect(); return state?.fontWeight === 400 && state.fontFamily.includes('DejaVu Sans Mono') && state.cols === metrics.before.cols && state.rows === metrics.before.rows; }, 'restore regular font and terminal grid');
+  await selectFonts({fontFamily:'DejaVu Sans Mono',fontWeight:400},'restore regular font');
+  await until(async () => { const state = await inspect(); return state?.cols === metrics.before.cols && state.rows === metrics.before.rows; }, 'restore regular font and terminal grid');
   metrics.regularFont = await inspect();
   assert.equal(metrics.regularFont.sameTerminal, true);
   assert.equal(metrics.regularFont.type, 'alternate');

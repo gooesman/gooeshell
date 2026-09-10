@@ -8,6 +8,7 @@ import {execFile} from 'node:child_process';
 import {Store,cleanProfile} from './store';
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,renameLocalPath} from './local-files';
+import {systemFontCatalog} from './font-catalog';
 import type {AppEvent,FileListing,RemoteRequest} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let shuttingDown=false;
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
@@ -25,6 +26,7 @@ async function fonts():Promise<string[]>{
 }
 const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','chmod','runFile']);
 app.whenReady().then(async()=>{
+ void systemFontCatalog().catch(()=>{});
  app.setName('gooeshell');if(process.platform==='win32')app.setAppUserModelId('com.gooesman.gooeshell');store=new Store(app.getPath('userData'));
  worker=new Worker(path.join(__dirname,'worker.js'),{workerData:{knownHostsFile:path.join(app.getPath('userData'),'known-hosts.json')}});
  worker.on('message',message=>{if(message.event){if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',message.event as AppEvent);return;}const waiting=pending.get(message.id);if(waiting){pending.delete(message.id);message.error?waiting.reject(new Error(message.error)):waiting.resolve(message.value);}});
@@ -65,6 +67,7 @@ app.whenReady().then(async()=>{
    case 'mkdir':return value.side==='local'?fs.mkdir(localPath(value.path)):remote('mkdir',value);
    case 'rename':return value.side==='local'?renameLocalPath(value.path,value.destination):remote('rename',value);
    case 'fonts':return fonts();
+   case 'fontCatalog':return systemFontCatalog();
    case 'readClipboard':return clipboard.readText();
    case 'writeClipboard':if(typeof value!=='string'||value.length>16*1024*1024)throw new Error('复制内容过大');clipboard.writeText(value);return;
    case 'backgroundData':{if(!value)return'';const p=localPath(value);const ext=path.extname(p).toLowerCase();const mime:Record<string,string>={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'};if(!mime[ext])throw new Error('背景支持PNG/JPEG/WebP图片');if((await fs.stat(p)).size>12*1024*1024)throw new Error('请选择小于12MB的背景图片');return`data:${mime[ext]};base64,${(await fs.readFile(p)).toString('base64')}`;}

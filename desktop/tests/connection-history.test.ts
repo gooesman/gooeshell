@@ -115,11 +115,22 @@ test('history display, compact files button, and font weight migrate and persist
   await store.saveSettings({...legacy,showConnectionHistory:false,filesToggleIconOnly:true,fontWeight:700});
   const persisted=await new Store(directory).settings();
   assert.deepEqual(persisted,{...legacy,showConnectionHistory:false,filesToggleIconOnly:true,fontWeight:700});
-  await fs.writeFile(file,JSON.stringify({...persisted,showConnectionHistory:'false',filesToggleIconOnly:1,fontWeight:650} as unknown as AppSettings));
+  await fs.writeFile(file,JSON.stringify({...persisted,showConnectionHistory:'false',filesToggleIconOnly:1,fontWeight:1001} as unknown as AppSettings));
   const invalid=await store.settings();
   assert.equal(invalid.showConnectionHistory,defaultSettings.showConnectionHistory);
   assert.equal(invalid.filesToggleIconOnly,defaultSettings.filesToggleIconOnly);
   assert.equal(invalid.fontWeight,defaultSettings.fontWeight);
+}));
+
+test('independent Chinese weight preserves the legacy shared choice and persists without changing English',async()=>fixture(async directory=>{
+  const file=path.join(directory,'settings.json');const store=new Store(directory);
+  await fs.writeFile(file,JSON.stringify({fontWeight:700,fontFamily:'DejaVu Sans Mono',chineseFont:'Microsoft YaHei'}));
+  const old=await store.settings();assert.equal(old.fontWeight,700);assert.equal(old.chineseFontWeight,700);
+  await store.saveSettings({...old,fontWeight:400,chineseFontWeight:290});
+  const saved=await new Store(directory).settings();assert.equal(saved.fontWeight,400);assert.equal(saved.chineseFontWeight,290);
+  assert.equal(saved.chineseFont,'Microsoft YaHei');
+  await fs.writeFile(file,JSON.stringify({...saved,chineseFontWeight:-1}));
+  assert.equal((await store.settings()).chineseFontWeight,400);
 }));
 
 test('host key preferences are isolated by address and port and never add saved servers',async()=>fixture(async directory=>{

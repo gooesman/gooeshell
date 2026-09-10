@@ -1,3 +1,4 @@
+import type {FontFamilyInfo} from './font-types';
 export interface HostProfile {
   id: string; name: string; host: string; port: number; username: string;
   auth: 'password' | 'key' | 'agent'; privateKeyPath?: string;
@@ -6,7 +7,7 @@ export interface HostProfile {
 export interface AppSettings {
   theme: 'dark' | 'light';
   showConnectionHistory: boolean; filesToggleIconOnly: boolean;
-  fontWeight: 400 | 700;
+  fontWeight: number; chineseFontWeight: number;
   shortcutSchemaVersion: number;
   fontFamily: string; chineseFont: string; fontSize: number; lineHeight: number;
   cursorBlink: boolean; copyOnSelect: boolean; rightClickPaste: boolean;
@@ -72,6 +73,7 @@ export interface DesktopApi {
   mkdir(request: RemoteRequest & { side: 'local' | 'remote' }): Promise<void>;
   rename(request: RemoteRequest & { side: 'local' | 'remote'; destination: string }): Promise<void>;
   fonts(): Promise<string[]>;
+  fontCatalog(): Promise<FontFamilyInfo[]>;
   backgroundData(path: string): Promise<string>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<void>;

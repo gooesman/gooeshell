@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('gooeshell', {
   terminalBinaryInput: (id, data) => send('terminalBinaryInput', id, data),
   terminalResize: (id, cols, rows) => send('terminalResize', id, cols, rows),
   terminalAck: (id, bytes) => send('terminalAck', id, bytes),
+  fontCatalog: () => ipcRenderer.invoke('terminal-fixture:font-catalog'),
   onEvent: callback => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('terminal-fixture:event', listener);

@@ -81,3 +81,5 @@
 .font-family-field {
   align-content: start;
 }
+.font-family-field .font-weight-label { margin-top: 10px; }
+.terminal-font-warning { position: absolute; left: 20px; bottom: 12px; max-width: calc(100% - 40px); padding: 7px 10px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); font-size: 11px; z-index: 4; }

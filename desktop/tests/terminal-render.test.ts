@@ -7,7 +7,7 @@ import { createServer as createNetServer } from 'node:net';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
-test('actual TerminalView preserves tmux across themes and bold fonts, and sends terminal query replies', { skip: process.env.GOOESHELL_RENDER_WSL_TEST === '1' ? false : 'Set GOOESHELL_RENDER_WSL_TEST=1 with Electron, built main, Ubuntu-24.04 and tmux installed', timeout: 65_000 }, async t => {
+test('actual TerminalView preserves tmux and renders independent Chinese and English font weights', { skip: process.env.GOOESHELL_RENDER_WSL_TEST === '1' ? false : 'Set GOOESHELL_RENDER_WSL_TEST=1 with Electron, built main, Ubuntu-24.04 and tmux installed', timeout: 65_000 }, async t => {
   const root = process.cwd();
   const artifacts = await fs.mkdtemp(path.resolve('../.build/terminal-render-'));
   const report = path.join(artifacts, 'result.json');
@@ -36,10 +36,16 @@ test('actual TerminalView preserves tmux across themes and bold fonts, and sends
   assert.equal(result.success, true, JSON.stringify(result, null, 2) + stderr);
   assert.equal(result.queries.length, 3);
   assert.equal(result.acked, result.bytes);
+  assert.ok(result.firstResizeMs<=result.catalogReturnedMs,'initial terminal sizing must not wait for system font enumeration');
   assert.equal(result.lightTheme.sameTerminal, true);
   assert.equal(result.darkTheme.sameTerminal, true);
   assert.equal(result.boldFont.sameTerminal, true);
-  assert.equal(result.boldFont.fontWeight, 700);
+  assert.equal(result.boldFont.fontWeight, 400);
+  assert.equal(result.boldFont.fontSelection.fontWeight, 700);
+  assert.equal(result.chineseBold.english.hash,result.chineseRegular.english.hash);
+  assert.notEqual(result.chineseBold.chinese.hash,result.chineseRegular.chinese.hash);
+  assert.equal(result.systemChineseBold.english.hash,result.systemChineseRegular.english.hash);
+  assert.notEqual(result.systemChineseBold.chinese.hash,result.systemChineseRegular.chinese.hash);
   assert.equal(result.regularFont.sameTerminal, true);
   assert.equal(result.regularFont.fontWeight, 400);
   assert.match(result.regularFont.text, /RENDER_BOLD_RESPONSIVE/);

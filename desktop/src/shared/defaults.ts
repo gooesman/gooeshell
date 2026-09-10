@@ -1,7 +1,7 @@
 import type { AppSettings } from './types';
 export const defaultSettings: AppSettings = {
   theme: 'dark',
-  showConnectionHistory: true, filesToggleIconOnly: true, fontWeight: 400,
+  showConnectionHistory: true, filesToggleIconOnly: true, fontWeight: 400, chineseFontWeight: 400,
   shortcutSchemaVersion: 2,
   fontFamily: 'DejaVu Sans Mono', chineseFont: 'Microsoft YaHei', fontSize: 14,
   lineHeight: 1.1, cursorBlink: false, copyOnSelect: false, rightClickPaste: false,

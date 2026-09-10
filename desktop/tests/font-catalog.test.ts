@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
-import {availableFontFamilies, bundledFontFamilies, fontChoices, terminalFontLoads} from '../src/shared/fonts.ts';
+import {availableFontFamilies,bundledFontFamilies,fontChoices,terminalFontLoads,mergeFontCatalog,findFont,availableWeights,selectFontFace,chineseUnicodeRange,englishUnicodeRange} from '../src/shared/fonts.ts';
 
 test('font choices recommend only available families and retain missing saved choices separately', () => {
   const installed = ['Consolas', '@宋体', '宋体', 'Custom Terminal', 'consolas'];
@@ -20,6 +20,21 @@ test('font choices recommend only available families and retain missing saved ch
   const loads = terminalFontLoads({fontFamily: 'JetBrains Mono', chineseFont: '宋体', fontWeight: 700, fontSize: 14});
   assert.ok(loads.includes('400 14px "JetBrains Mono"'), 'xterm measures the regular face even when text is bold');
   assert.ok(loads.includes('700 14px "JetBrains Mono"'));
+});
+
+test('independent weights use physical faces and partition Chinese and Latin characters without overlap',()=>{
+  const catalog=mergeFontCatalog([{family:'Test Chinese',faces:[{weight:290,style:'normal',localNames:['Test Light']},{weight:400,style:'normal',localNames:['Test Regular']},{weight:700,style:'normal',localNames:['Test Bold']}]}]);
+  const english=findFont(catalog,'DejaVu Sans Mono')!,chinese=findFont(catalog,'Test Chinese')!;
+  assert.deepEqual(availableWeights(chinese),[290,400,700]);
+  assert.equal(selectFontFace(english,400)?.weight,400);assert.deepEqual(selectFontFace(chinese,700)?.localNames,['Test Bold']);
+  assert.equal(selectFontFace(chinese,300)?.weight,290);
+  const parse=(input:string)=>input.split(',').map(range=>range.slice(2).split('-').map(value=>parseInt(value,16)));
+  const en=parse(englishUnicodeRange),zh=parse(chineseUnicodeRange);
+  const contains=(ranges:number[][],point:number)=>ranges.some(([from,to])=>point>=from&&point<=to);
+  for(const point of [0x20,0x41,0x2500,0x1f600]){assert.ok(contains(en,point));assert.ok(!contains(zh,point));}
+  for(const point of [0x3002,0x4e2d,0xff21,0x20000,0x323af]){assert.ok(contains(zh,point));assert.ok(!contains(en,point));}
+  const all=[...en,...zh].sort((a,b)=>a[0]-b[0]);assert.equal(all[0][0],0);assert.equal(all.at(-1)![1],0x10ffff);
+  for(let i=1;i<all.length;i++)assert.equal(all[i][0],all[i-1][1]+1);
 });
 
 test('every bundled family has actual regular and bold font assets with correct metadata', async () => {

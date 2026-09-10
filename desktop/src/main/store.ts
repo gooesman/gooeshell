@@ -16,7 +16,9 @@ export function cleanSettings(input:AppSettings):AppSettings {
   const result=structuredClone(defaultSettings);
   if(!input||typeof input!=='object')return result;
   if(input.theme==='dark'||input.theme==='light')result.theme=input.theme;
-  if(input.fontWeight===400||input.fontWeight===700)result.fontWeight=input.fontWeight;
+  if(Number.isInteger(input.fontWeight)&&input.fontWeight>=1&&input.fontWeight<=1000)result.fontWeight=input.fontWeight;
+  result.chineseFontWeight=result.fontWeight;
+  if(Number.isInteger(input.chineseFontWeight)&&input.chineseFontWeight>=1&&input.chineseFontWeight<=1000)result.chineseFontWeight=input.chineseFontWeight;
   for(const field of ['fontFamily','chineseFont','backgroundImage'] as const)if(typeof input[field]==='string'&&input[field].length<2048&&!input[field].includes('\0'))result[field]=input[field];
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly'] as const)if(typeof input[field]==='boolean')result[field]=input[field];

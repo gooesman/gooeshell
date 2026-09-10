@@ -17,4 +17,6 @@ The DejaVu Sans Mono files in `gooeshell/fonts/` are unmodified files from the o
 
 The graphical application bundles DejaVu Sans Mono 2.37, JetBrains Mono 2.304, and IBM Plex Mono with regular and bold faces in `desktop/public/fonts/`. That directory contains the upstream revisions, original licenses, and provenance in its README. System fonts are enumerated from the user's computer and are not redistributed.
 
+Independent Latin/CJK weights use standard [CSS composite font faces and Unicode ranges](https://www.w3.org/TR/css-fonts-4/#composite-fonts). Windows font enumeration filters simulated WPF faces and reads full/PostScript names from the [OpenType name table](https://learn.microsoft.com/en-us/typography/opentype/spec/name), including individual TTC collection faces. No xterm.js or WebGL internals are patched for this feature.
+
 The import preserves dependency submodule URLs and commits. Clone with `--recurse-submodules`.
