@@ -1,6 +1,6 @@
 {
   "name": "gooeshell",
-  "version": "0.2.0-preview.4",
+  "version": "0.2.0-preview.5",
   "private": true,
   "description": "Graphical SSH and SFTP workspace for Windows",
   "author": "gooesman",
@@ -58,8 +58,14 @@
       "signExecutable": false
     },
     "extraResources": [
-      { "from": "assets/icon.png", "to": "icon.png" },
-      { "from": "assets/icon.ico", "to": "icon.ico" }
+      {
+        "from": "assets/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "assets/icon.ico",
+        "to": "icon.ico"
+      }
     ],
     "extraFiles": [
       {
