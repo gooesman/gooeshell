@@ -4,7 +4,10 @@
   "private": true,
   "description": "Graphical SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
-  "repository": { "type": "git", "url": "https://github.com/gooesman/gooeshell.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gooesman/gooeshell.git"
+  },
   "author": "gooesman",
   "license": "MIT",
   "main": "dist-main/main/main.js",
@@ -61,7 +64,10 @@
       "signExecutable": false
     },
     "mac": {
-      "target": ["zip", "dmg"],
+      "target": [
+        "zip",
+        "dmg"
+      ],
       "icon": "assets/icon.png",
       "category": "public.app-category.developer-tools",
       "minimumSystemVersion": "13.0",
@@ -70,7 +76,10 @@
       "notarize": false
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "assets/icon.png",
       "category": "System;TerminalEmulator",
       "maintainer": "gooesman"
@@ -83,9 +92,7 @@
       {
         "from": "assets/icon.ico",
         "to": "icon.ico"
-      }
-    ],
-    "extraFiles": [
+      },
       {
         "from": "LICENSE",
         "to": "LICENSE-gooeshell.txt"

@@ -25,14 +25,19 @@ if (mode === 'verify') {
   const artifacts = [];
   for (const extension of extensions) {
     const filename = `gooeshell-${version}-${target}-${arch}.${extension}`;
-    const source = path.resolve('release', filename);
+    // electron-builder uses each Linux package format's architecture spelling.
+    // Match that exact versioned file; keep the public download names consistent.
+    const sourceArch = target === 'linux' && arch === 'x64'
+      ? { AppImage: 'x86_64', deb: 'amd64' }[extension] : arch;
+    const sourceFilename = `gooeshell-${version}-${target}-${sourceArch}.${extension}`;
+    const source = path.resolve('release', sourceFilename);
     const size = (await fs.stat(source)).size;
     if (size === 0) throw new Error(`Empty artifact: ${filename}`);
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(source)) hash.update(chunk);
     const sha256 = hash.digest('hex');
     await fs.copyFile(source, path.join(destination, filename));
-    artifacts.push({ filename, bytes: size, sha256 });
+    artifacts.push({ filename, sourceFilename, bytes: size, sha256 });
   }
   const run = process.env.GITHUB_RUN_ID;
   const repository = process.env.GITHUB_REPOSITORY;
