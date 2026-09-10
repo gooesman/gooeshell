@@ -75,3 +75,4 @@ dhat-heap.json
 /gooeshell/*.log
 /gooeshell-startup.log
 /test-output/
+/.build/

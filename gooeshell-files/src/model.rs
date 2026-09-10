@@ -43,7 +43,10 @@ pub fn human_bytes(bytes: u64) -> String {
 }
 
 pub fn visible_text(text: &str, max_columns: usize) -> String {
-    let safe: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let safe: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     let mut columns = 0;
     safe.graphemes(true)
         .take_while(|g| {
@@ -54,12 +57,17 @@ pub fn visible_text(text: &str, max_columns: usize) -> String {
 }
 
 pub fn tail_text(text: &str, max_columns: usize) -> String {
-    let safe: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let safe: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     let mut columns = 0;
     let mut tail = Vec::new();
     for grapheme in safe.graphemes(true).rev() {
         columns += unicode_column_width(grapheme, None);
-        if columns > max_columns { break; }
+        if columns > max_columns {
+            break;
+        }
         tail.push(grapheme);
     }
     tail.reverse();
@@ -117,7 +125,10 @@ mod tests {
 
     #[test]
     fn remote_paths_are_not_windows_paths() {
-        assert_eq!(remote_join("/home/user/", "中文 file").unwrap(), "/home/user/中文 file");
+        assert_eq!(
+            remote_join("/home/user/", "中文 file").unwrap(),
+            "/home/user/中文 file"
+        );
         assert_eq!(remote_join("/", "root").unwrap(), "/root");
         assert_eq!(remote_join("/a", "/b").unwrap(), "/b");
         assert_eq!(remote_parent("/home/user/"), "/home");
@@ -138,18 +149,43 @@ mod tests {
 
     #[test]
     fn resume_rejects_wrong_or_short_prefixes() {
-        assert!(compare_prefix(&mut Cursor::new(b"abcdef"), &mut Cursor::new(b"abc"), 3, |_| Ok(())).is_ok());
-        assert!(compare_prefix(&mut Cursor::new(b"abcdef"), &mut Cursor::new(b"abx"), 3, |_| Ok(())).is_err());
-        assert!(compare_prefix(&mut Cursor::new(b"abcdef"), &mut Cursor::new(b"ab"), 3, |_| Ok(())).is_err());
+        assert!(compare_prefix(
+            &mut Cursor::new(b"abcdef"),
+            &mut Cursor::new(b"abc"),
+            3,
+            |_| Ok(())
+        )
+        .is_ok());
+        assert!(compare_prefix(
+            &mut Cursor::new(b"abcdef"),
+            &mut Cursor::new(b"abx"),
+            3,
+            |_| Ok(())
+        )
+        .is_err());
+        assert!(compare_prefix(
+            &mut Cursor::new(b"abcdef"),
+            &mut Cursor::new(b"ab"),
+            3,
+            |_| Ok(())
+        )
+        .is_err());
     }
 
     #[test]
     fn compare_can_be_cancelled_between_chunks() {
         let bytes = vec![7u8; CHUNK * 3];
-        let result = compare_prefix(&mut Cursor::new(&bytes), &mut Cursor::new(&bytes), bytes.len() as u64, |n| {
-            if n >= CHUNK as u64 { bail!("cancelled") }
-            Ok(())
-        });
+        let result = compare_prefix(
+            &mut Cursor::new(&bytes),
+            &mut Cursor::new(&bytes),
+            bytes.len() as u64,
+            |n| {
+                if n >= CHUNK as u64 {
+                    bail!("cancelled")
+                }
+                Ok(())
+            },
+        );
         assert!(result.is_err());
     }
 }

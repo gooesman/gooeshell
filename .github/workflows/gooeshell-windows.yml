@@ -48,6 +48,35 @@ jobs:
           $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
           cargo build --locked --release -p wezterm -p wezterm-gui -p gooeshell-launcher -p gooeshell-files
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate real SFTP roundtrips and recovery
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check -r gooeshell-files/tests-support/requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path test-output -Force | Out-Null
+          $ready = Join-Path $pwd 'test-output/sftp.ready'
+          $fixture = Start-Process -FilePath (Get-Command python).Source -WindowStyle Hidden -PassThru -ArgumentList @('gooeshell-files/tests-support/sftp_fixture.py','--root','test-output/sftp','--ready',$ready,'--lifetime','600') -RedirectStandardOutput test-output/server.log -RedirectStandardError test-output/server-error.log
+          try {
+            for ($i = 0; $i -lt 100 -and -not (Test-Path -LiteralPath $ready); $i++) {
+              if ($fixture.HasExited) { Get-Content test-output/server-error.log; throw 'SFTP fixture exited' }
+              Start-Sleep -Milliseconds 100
+            }
+            if (-not (Test-Path -LiteralPath $ready)) { throw 'SFTP fixture did not become ready' }
+            $env:GOOESHELL_SFTP_TEST_READY = $ready
+            $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
+            cargo test --locked --release -p gooeshell-files loopback_sftp_roundtrip_and_resume -- --ignored --nocapture --test-threads=1
+            if ($LASTEXITCODE -ne 0) { throw 'SFTP integration test failed' }
+          } finally {
+            New-Item -ItemType File -Path "$ready.stop" -Force | Out-Null
+          }
+      - name: Validate terminal configuration and interactions
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path gooeshell/tests/tmp -Force | Out-Null
+          $env:GOOESHELL_DATA_DIR = Join-Path $pwd 'gooeshell/tests/tmp'
+          $result = & target/release/wezterm.exe --config-file gooeshell/tests/runtime_spec.lua show-keys 2>&1 | Out-String
+          Write-Output $result
+          if ($result -notmatch 'PASS: real WezTerm config' -or $result -notmatch 'PASS: 42') { throw 'Lua runtime test did not pass' }
       - name: Package portable application
         shell: pwsh
         run: |
@@ -58,6 +87,13 @@ jobs:
           }
           Copy-Item -LiteralPath 'assets/windows/mesa' -Destination $bundle -Recurse
           Copy-Item -LiteralPath 'gooeshell' -Destination $bundle -Recurse
+          # Test fixture state is not part of the portable application.
+          $testState = Join-Path $pwd "$bundle/gooeshell/tests/tmp"
+          $bundleRoot = [IO.Path]::GetFullPath((Join-Path $pwd $bundle))
+          if (Test-Path -LiteralPath $testState) {
+            if (-not [IO.Path]::GetFullPath($testState).StartsWith($bundleRoot + [IO.Path]::DirectorySeparatorChar)) { throw 'Unexpected test-state path' }
+            Remove-Item -LiteralPath $testState -Recurse -Force
+          }
           Copy-Item -LiteralPath 'licenses' -Destination $bundle -Recurse
           Copy-Item -LiteralPath 'LICENSE.md','UPSTREAM.md','README.md' -Destination $bundle
           git rev-parse HEAD | Set-Content "$bundle/BUILD.txt"
