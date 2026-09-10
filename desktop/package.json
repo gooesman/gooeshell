@@ -1,18 +1,19 @@
 {
   "name": "gooeshell",
-  "version": "0.2.0-preview.3",
+  "version": "0.2.0-preview.4",
   "private": true,
   "description": "Graphical SSH and SFTP workspace for Windows",
   "author": "gooesman",
   "license": "MIT",
   "main": "dist-main/main/main.js",
   "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
     "build:main": "tsc -p tsconfig.main.json",
     "build": "npm run build:main && tsc -p tsconfig.json && vite build",
     "dev": "node scripts/dev.mjs",
     "start": "electron .",
     "test": "tsx --test tests/*.test.ts",
-    "pack": "npm run build && electron-builder --win dir --x64"
+    "pack": "node node_modules/electron/install.js && npm run build && electron-builder --win dir --x64 --publish never"
   },
   "dependencies": {
     "@xterm/xterm": "6.0.0",
@@ -53,8 +54,13 @@
     "npmRebuild": false,
     "win": {
       "target": "dir",
-      "signAndEditExecutable": false
+      "icon": "assets/icon.ico",
+      "signExecutable": false
     },
+    "extraResources": [
+      { "from": "assets/icon.png", "to": "icon.png" },
+      { "from": "assets/icon.ico", "to": "icon.ico" }
+    ],
     "extraFiles": [
       {
         "from": "LICENSE",

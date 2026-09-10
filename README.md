@@ -2,6 +2,8 @@
 
 Windows 优先的图形 SSH 终端与文件工作区。默认纯黑终端，下方是可以收起的本地 / 远程双栏资源管理器。
 
+应用使用白鹅与橙色 `>_` 提示符图标，桌面程序、窗口及界面品牌保持一致。
+
 当前图形版源码位于 **[desktop/](desktop/)**，采用 Electron、React、TypeScript、xterm.js WebGL 和 ssh2。SSH 与文件操作在后台 Worker 中执行，终端输出有流量控制。
 
 ## 使用
@@ -37,7 +39,7 @@ tmux 已在本机真实 SSH、Linux PTY 环境验证启动、分屏、尺寸变�
 
 ## 开发
 
-需要 Node.js 22：
+需要 Node.js 22.12 或更新版本；安装依赖时会下载对应 Electron 运行组件：
 
 ```powershell
 git clone https://github.com/gooesman/gooeshell.git
