@@ -1,0 +1,19 @@
+[package]
+name = "gooeshell-files"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Independent SFTP file pane for gooeshell"
+
+[dependencies]
+anyhow.workspace = true
+base64 = { workspace = true, features = ["std"] }
+clap.workspace = true
+dirs-next.workspace = true
+libssh2-sys = "0.3"
+ssh2 = { workspace = true, features = ["openssl-on-win32"] }
+termwiz = { workspace = true, default-features = false }
+unicode-segmentation.workspace = true
+
+[features]
+vendored-openssl = ["ssh2/vendored-openssl"]
