@@ -27,7 +27,7 @@ jobs:
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '256'
       CARGO_INCREMENTAL: '0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           persist-credentials: false
