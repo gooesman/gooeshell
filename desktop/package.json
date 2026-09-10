@@ -1,8 +1,10 @@
 {
   "name": "gooeshell",
-  "version": "0.2.0-preview.9",
+  "version": "0.2.0-preview.10",
   "private": true,
-  "description": "Graphical SSH and SFTP workspace for Windows",
+  "description": "Graphical SSH and SFTP workspace for Windows, macOS and Linux",
+  "homepage": "https://github.com/gooesman/gooeshell",
+  "repository": { "type": "git", "url": "https://github.com/gooesman/gooeshell.git" },
   "author": "gooesman",
   "license": "MIT",
   "main": "dist-main/main/main.js",
@@ -13,7 +15,7 @@
     "dev": "node scripts/dev.mjs",
     "start": "electron .",
     "test": "tsx --test tests/*.test.ts",
-    "pack": "node node_modules/electron/install.js && npm run build && electron-builder --win dir --x64 --publish never"
+    "pack": "node node_modules/electron/install.js && npm run build && electron-builder --publish never"
   },
   "dependencies": {
     "@xterm/xterm": "6.0.0",
@@ -41,6 +43,7 @@
   "build": {
     "appId": "com.gooesman.gooeshell",
     "productName": "gooeshell",
+    "artifactName": "gooeshell-${version}-${os}-${arch}.${ext}",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
@@ -56,6 +59,21 @@
       "target": "dir",
       "icon": "assets/icon.ico",
       "signExecutable": false
+    },
+    "mac": {
+      "target": ["zip", "dmg"],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.developer-tools",
+      "minimumSystemVersion": "13.0",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "notarize": false
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "assets/icon.png",
+      "category": "System;TerminalEmulator",
+      "maintainer": "gooesman"
     },
     "extraResources": [
       {

@@ -22,7 +22,7 @@ export const bundledFontCatalog: FontFamilyInfo[] = [
 
 const recommendations = {
   english: ['DejaVu Sans Mono', 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Mono', 'Cascadia Code', 'Consolas', 'Ubuntu Mono', 'Noto Sans Mono'],
-  chinese: ['Microsoft YaHei', '微软雅黑', 'Microsoft YaHei UI', '微软雅黑 UI', 'Sarasa Mono SC', '等距更纱黑体 SC', 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans SC', 'Source Han Sans SC', '思源黑体', 'Microsoft JhengHei', '微軟正黑體', 'SimSun', '宋体'],
+  chinese: ['Microsoft YaHei', '微软雅黑', 'Microsoft YaHei UI', '微软雅黑 UI', 'PingFang SC', 'Sarasa Mono SC', '等距更纱黑体 SC', 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans SC', 'Source Han Sans SC', '思源黑体', 'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 'Heiti SC', 'Microsoft JhengHei', '微軟正黑體', 'SimSun', '宋体'],
 } as const;
 
 const identity = (font: string) => font.trim().toLocaleLowerCase();
@@ -94,13 +94,14 @@ export function fontChoices(installed: readonly string[], language: keyof typeof
   };
 }
 
+export function cssFontFamily(family:string):string{return ['serif','sans-serif','monospace'].includes(family)?family:JSON.stringify(family);}
 export function terminalFontFamily(settings: Pick<AppSettings, 'fontFamily' | 'chineseFont'>): string {
-  return `${JSON.stringify(settings.fontFamily)}, ${JSON.stringify(settings.chineseFont)}, monospace`;
+  return `${cssFontFamily(settings.fontFamily)}, ${cssFontFamily(settings.chineseFont)}, monospace`;
 }
 
 export function terminalFontLoads(settings: Pick<AppSettings, 'fontFamily' | 'chineseFont' | 'fontSize' | 'fontWeight'> & Partial<Pick<AppSettings,'chineseFontWeight'>>): string[] {
   // xterm measures cell dimensions with the normal face even when text is bold.
   const weights = [...new Set([400, settings.fontWeight, settings.chineseFontWeight??settings.fontWeight, 700])];
   return [...new Set([settings.fontFamily, settings.chineseFont])].flatMap(family =>
-    weights.map(weight => `${weight} ${settings.fontSize}px ${JSON.stringify(family)}`));
+    weights.map(weight => `${weight} ${settings.fontSize}px ${cssFontFamily(family)}`));
 }

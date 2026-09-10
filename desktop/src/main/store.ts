@@ -2,6 +2,7 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {defaultSettings,migrateDefaultShortcuts,normalizeShortcut} from '../shared/defaults';
+import {preferredChineseFont,systemFontCatalog} from './font-catalog';
 import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference} from '../shared/types';
 export function cleanProfile(input:HostProfile):HostProfile {
   if(!input||typeof input!=='object')throw new Error('连接配置无效');
@@ -89,7 +90,11 @@ export class Store {
       await this.write('host-key-preferences.json',safe.skipVerification?[...all,safe]:all);
     });
   }
-  async settings():Promise<AppSettings>{return cleanSettings(await this.read('settings.json'));}
+  async settings():Promise<AppSettings>{
+    const saved=await this.read('settings.json');const settings=cleanSettings(saved);
+    if(process.platform!=='win32'&&!saved?.chineseFont)settings.chineseFont=preferredChineseFont(await systemFontCatalog());
+    return settings;
+  }
   async saveProfile(profile:HostProfile){const safe=cleanProfile(profile);return this.serial('profiles.json',async()=>{const all=await this.profiles();await this.write('profiles.json',[...all.filter(p=>p.id!==safe.id),safe]);});}
   async deleteProfile(id:string){return this.serial('profiles.json',async()=>{await this.write('profiles.json',(await this.profiles()).filter(p=>p.id!==id));});}
   async saveSettings(settings:AppSettings){const safe=cleanSettings(settings);return this.serial('settings.json',()=>this.write('settings.json',safe));}

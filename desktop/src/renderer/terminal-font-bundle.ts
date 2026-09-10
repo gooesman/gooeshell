@@ -46,6 +46,8 @@ export async function acquireTerminalFont(settings:Selection,catalog:readonly Fo
         for(const logical of [400,700])for(const style of ['normal','italic'] as const){
           const face=selectFontFace(font,logical===400?wanted:Math.max(700,wanted),style);
           if(!face)continue;
+          // Generic system fallback has no font file; the trailing CSS family renders it.
+          if(!face.url&&!face.localNames.length)continue;
           // Let the browser synthesize ANSI bold for fonts that have no physical bold face.
           if(logical===700&&face.weight<700)continue;
           // Each language maps its physical face onto xterm's normal/bold slots.

@@ -21,7 +21,7 @@ async function localList(directory:string):Promise<FileListing>{
 }
 async function fonts():Promise<string[]>{
  const known=[...bundledFontFamilies];
- if(process.platform!=='win32')return known;
+ if(process.platform!=='win32')return availableFontFamilies((await systemFontCatalog()).map(font=>font.family));
  return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve(availableFontFamilies(Array.isArray(data)?data:typeof data==='string'?[data]:[]));}catch{resolve(known);}}));
 }
 const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','chmod','runFile']);

@@ -1,6 +1,6 @@
 # gooeshell
 
-Windows 优先的图形 SSH 终端与文件工作区。默认黑色主题，也可切换白色；文件区默认收起，展开后在终端下方显示远程资源管理器，本地栏和传输队列默认折叠。
+Windows 优先的图形 SSH 终端与文件工作区，同时提供 macOS 和 Linux 预览包。默认黑色主题，也可切换白色；文件区默认收起，展开后在终端下方显示远程资源管理器，本地栏和传输队列默认折叠。
 
 应用使用白鹅与橙色 `>_` 提示符图标，桌面程序、窗口及界面品牌保持一致。
 
@@ -8,7 +8,18 @@ Windows 优先的图形 SSH 终端与文件工作区。默认黑色主题，也�
 
 ## 使用
 
-从本仓库 **Actions → gooeshell Windows** 下载构建产物 `gooeshell-windows-x64`，完整解压后双击 **gooeshell.exe**，无需安装 Node.js。
+从 [GitHub Releases](https://github.com/gooesman/gooeshell/releases) 下载对应平台的包，无需安装 Node.js。每个包名含版本、系统和处理器架构，发布页附 SHA-256 校验文件及构建提交信息。
+
+| 平台 | 下载与打开方式 |
+| --- | --- |
+| Windows x64 | `win-x64.zip`，完整解压后打开 `gooeshell.exe`。 |
+| Mac Apple Silicon（M 系列） | `mac-arm64.dmg`，拖入“应用程序”；也提供 ZIP。 |
+| Mac Intel | `mac-x64.dmg`，拖入“应用程序”；也提供 ZIP。 |
+| Linux x64 | Ubuntu / Debian 可安装 `linux-x64.deb`；另提供 `linux-x64.AppImage`，赋予执行权限后运行。 |
+
+Mac 版本要求 macOS 13 或更新版本，与所用 [Electron 44 的系统要求](https://www.electronjs.org/zh/docs/latest/breaking-changes)一致。目前采用本地临时签名，尚未完成 Apple Developer ID 签名与公证；首次打开可能需要按 [Apple 的说明](https://support.apple.com/guide/mac-help/mh40616/mac)，在“系统设置 → 隐私与安全性”中允许打开。Linux 预览包在 Ubuntu 24.04 构建与验证，其他发行版的完整桌面兼容性仍待实机验证。
+
+开发构建可从 **Actions → gooeshell Desktop** 下载对应平台的构建产物。
 
 点击“新建连接”，填写主机、端口、用户名，选择密码、私钥或 SSH Agent。默认首次连接会显示 SHA-256 指纹，可仅信任本次或保存。密码和私钥口令只留在当前连接内存中，不写入配置；取消“允许保存服务器指纹”后仍需确认，但不读取或保存旧指纹记录。
 
@@ -27,7 +38,7 @@ Windows 优先的图形 SSH 终端与文件工作区。默认黑色主题，也�
 
 默认键位：`Ctrl+Shift+P` 快速连接、`Ctrl+Shift+F1` 设置、`Ctrl+Shift+[` 折叠 / 展开侧边栏、`Ctrl+Shift+]` 显示 / 隐藏终端标题及标签栏、`Ctrl+Shift+←/→` 切换前后终端标签、`Ctrl+Shift+E` 收起 / 展开文件区、`F11` 全屏、`Ctrl+Shift+F11` 纯终端、`Ctrl+Shift+C/V` 复制 / 粘贴。标题及标签栏默认显示，进入全屏或纯终端模式时保留其显示状态，也可随时使用快捷键隐藏、恢复。旧版连接与设置的默认键位自动迁移，已有自定义键位保留；旧绑定占用新增动作的默认键时，新动作保持未设置，可在设置页自行分配。显式鼠标绑定优先于“右键粘贴”偏好；文件列表右键保留文件菜单。
 
-在 **设置 → 字体与外观** 中，英文字重与中文字重可分别选择，例如英文普通 400、中文粗体 700。下拉列表根据字体实际字形生成，过滤 Windows 模拟的粗体和斜体；某字体只有一种字重时会明确提示。更换字体会选择最接近的可用字重；旧版共用字重会同时迁移到中英文，保留原来的偏好。中文选项作用于 CJK 字符、全角字符和相应标点，英文字母、数字与终端线框保持独立。系统字体枚举在 Windows 上实现，首次后台读取后复用缓存，新安装字体需重启应用。
+在 **设置 → 字体与外观** 中，英文字重与中文字重可分别选择，例如英文普通 400、中文粗体 700。下拉列表根据字体实际字形生成，过滤 Windows 模拟的粗体和斜体；某字体只有一种字重时会明确提示。更换字体会选择最接近的可用字重；旧版共用字重会同时迁移到中英文，保留原来的偏好。中文选项作用于 CJK 字符、全角字符和相应标点，英文字母、数字与终端线框保持独立。系统字体首次读取后复用缓存，新安装字体需重启应用。Windows 使用系统字体接口，macOS / Linux 读取系统 OpenType / TTC 字体，Linux 同时支持 Fontconfig 目录；新平台首次启动会选择可用的中文字体。当前字重列表读取静态字体字形，可变字体的完整连续轴尚未展开。
 
 ## 当前边界
 
@@ -53,7 +64,7 @@ npm ci
 npm run dev
 ```
 
-`npm run build` 完整类型检查并构建；`npm test` 运行测试；`npm run pack` 输出 `desktop/release/win-unpacked/gooeshell.exe`。真实 SFTP 测试使用仅绑定 `127.0.0.1` 的临时服务器，CI 自动启动；Linux helper 在 Ubuntu 上实测。
+`npm run build` 完整类型检查并构建；`npm test` 运行测试；`npm run pack` 在当前系统打包，输出到 `desktop/release/`。Windows 可运行 `npm run pack -- --win --x64`，macOS 使用 `--mac --arm64` 或 `--mac --x64`，Linux 使用 `--linux --x64`。各平台由对应系统的 GitHub Runner 原生构建，真实 SFTP 测试使用仅绑定 `127.0.0.1` 的临时服务器；Linux helper 在 Ubuntu 上实测。
 
 ## 来源
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Plus, RefreshCw, ArrowUp, FolderOpen, Upload, PanelBottom, Maximize, Settings2, Server, Folder, FileText, FileCode2, Link2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Minus, Square, Sun, Moon, Check } from 'lucide-react';
 import { api, isPreview } from './api';
 import { defaultSettings } from '../shared/defaults';
+import { parentPath } from '../shared/file-paths';
 import ConnectionHome from './ConnectionHome';
 import './workspace.css';
 import FontSettings from './FontSettings';
@@ -25,7 +26,6 @@ function shortcutImpact(value: string) { if (!value || /Mouse/.test(value) || /^
 function bytes(value: number) { if (!Number.isFinite(value) || value < 0) return '—'; if (value < 1024) return `${value} B`; const unit = Math.min(4, Math.floor(Math.log(value) / Math.log(1024))); return `${(value / 1024 ** unit).toFixed(value / 1024 ** unit < 10 ? 1 : 0)} ${['B', 'KB', 'MB', 'GB', 'TB'][unit]}`; }
 function basename(path: string) { return path.replace(/[\\/]$/, '').split(/[\\/]/).pop() || path; }
 function joinPath(base: string, leaf: string, side: Side) { const sep = side === 'local' && base.includes('\\') ? '\\' : '/'; return base.replace(/[\\/]$/, '') + sep + leaf; }
-function parentPath(path: string, side: Side) { if (side === 'remote') return path.replace(/\/+$/, '').replace(/\/[^/]*$/, '') || '/'; const trimmed = path.replace(/[\\/]+$/, ''); const parent = trimmed.replace(/[\\/][^\\/]*$/, ''); return parent === trimmed || /^[A-Za-z]:$/.test(parent) ? (parent.match(/^[A-Za-z]:/)?.[0] || parent) + '\\' : parent; }
 function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
 function transferErrorMessage(message: string) { return /PERMISSION_DENIED|permission denied|权限不足/i.test(message) ? '文件传输权限不足。当前不支持 sudo 文件传输，请选择当前账号有权限的源文件和目标目录后重新传输。' : message; }
 function modeText(mode?: number) { if (mode === undefined) return '—'; return [0o400, 0o200, 0o100, 0o40, 0o20, 0o10, 0o4, 0o2, 0o1].map((bit, i) => mode & bit ? 'rwx'[i % 3] : '-').join(''); }
