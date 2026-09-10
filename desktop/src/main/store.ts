@@ -1,7 +1,7 @@
 import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {defaultSettings,migrateDefaultShortcuts} from '../shared/defaults';
+import {defaultSettings,migrateDefaultShortcuts,normalizeShortcut} from '../shared/defaults';
 import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference} from '../shared/types';
 export function cleanProfile(input:HostProfile):HostProfile {
   if(!input||typeof input!=='object')throw new Error('连接配置无效');
@@ -22,8 +22,8 @@ export function cleanSettings(input:AppSettings):AppSettings {
   for(const field of ['fontFamily','chineseFont','backgroundImage'] as const)if(typeof input[field]==='string'&&input[field].length<2048&&!input[field].includes('\0'))result[field]=input[field];
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
-  for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=input.shortcuts[id];
-  for(const id of ['previousTab','nextTab']){
+  for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=normalizeShortcut(input.shortcuts[id]);
+  for(const id of ['previousTab','nextTab','sidebar','terminalHeader']){
     if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)continue;
     const binding=result.shortcuts[id].toLowerCase();
     if(Object.entries(result.shortcuts).some(([other,value])=>other!==id&&value.toLowerCase()===binding))result.shortcuts[id]='';

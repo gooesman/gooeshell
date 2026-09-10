@@ -1430,16 +1430,19 @@ kbd {
   line-height:1.7;
   margin:14px 0
 }
-.fullscreen .sidebar,.zen .sidebar,.zen .titlebar,.zen .tabbar,.zen .files-area,.zen .splitter,.zen .statusbar {
+.fullscreen .sidebar,.zen .sidebar,.zen .files-area,.zen .splitter,.zen .statusbar {
+  display:none
+}
+.terminal-header-hidden .titlebar,.terminal-header-hidden .tabbar {
   display:none
 }
 .zen .terminal-region {
-  min-height:100vh;
+  min-height:0;
   margin:0;
   border:0;
   border-radius:0
 }
-.zen .zen-exit {
+.zen.terminal-header-hidden .zen-exit {
   display:flex
 }
 .zen-exit {

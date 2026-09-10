@@ -6,8 +6,17 @@ export const defaultSettings: AppSettings = {
   fontFamily: 'DejaVu Sans Mono', chineseFont: 'Microsoft YaHei', fontSize: 14,
   lineHeight: 1.1, cursorBlink: false, copyOnSelect: false, rightClickPaste: false,
   backgroundImage: '', backgroundOpacity: 0.15,
-  shortcuts: {connect:'Ctrl+Shift+P',settings:'Ctrl+Shift+F1',previousTab:'Ctrl+Shift+ArrowLeft',nextTab:'Ctrl+Shift+ArrowRight',files:'Ctrl+Shift+E',fullscreen:'F11',zen:'Ctrl+Shift+F11',copy:'Ctrl+Shift+C',paste:'Ctrl+Shift+V',search:'Ctrl+Shift+F',fontUp:'Ctrl+=',fontDown:'Ctrl+-'}
+  shortcuts: {connect:'Ctrl+Shift+P',settings:'Ctrl+Shift+F1',sidebar:'Ctrl+Shift+[',terminalHeader:'Ctrl+Shift+]',previousTab:'Ctrl+Shift+ArrowLeft',nextTab:'Ctrl+Shift+ArrowRight',files:'Ctrl+Shift+E',fullscreen:'F11',zen:'Ctrl+Shift+F11',copy:'Ctrl+Shift+C',paste:'Ctrl+Shift+V',search:'Ctrl+Shift+F',fontUp:'Ctrl+=',fontDown:'Ctrl+-'}
 };
+
+export function normalizeShortcut(value: string): string {
+  const parts = value.split('+');
+  if (!parts.slice(0, -1).some(part => part.toLowerCase() === 'shift')) return value;
+  const key = parts.at(-1);
+  if (key === '{') parts[parts.length - 1] = '[';
+  else if (key === '}') parts[parts.length - 1] = ']';
+  return parts.join('+');
+}
 
 export function migrateDefaultShortcuts(shortcuts: Record<string, string>, schemaVersion?: number) {
   const result = { ...shortcuts };

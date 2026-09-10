@@ -3,7 +3,7 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import {Store,cleanProfile} from '../src/main/store.ts';
-import {defaultSettings} from '../src/shared/defaults.ts';
+import {defaultSettings,normalizeShortcut} from '../src/shared/defaults.ts';
 import type {AppSettings,HostProfile,HostKeyPreference} from '../src/shared/types.ts';
 
 async function fixture(run:(directory:string)=>Promise<void>){
@@ -193,6 +193,8 @@ test('new shortcut defaults migrate once while custom bindings and existing conf
   const migrated=await store.settings();
   assert.equal(migrated.shortcuts.connect,'Ctrl+Shift+P');
   assert.equal(migrated.shortcuts.settings,'Ctrl+Shift+F1');
+  assert.equal(migrated.shortcuts.sidebar,'Ctrl+Shift+[');
+  assert.equal(migrated.shortcuts.terminalHeader,'Ctrl+Shift+]');
   assert.equal(migrated.shortcuts.previousTab,'Ctrl+Shift+ArrowLeft');
   assert.equal(migrated.shortcuts.nextTab,'Ctrl+Shift+ArrowRight');
   assert.equal(migrated.shortcuts.paste,'MouseMiddle');
@@ -213,8 +215,42 @@ test('new shortcut defaults migrate once while custom bindings and existing conf
   assert.equal(occupiedTabKeys.shortcuts.nextTab,'');
   await store.saveSettings(occupiedTabKeys);
   assert.deepEqual((await new Store(directory).settings()).shortcuts,occupiedTabKeys.shortcuts);
+  await fs.writeFile(file,JSON.stringify({shortcuts:{...old,search:'Ctrl+Shift+['}}));
+  const occupiedSidebar=await store.settings();
+  assert.equal(occupiedSidebar.shortcuts.search,'Ctrl+Shift+[');
+  assert.equal(occupiedSidebar.shortcuts.sidebar,'');
+  await fs.writeFile(file,JSON.stringify({shortcuts:{...old,copy:'Ctrl+Shift+]'}}));
+  const occupiedHeader=await store.settings();
+  assert.equal(occupiedHeader.shortcuts.copy,'Ctrl+Shift+]');
+  assert.equal(occupiedHeader.shortcuts.terminalHeader,'');
+  await fs.writeFile(file,JSON.stringify({shortcutSchemaVersion:2,shortcuts:{...old,search:'Ctrl+Shift+{',copy:'Ctrl+Shift+}'}}));
+  const legacyBraces=await store.settings();
+  assert.equal(legacyBraces.shortcuts.search,'Ctrl+Shift+[');
+  assert.equal(legacyBraces.shortcuts.copy,'Ctrl+Shift+]');
+  assert.equal(legacyBraces.shortcuts.sidebar,'');
+  assert.equal(legacyBraces.shortcuts.terminalHeader,'');
+  await store.saveSettings(legacyBraces);
+  assert.deepEqual((await new Store(directory).settings()).shortcuts,legacyBraces.shortcuts);
+  for(const sidebar of ['F3','','Ctrl+Shift+}']){
+    await fs.writeFile(file,JSON.stringify({shortcuts:{...old,sidebar}}));
+    assert.equal((await store.settings()).shortcuts.sidebar,normalizeShortcut(sidebar));
+  }
+  for(const terminalHeader of ['F4','','Ctrl+Shift+]','Ctrl+Shift+}']){
+    await fs.writeFile(file,JSON.stringify({shortcutSchemaVersion:2,shortcuts:{...old,terminalHeader}}));
+    const customHeader=await store.settings();
+    assert.equal(customHeader.shortcuts.terminalHeader,normalizeShortcut(terminalHeader));
+    await store.saveSettings(customHeader);
+    assert.equal((await new Store(directory).settings()).shortcuts.terminalHeader,normalizeShortcut(terminalHeader));
+  }
   await store.saveSettings({...migrated,shortcuts:{...migrated.shortcuts,connect:old.connect,settings:old.settings}});
   const reverted=await new Store(directory).settings();
   assert.equal(reverted.shortcuts.connect,old.connect);
   assert.equal(reverted.shortcuts.settings,old.settings);
 }));
+
+test('only shifted final brace keys normalize to their physical bracket keys',()=>{
+  assert.equal(normalizeShortcut('Ctrl+Shift+{'),'Ctrl+Shift+[');
+  assert.equal(normalizeShortcut('Shift+}'),'Shift+]');
+  assert.equal(normalizeShortcut('Ctrl+shift+{'),'Ctrl+shift+[');
+  for(const binding of ['{','Ctrl+}','Ctrl+Alt+[','Ctrl+Shift++','MouseMiddle','Ctrl+Shift+F1',''])assert.equal(normalizeShortcut(binding),binding);
+});

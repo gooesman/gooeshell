@@ -12,7 +12,7 @@ import './terminal-fonts.css';
 import './fonts.css';
 import type {AppSettings,SessionInfo} from '../shared/types';
 export function keyChord(e:KeyboardEvent){
- const names:Record<string,string>={Equal:'=',Minus:'-',Comma:',',Period:'.',Space:'Space'};
+ const names:Record<string,string>={Equal:'=',Minus:'-',Comma:',',Period:'.',Space:'Space',BracketLeft:'[',BracketRight:']'};
  const key=names[e.code]||(e.code.startsWith('Key')?e.code.slice(3):e.code.startsWith('Digit')?e.code.slice(5):e.key.length===1?e.key.toUpperCase():e.key);
  return [e.ctrlKey?'Ctrl':'',e.altKey?'Alt':'',e.shiftKey?'Shift':'',e.metaKey?'Meta':'',key].filter(Boolean).join('+');
 }
