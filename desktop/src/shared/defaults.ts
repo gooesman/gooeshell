@@ -1,5 +1,6 @@
 import type { AppSettings } from './types';
 export const defaultSettings: AppSettings = {
+  theme: 'dark',
   fontFamily: 'DejaVu Sans Mono', chineseFont: 'Microsoft YaHei', fontSize: 14,
   lineHeight: 1.1, cursorBlink: false, copyOnSelect: false, rightClickPaste: false,
   backgroundImage: '', backgroundOpacity: 0.15,

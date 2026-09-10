@@ -15,6 +15,7 @@ export function cleanProfile(input:HostProfile):HostProfile {
 export function cleanSettings(input:AppSettings):AppSettings {
   const result=structuredClone(defaultSettings);
   if(!input||typeof input!=='object')return result;
+  if(input.theme==='dark'||input.theme==='light')result.theme=input.theme;
   for(const field of ['fontFamily','chineseFont','backgroundImage'] as const)if(typeof input[field]==='string'&&input[field].length<2048&&!input[field].includes('\0'))result[field]=input[field];
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['cursorBlink','copyOnSelect','rightClickPaste'] as const)if(typeof input[field]==='boolean')result[field]=input[field];

@@ -7,7 +7,7 @@ import { createServer as createNetServer } from 'node:net';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
-test('actual TerminalView renders isolated tmux and sends terminal query replies', { skip: process.env.GOOESHELL_RENDER_WSL_TEST === '1' ? false : 'Set GOOESHELL_RENDER_WSL_TEST=1 with Electron, built main, Ubuntu-24.04 and tmux installed', timeout: 65_000 }, async t => {
+test('actual TerminalView renders isolated tmux, preserves it across themes and sends terminal query replies', { skip: process.env.GOOESHELL_RENDER_WSL_TEST === '1' ? false : 'Set GOOESHELL_RENDER_WSL_TEST=1 with Electron, built main, Ubuntu-24.04 and tmux installed', timeout: 65_000 }, async t => {
   const root = process.cwd();
   const artifacts = await fs.mkdtemp(path.resolve('../.build/terminal-render-'));
   const report = path.join(artifacts, 'result.json');
@@ -33,8 +33,11 @@ test('actual TerminalView renders isolated tmux and sends terminal query replies
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error(`No renderer report: ${stderr}`); }));
   t.diagnostic(`render artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr);
-  assert.equal(result.success, true);
+  assert.equal(result.success, true, JSON.stringify(result, null, 2) + stderr);
   assert.equal(result.queries.length, 3);
   assert.equal(result.acked, result.bytes);
+  assert.equal(result.lightTheme.sameTerminal, true);
+  assert.equal(result.darkTheme.sameTerminal, true);
+  assert.match(result.darkTheme.text, /RENDER_LIGHT_RESPONSIVE/);
   assert.match(result.after.text, /RENDER_STILL_RESPONSIVE/);
 });

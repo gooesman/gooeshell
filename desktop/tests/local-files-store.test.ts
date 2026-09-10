@@ -69,6 +69,28 @@ test('rapid font setting writes all succeed and keep the latest requested value'
   assert.deepEqual((await fs.readdir(directory)).filter(name => name.endsWith('.tmp')), []);
 }));
 
+test('theme settings migrate older files and persist without resetting fonts or shortcuts', async () => fixture(async directory => {
+  const file = path.join(directory, 'settings.json');
+  const legacy = {
+    fontFamily: 'Consolas', chineseFont: 'SimSun', fontSize: 18,
+    shortcuts: { ...defaultSettings.shortcuts, paste: 'MouseMiddle' },
+  };
+  for (const stored of [legacy, { ...legacy, theme: 'unrecognized' }]) {
+    await fs.writeFile(file, JSON.stringify(stored));
+    const settings = await new Store(directory).settings();
+    assert.equal(settings.theme, 'dark');
+    assert.equal(settings.fontFamily, legacy.fontFamily);
+    assert.equal(settings.chineseFont, legacy.chineseFont);
+    assert.equal(settings.fontSize, legacy.fontSize);
+    assert.deepEqual(settings.shortcuts, legacy.shortcuts);
+  }
+  const store = new Store(directory);
+  const settings = await store.settings();
+  await store.saveSettings({ ...settings, theme: 'light' });
+  assert.deepEqual(await new Store(directory).settings(), { ...settings, theme: 'light' });
+  assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).theme, 'light');
+}));
+
 test('concurrent profile save/delete operations preserve every unrelated host', async () => fixture(async directory => {
   const store = new Store(directory);
   const profile = (id: string): HostProfile => ({ id, name: id, host: '127.0.0.1', port: 22, username: 'fixture', auth: 'agent', rememberHost: false, encoding: 'utf8' });

@@ -4,6 +4,7 @@ export interface HostProfile {
   rememberHost: boolean; encoding: 'utf8' | 'gb18030' | 'big5';
 }
 export interface AppSettings {
+  theme: 'dark' | 'light';
   fontFamily: string; chineseFont: string; fontSize: number; lineHeight: number;
   cursorBlink: boolean; copyOnSelect: boolean; rightClickPaste: boolean;
   backgroundImage: string; backgroundOpacity: number;

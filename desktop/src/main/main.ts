@@ -29,7 +29,8 @@ app.whenReady().then(async()=>{
  worker.on('message',message=>{if(message.event){if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',message.event as AppEvent);return;}const waiting=pending.get(message.id);if(waiting){pending.delete(message.id);message.error?waiting.reject(new Error(message.error)):waiting.resolve(message.value);}});
  worker.on('error',error=>{for(const value of pending.values())value.reject(error);pending.clear();if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'连接服务已停止：'+error.message});});
  const windowIcon=app.isPackaged?path.join(process.resourcesPath,'icon.png'):path.join(app.getAppPath(),'assets','icon.png');
- win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:'#0b0d10',show:false,title:'gooeshell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
+ const initialTheme=(await store.settings()).theme;
+ win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'gooeshell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  win.webContents.on('will-navigate',(event,url)=>{if(url!==win.webContents.getURL())event.preventDefault();});
  session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
