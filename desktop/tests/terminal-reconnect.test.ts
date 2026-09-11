@@ -6,14 +6,16 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'vite';
 import react from '@vitejs/plugin-react';
 
-test('actual TerminalView reconnect preserves scrollback and isolates transport input, events and acknowledgements', {
+for(const domFallback of [false,true])test(`actual TerminalView reconnect preserves scrollback and isolates transport input, events and acknowledgements (${domFallback?'forced DOM fallback':'default renderer'})`, {
   skip: process.env.GOOESHELL_RECONNECT_RENDER_TEST==='1'?false:'Set GOOESHELL_RECONNECT_RENDER_TEST=1 with Electron installed (Linux needs a display or xvfb-run)',
   timeout:65_000,
 },async t=>{
   const root=process.cwd();const artifactsRoot=path.resolve('../.build');await fs.mkdir(artifactsRoot,{recursive:true});
   const artifacts=await fs.mkdtemp(path.join(artifactsRoot,'terminal-reconnect-'));const report=path.join(artifacts,'result.json');
+  const aliases=[{find:/^@xterm\/xterm$/,replacement:path.join(root,'tests/fixtures/xterm-reconnect-observed.ts')}];
+  if(domFallback)aliases.push({find:/^@xterm\/addon-webgl$/,replacement:path.join(root,'tests/fixtures/webgl-unavailable.ts')});
   const vite=await createServer({configFile:false,root,cacheDir:path.join(artifacts,'vite-cache'),plugins:[react()],
-    resolve:{alias:[{find:/^@xterm\/xterm$/,replacement:path.join(root,'tests/fixtures/xterm-reconnect-observed.ts')}]},
+    resolve:{alias:aliases},
     server:{host:'127.0.0.1',port:0,hmr:false}});
   await vite.listen();t.after(()=>vite.close());
   const address=vite.httpServer!.address() as {port:number};
@@ -31,6 +33,7 @@ test('actual TerminalView reconnect preserves scrollback and isolates transport 
   const result=JSON.parse(await fs.readFile(report,'utf8').catch(()=>{throw new Error(`No reconnect renderer report: ${stderr}`);}));
   t.diagnostic(`terminal reconnect artifacts: ${artifacts}`);
   assert.equal(exit,0,JSON.stringify(result,null,2)+stderr);assert.equal(result.success,true,JSON.stringify(result,null,2)+stderr);
-  for(const name of ['sameTerminal','scrollbackPreserved','modesReset','resizedNewTransport','oldEventsIgnored','pendingAckOldTransport','inputNewTransport','reconnectOfflineOnly','replacementWithoutCloseResetsModes'])assert.equal(result.checks[name],true,name);
+  for(const name of ['sameTerminal','scrollbackPreserved','modesReset','resizedNewTransport','oldEventsIgnored','pendingAckOldTransport','inputNewTransport','reconnectOfflineOnly','replacementWithoutCloseResetsModes','commandPasteMode','commandOfflineRejected','commandReconnectedSender'])assert.equal(result.checks[name],true,name);
+  if(domFallback){assert.equal(result.final.canvas,0);assert.match(result.final.domRendered,/NEW_TRANSPORT_RENDERED/);}
   assert.deepEqual(result.rendererErrors,[]);
 });

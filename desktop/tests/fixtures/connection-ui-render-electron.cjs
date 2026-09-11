@@ -22,9 +22,9 @@ async function click(label) {
   await delay(30);
 }
 async function fill(selector, value) {
-  await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
-  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
-  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
+  // Selection setup is not under test; native select-all depends on the macOS
+  // application edit menu, which this isolated hidden fixture does not install.
+  await evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); input.focus(); input.select(); })()`);
   await until(() => evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); return input.selectionStart === 0 && input.selectionEnd === input.value.length; })()`), 'input selection');
   await window.webContents.insertText(value);
   await delay(30);

@@ -73,6 +73,12 @@ jobs:
       - name: Connections regression on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/ci-connection-tests.mjs
+      - name: Commands and terminal palettes regression
+        if: runner.os != 'Linux'
+        run: node scripts/ci-command-tests.mjs
+      - name: Commands and palettes regression on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/ci-command-tests.mjs
       - name: Launch packaged application
         if: runner.os != 'Linux'
         run: node scripts/ci-smoke.mjs ${{ matrix.target }} ${{ matrix.arch }}
@@ -99,6 +105,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: diagnostics-${{ matrix.target }}-${{ matrix.arch }}
+          include-hidden-files: true
           path: |
             desktop/test-output/ci-*/fixture*.log
             desktop/test-output/smoke-*.json
@@ -109,5 +116,9 @@ jobs:
             .build/connections-flow-*/result.json*
             .build/terminal-reconnect-*/result.json*
             .build/app-connections-*/result.json*
+            desktop/test-output/command-main-*/result.json
+            .build/command-ui-*/result.json*
+            .build/terminal-palettes-*/result.json*
+            desktop/test-output/single-instance-*/*.json
           if-no-files-found: ignore
           retention-days: 14

@@ -15,7 +15,7 @@ async function until(predicate, label) {
   while (!(await predicate())) { if (Date.now() > end) throw new Error('Timed out: ' + label); await delay(25); }
 }
 async function click(label) {
-  const expression = `(() => [...document.querySelectorAll('button')].find(button => !button.disabled && (button.getAttribute('aria-label') === ${JSON.stringify(label)} || button.title === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)})))()`;
+  const expression = `(() => [...document.querySelectorAll('button')].find(button => !button.disabled && button.getClientRects().length > 0 && (button.getAttribute('aria-label') === ${JSON.stringify(label)} || button.title === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)})))()`;
   await until(() => evaluate(`Boolean(${expression})`), label); await evaluate(`${expression}.click()`); await delay(30);
 }
 async function fill(selector, text) {
@@ -48,6 +48,7 @@ async function run() {
   await window.loadURL(url);
   await until(() => evaluate('Boolean(document.querySelector(".recent-connection")) && Boolean(document.querySelector("#connection-group-development .host"))'), 'App history and grouped sidebar');
   assert.equal(await evaluate(`document.getElementById('file-manager').hidden`), true);
+  assert.equal(await evaluate(`document.getElementById('command-library-dock').hidden`), true);
   assert.equal(await connectCount(), 0);
   phase = 'recent menu edits and saves without connecting';
   await context('.recent-connection'); await click('编辑连接设置…');
@@ -104,9 +105,12 @@ async function run() {
   await evaluate(`window.fixtureTerminalNode = document.querySelector('.xterm')`);
   await evaluate(`window.appConnectionsFixture.disconnect(${JSON.stringify(originalId)})`);
   await until(() => evaluate(`Boolean(document.querySelector('.terminal-reconnect'))`), 'disconnected strip');
+  // Wait for style/layout and :has() invalidation after the reconnect strip mounts.
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   const geometry = await evaluate(`(() => { const strip = document.querySelector('.terminal-reconnect').getBoundingClientRect(), region = document.querySelector('.terminal-region').getBoundingClientRect(), button = document.querySelector('.terminal-reconnect button').getBoundingClientRect(); return { contained: strip.left >= region.left && strip.right <= region.right && strip.top >= region.top && strip.bottom <= region.bottom, buttonVisible: button.left >= strip.left && button.right <= strip.right && button.bottom <= strip.bottom, text: document.querySelector('.terminal-reconnect').textContent }; })()`);
   assert.equal(geometry.contained, true); assert.equal(geometry.buttonVisible, true); assert.match(geometry.text, /Ctrl \+ Shift \+ R/);
-  assert.equal(await evaluate(`(() => { const button = document.querySelector('.terminal-reconnect button'); const bounds = button.getBoundingClientRect(); const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); return hit === button || button.contains(hit); })()`), true, 'disconnect toasts must not cover the reconnect button');
+  const reconnectHit = await evaluate(`(() => { const button = document.querySelector('.terminal-reconnect button'); const bounds = button.getBoundingClientRect(); const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2); return { visible: hit === button || button.contains(hit), hitTag: hit?.tagName, hitClass: typeof hit?.className === 'string' ? hit.className : '', bounds: bounds.toJSON(), viewport: { width: innerWidth, height: innerHeight }, toasts: [...document.querySelectorAll('.toast')].map(toast => ({ text: toast.textContent, bounds: toast.getBoundingClientRect().toJSON() })) }; })()`);
+  assert.equal(reconnectHit.visible, true, 'disconnect toasts must not cover the reconnect button: ' + JSON.stringify(reconnectHit));
   await picture('light-disconnected');
   await click('切换为黑色主题'); await until(() => evaluate(`document.documentElement.dataset.theme === 'dark'`), 'dark theme'); await picture('dark-disconnected');
   result.checks.reconnectStripLayout = true;
@@ -119,6 +123,44 @@ async function run() {
   assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 1);
   result.checks.reconnectShortcutPreservesRenderer = true;
+
+  phase = 'command dock shortcut and connection-scoped editing';
+  await evaluate(`document.querySelector('.xterm-helper-textarea').focus()`);
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'M', modifiers: ['control', 'shift'] });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'M', modifiers: ['control', 'shift'] });
+  await until(() => evaluate(`!document.getElementById('command-library-dock').hidden`), 'command dock shown');
+  await click('新建命令分组'); await fill('#command-editor-name', '此连接命令');
+  assert.equal(await evaluate(`document.getElementById('command-group-owner').value`), 'preview');
+  await click('保存'); await noDialog();
+  await click('向此连接命令添加命令'); await fill('#command-editor-name', '查看工作目录'); await fill('#command-editor-text', 'pwd'); await click('保存'); await noDialog();
+  await click('新建命令分组'); await fill('#command-editor-name', '常用操作'); await choose('#command-group-owner', ''); await click('保存'); await noDialog();
+  await click('向常用操作添加命令'); await fill('#command-editor-name', '查看系统时间'); await fill('#command-editor-text', 'date'); await click('保存'); await noDialog();
+  assert.equal(await evaluate(`window.appConnectionsFixture.commandLibrary().then(library => library.commands.length)`), 2);
+  await click('收起命令库'); assert.equal(await evaluate(`document.getElementById('command-library-dock').hidden`), true);
+  await evaluate(`document.querySelector('.xterm-helper-textarea').focus()`);
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'M', modifiers: ['control', 'shift'] }); window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'M', modifiers: ['control', 'shift'] });
+  await until(() => evaluate(`!document.getElementById('command-library-dock').hidden && document.querySelectorAll('.command-card').length === 2`), 'command dock reopened with saved commands');
+  assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  result.checks.commandDockShortcutAndPersistence = true;
+
+  phase = 'terminal palette remains independent of interface theme';
+  await click('设置'); await click('终端配色');
+  await evaluate(`[...document.querySelectorAll('.terminal-palette-choice')].find(button => button.querySelector('strong').textContent === '石墨').click()`);
+  await click('保存设置'); await noDialog();
+  await until(() => evaluate(`getComputedStyle(document.querySelector('[data-terminal-session][data-active="true"]')).backgroundColor === 'rgb(23, 23, 23)'`), 'palette applied live');
+  assert.equal(await evaluate(`window.appConnectionsFixture.settings().then(settings => settings.terminalPalette)`), 'graphite');
+  await picture('dark-command-dock');
+  await click('切换为白色主题'); await until(() => evaluate(`document.documentElement.dataset.theme === 'light'`), 'light dock');
+  assert.equal(await evaluate(`getComputedStyle(document.querySelector('[data-terminal-session][data-active="true"]')).backgroundColor`), 'rgb(23, 23, 23)');
+  assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  await picture('light-command-dock');
+  window.setSize(960, 760); await delay(100);
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const dockLayout = await evaluate(`(() => { const dock = document.querySelector('.commands-dock').getBoundingClientRect(), terminal = document.querySelector('.terminal-region').getBoundingClientRect(); return { dockWidth: dock.width, terminalWidth: terminal.width, adjacent: terminal.right <= dock.left + 1, withinViewport: dock.right <= innerWidth + 1, overflow: document.documentElement.scrollWidth > innerWidth }; })()`);
+  assert.ok(dockLayout.dockWidth >= 270 && dockLayout.dockWidth <= 321, JSON.stringify(dockLayout)); assert.ok(dockLayout.terminalWidth >= 200, JSON.stringify(dockLayout)); assert.equal(dockLayout.adjacent, true); assert.equal(dockLayout.withinViewport, true); assert.equal(dockLayout.overflow, false);
+  await picture('light-command-dock-small'); await click('切换为黑色主题'); await picture('dark-command-dock-small');
+  window.setSize(1280, 860); await delay(60); await click('收起命令库');
+  result.checks.independentTerminalPaletteAndDockLayout = true;
 
   phase = 'cancel reconnect is wired to the current attempt';
   const activeId = await evaluate(`document.querySelector('[data-terminal-session][data-active="true"]').dataset.terminalSession`);

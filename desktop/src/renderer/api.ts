@@ -1,4 +1,4 @@
-import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,ConnectionGroup,HostKeyPreference,EditableTextFile} from '../shared/types';
+import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,ConnectionGroup,HostKeyPreference,EditableTextFile,CommandLibrary} from '../shared/types';
 import {defaultSettings} from '../shared/defaults';
 import {bundledFontFamilies} from '../shared/fonts';
 import {previewFontCatalog} from './preview-font-catalog';
@@ -11,6 +11,7 @@ let previewHostPreferences:HostKeyPreference[]=[];
 let previewHistory:ConnectionHistoryEntry[]=[{profile:previewProfiles[0],connectedAt:Date.now()-3600000}];
 let previewConnections=[...previewProfiles];
 let previewGroups:ConnectionGroup[]=[];
+let previewCommands:CommandLibrary={groups:[],commands:[]};
 const savePreview=(p:HostProfile,favorite:boolean)=>{previewConnections=[...previewConnections.filter(x=>x.id!==p.id),p];previewProfiles=[...previewProfiles.filter(x=>x.id!==p.id),...(favorite?[p]:[])];previewHistory=previewHistory.map(entry=>entry.profile.id===p.id?{...entry,profile:p}:entry);return p;};
 const previewListing=(p:string,local:boolean):FileListing=>({path:p,entries:(local?[
  ['项目文件','directory',0],['Downloads','directory',0],['deploy.sh','file',1248],['README.md','file',2870]
@@ -19,6 +20,12 @@ const unavailable=async()=>{throw new Error('这是浏览器界面预览；请�
 const previewTexts=new Map<string,EditableTextFile>();
 let previewRevision=0;
 const preview:DesktopApi={
+ commandLibrary:async()=>structuredClone(previewCommands),
+ saveCommandGroup:async group=>{previewCommands.groups=[...previewCommands.groups.filter(value=>value.id!==group.id),structuredClone(group)];},
+ deleteCommandGroup:async id=>{previewCommands.groups=previewCommands.groups.filter(group=>group.id!==id);previewCommands.commands=previewCommands.commands.filter(command=>command.groupId!==id);},
+ saveCommand:async command=>{if(!previewCommands.groups.some(group=>group.id===command.groupId))throw new Error('请先选择命令分组。');previewCommands.commands=[...previewCommands.commands.filter(value=>value.id!==command.id),structuredClone(command)];},
+ deleteCommand:async id=>{previewCommands.commands=previewCommands.commands.filter(command=>command.id!==id);},
+ sendCommand:async request=>{const command=previewCommands.commands.find(value=>value.id===request.commandId);if(!command||command.command!==request.expectedCommand)throw new Error('命令已变化，请重新加载。');},
  initial:async()=>({profiles:previewProfiles,connections:previewConnections,groups:previewGroups,connectionHistory:previewHistory,hostKeyPreferences:previewHostPreferences,settings:previewSettings,localHome:'C:\\Users\\developer',version:'界面演示 · 不会连接服务器'}),
  connections:async()=>({profiles:previewProfiles,connections:previewConnections,history:previewHistory,groups:previewGroups}),
  saveConnection:async r=>savePreview(r.profile,r.favorite),

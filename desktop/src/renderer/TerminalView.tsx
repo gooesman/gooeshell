@@ -5,12 +5,13 @@ import {SearchAddon} from '@xterm/addon-search';
 import {WebglAddon} from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import {api,isPreview} from './api';
-import {terminalTheme} from './terminal-theme';
+import {terminalTheme,terminalBackground} from './terminal-theme';
 import {terminalFontFamily,terminalFontLoads} from '../shared/fonts';
 import {loadFontCatalog,acquireTerminalFont,type TerminalFontBundle} from './terminal-font-bundle';
 import './terminal-fonts.css';
 import './fonts.css';
-import type {AppSettings,SessionInfo} from '../shared/types';
+import type {AppSettings,SessionInfo,SendCommandRequest} from '../shared/types';
+export type TerminalCommandSender=(request:Omit<SendCommandRequest,'sessionId'|'bracketedPaste'>)=>Promise<void>;
 // Leave alternate-screen/mouse/paste modes without clearing normal scrollback.
 const disconnectedModes='\x1b[?2026l\x1b[?1049l\x1b[?1047l\x1b[?47l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?2004l\x1b[!p\x1b[?25h\x1b[999999;1H';
 export function keyChord(e:KeyboardEvent){
@@ -24,7 +25,7 @@ export function mouseChord(e:MouseEvent){
  return[e.ctrlKey?'Ctrl':'',e.altKey?'Alt':'',e.shiftKey?'Shift':'',e.metaKey?'Meta':'',key].filter(Boolean).join('+');
 }
 function decode(value:string){const raw=atob(value);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
-export default function TerminalView({session,settings,active,onFontSizeChange,disconnected=false,reconnecting=false,reconnectError='',onReconnect,onCancelReconnect,onSudoPassword}:{session:SessionInfo;settings:AppSettings;active:boolean;onFontSizeChange?:(size:number)=>void;disconnected?:boolean;reconnecting?:boolean;reconnectError?:string;onReconnect?:()=>void;onCancelReconnect?:()=>void;onSudoPassword?:()=>void}){
+export default function TerminalView({session,settings,active,onFontSizeChange,disconnected=false,reconnecting=false,reconnectError='',onReconnect,onCancelReconnect,onSudoPassword,onCommandSender}:{session:SessionInfo;settings:AppSettings;active:boolean;onFontSizeChange?:(size:number)=>void;disconnected?:boolean;reconnecting?:boolean;reconnectError?:string;onReconnect?:()=>void;onCancelReconnect?:()=>void;onSudoPassword?:()=>void;onCommandSender?:(sessionId:string,sender:TerminalCommandSender|null)=>void}){
  const host=useRef<HTMLDivElement>(null);const term=useRef<Terminal|null>(null);const requestFit=useRef<(()=>void)|null>(null);const search=useRef<SearchAddon|null>(null);const current=useRef(settings);const fontCallback=useRef(onFontSizeChange);
  const [searchOpen,setSearchOpen]=useState(false);const [query,setQuery]=useState('');const [background,setBackground]=useState('');const [fontWarning,setFontWarning]=useState('');const activeFont=useRef<TerminalFontBundle|null>(null);
  const [closedEvent,setClosedEvent]=useState<{id:string;message:string}|null>(null);
@@ -32,9 +33,10 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  const isDisconnected=disconnected||closedEvent?.id===session.id;
  transport.current=session.id;online.current=!isDisconnected&&!reconnecting;callbacks.current={onReconnect,onCancelReconnect,onSudoPassword};
  const tabId=session.tabId||session.id;
+ const visible=useRef(active);visible.current=active;
  current.current=settings;fontCallback.current=onFontSizeChange;
  useEffect(()=>{
-  const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:'monospace',fontSize:settings.fontSize,fontWeight:400,fontWeightBold:700,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme),macOptionIsMeta:false});
+  const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:'monospace',fontSize:settings.fontSize,fontWeight:400,fontWeightBold:700,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme,settings.terminalPalette),macOptionIsMeta:false});
   const element=host.current!;
   term.current=terminal;const fitter=new FitAddon();const finder=new SearchAddon();search.current=finder;terminal.loadAddon(fitter);terminal.loadAddon(finder);terminal.open(element);
   try{const gpu=new WebglAddon();gpu.onContextLoss(()=>gpu.dispose());terminal.loadAddon(gpu);}catch{/* xterm's standard renderer remains usable when GPU is unavailable. */}
@@ -100,10 +102,19 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   return()=>{cancelled=true;};
  },[tabId,settings.fontFamily,settings.chineseFont,settings.fontSize,settings.fontWeight,settings.chineseFontWeight,settings.lineHeight]);
  useEffect(()=>{if(term.current)term.current.options.cursorBlink=settings.cursorBlink;},[settings.cursorBlink]);
- useEffect(()=>{if(term.current)term.current.options.theme=terminalTheme(settings.theme);},[settings.theme]);
+ useEffect(()=>{if(term.current)term.current.options.theme=terminalTheme(settings.theme,settings.terminalPalette);},[settings.theme,settings.terminalPalette]);
+ useEffect(()=>{
+  const target=session.id;
+  onCommandSender?.(target,async request=>{
+   if(!online.current||transport.current!==target||!term.current)throw new Error('目标终端已断开，请重新连接后再发送命令。');
+   await api.sendCommand({...request,sessionId:target,bracketedPaste:term.current.modes.bracketedPasteMode});
+   if(visible.current&&transport.current===target)term.current?.focus();
+  });
+  return()=>onCommandSender?.(target,null);
+ },[session.id,onCommandSender]);
  useEffect(()=>{let cancelled=false;if(!settings.backgroundImage){setBackground('');return;}void api.backgroundData(settings.backgroundImage).then(data=>{if(!cancelled)setBackground(data);}).catch(()=>setBackground(''));return()=>{cancelled=true;};},[settings.backgroundImage]);
  useEffect(()=>{if(active){requestFit.current?.();const frame=requestAnimationFrame(()=>term.current?.focus());return()=>cancelAnimationFrame(frame);}},[active]);
- return <div className="terminal-instance" style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:'var(--terminal-bg)'}}>
+ return <div className="terminal-instance" style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:terminalBackground(settings.theme,settings.terminalPalette)}}>
   {background&&<div style={{position:'absolute',inset:0,backgroundImage:`url(${background})`,backgroundSize:'cover',backgroundPosition:'center',opacity:settings.backgroundOpacity,pointerEvents:'none'}}/>}
   <div ref={host} style={{position:'absolute',inset:isDisconnected||reconnecting?'10px 12px 64px':'10px 12px',minHeight:0}}/>
   {(isDisconnected||reconnecting)&&onReconnect&&<div className="terminal-reconnect" role="status"><div><strong>{reconnecting?'正在重新连接…':'连接已断开'}</strong><span>{reconnectError||closedEvent?.message||'原终端内容已保留'}</span></div>{reconnecting?<button className="button secondary small" onClick={onCancelReconnect}>取消重连</button>:<button className="button secondary small" onClick={onReconnect}>重新连接{settings.shortcuts.reconnect&&<kbd>{settings.shortcuts.reconnect.replaceAll('+',' + ')}</kbd>}</button>}</div>}

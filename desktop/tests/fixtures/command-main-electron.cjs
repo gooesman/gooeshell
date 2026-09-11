@@ -1,0 +1,80 @@
+const {app,safeStorage}=require('electron');
+const {promises:fs,mkdirSync,writeFileSync}=require('node:fs');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+const {generateKeyPairSync}=require('node:crypto');
+const {Server}=require('ssh2');
+const artifacts=process.env.GOOESHELL_COMMAND_MAIN_ARTIFACTS;
+if(!artifacts||!path.isAbsolute(artifacts)||!path.basename(artifacts).startsWith('command-main-'))throw new Error('Explicit isolated fixture directory required');
+const userData=path.join(artifacts,'user-data');mkdirSync(userData,{recursive:true});app.setPath('userData',userData);
+const report={success:false,checks:{},errors:[]};const saveReport=()=>writeFileSync(path.join(artifacts,'result.json'),JSON.stringify(report,null,2));
+const fail=error=>{report.errors.push(error?.stack||String(error));saveReport();app.exit(1);};
+process.on('uncaughtException',fail);process.on('unhandledRejection',fail);
+// Session-only fixture credentials. Never consult the real operating-system keyring.
+safeStorage.isEncryptionAvailable=()=>false;safeStorage.isAsyncEncryptionAvailable=async()=>false;safeStorage.getSelectedStorageBackend=()=> 'basic_text';
+safeStorage.encryptString=safeStorage.decryptString=safeStorage.encryptStringAsync=safeStorage.decryptStringAsync=()=>{throw new Error('Fixture forbids the OS keyring');};
+const hostKey=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'});
+let window;const peers=new Set();const received=[];
+const server=new Server({hostKeys:[hostKey]},client=>{
+  const bytes=[];received.push(bytes);peers.add(client);client.on('close',()=>peers.delete(client));client.on('error',()=>{});
+  client.on('authentication',context=>context.method==='password'&&context.password==='fixture-only-password'?context.accept():context.reject(['password']));
+  client.on('ready',()=>client.on('session',accept=>{
+    const session=accept();session.on('pty',accept=>accept?.());session.on('window-change',accept=>accept?.());
+    session.on('shell',accept=>{const stream=accept();stream.on('data',bytesReceived=>bytes.push(Buffer.from(bytesReceived)));});
+  }));
+});
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function waitFor(predicate){const deadline=Date.now()+5000;while(!predicate()){if(Date.now()>deadline)throw new Error('Fixture timeout');await delay(10);}}
+const call=(method,value)=>window.webContents.executeJavaScript(`window.gooeshell[${JSON.stringify(method)}](${JSON.stringify(value)})`);
+const group=(id,connectionId)=>({id,name:id,order:0,...(connectionId?{connectionId,connectionName:connectionId}:{})});
+const command=(id,groupId,overrides={})=>({id,groupId,name:id,command:'printf "'+id+'"',description:'Fixture command',mode:'insert',confirmBeforeRun:false,order:0,...overrides});
+const request=(sessionId,cmd,grp,overrides={})=>({sessionId,commandId:cmd.id,mode:'insert',allowOtherConnection:false,bracketedPaste:false,expectedCommand:cmd.command,expectedGroupId:cmd.groupId,expectedConfirmBeforeRun:cmd.confirmBeforeRun,expectedConnectionId:grp.connectionId,...overrides});
+app.on('browser-window-created',(_event,created)=>{window=created;window.on('show',()=>window.hide());window.webContents.once('did-finish-load',()=>void run().catch(fail));});
+async function run(){
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  assert.deepEqual(await call('commandLibrary'),{groups:[],commands:[]});report.checks.empty=true;
+  const global=group('global'),own=group('own','fixture-a'),foreign=group('foreign','fixture-b');
+  await Promise.all([global,own,foreign].map(value=>call('saveCommandGroup',value)));
+  const globalCommand=command('global-command',global.id),ownCommand=command('own-command',own.id),foreignCommand=command('foreign-command',foreign.id);
+  await Promise.all([globalCommand,ownCommand,foreignCommand].map(value=>call('saveCommand',value)));
+  const temporary=command('temporary',global.id);await call('saveCommand',temporary);await call('saveCommand',{...temporary,name:'Renamed'});
+  assert.equal((await call('commandLibrary')).commands.find(value=>value.id===temporary.id).name,'Renamed');await call('deleteCommand',temporary.id);
+  await call('saveCommandGroup',group('temporary-group'));await call('saveCommand',command('temporary-in-group','temporary-group'));await call('deleteCommandGroup','temporary-group');
+  const library=await call('commandLibrary');assert.equal(library.groups.length,3);assert.equal(library.commands.length,3);
+  const {CommandStore}=require(path.resolve(__dirname,'../../dist-main/main/command-store.js'));
+  assert.deepEqual(await new CommandStore(userData).library(),library);
+  assert.equal(JSON.parse(await fs.readFile(path.join(userData,'command-library.json'),'utf8')).version,1);report.checks.persistentCrud=true;
+  const base={host:'127.0.0.1',port:server.address().port,auth:'password',rememberHost:false,encoding:'utf8'};
+  let profile=await call('saveConnection',{profile:{...base,id:'fixture-a',name:'Device A',username:'a'},favorite:true,credentials:{remember:'session',password:'fixture-only-password',sudoUsesLogin:true}});
+  await call('saveConnection',{profile:{...base,id:'fixture-b',name:'Device B',username:'b'},favorite:true});
+  await call('setHostKeyPreference',{host:profile.host,port:profile.port,skipVerification:true});
+  const connected=await call('connect',{profile,attemptId:'command-fixture'});
+  let expected='';const checkBytes=async payload=>{expected+=payload;await waitFor(()=>Buffer.concat(received[0]).toString('utf8')===expected);};
+  await call('sendCommand',request(connected.id,globalCommand,global));await checkBytes(globalCommand.command);report.checks.global=true;
+  await call('sendCommand',request(connected.id,ownCommand,own,{mode:'execute'}));await checkBytes(ownCommand.command+'\r');report.checks.own=true;
+  await assert.rejects(call('sendCommand',request(connected.id,foreignCommand,foreign)),/属于其他连接/);
+  await call('sendCommand',request(connected.id,foreignCommand,foreign,{allowOtherConnection:true}));await checkBytes(foreignCommand.command);report.checks.borrowed=true;
+  const changedText={...ownCommand,command:'printf "new-text"'};await call('saveCommand',changedText);
+  await assert.rejects(call('sendCommand',request(connected.id,ownCommand,own)),/已修改/);await call('saveCommand',ownCommand);report.checks.staleText=true;
+  await call('saveCommandGroup',{...own,connectionId:'fixture-b'});
+  await assert.rejects(call('sendCommand',request(connected.id,ownCommand,own,{allowOtherConnection:true})),/适用连接已修改/);await call('saveCommandGroup',own);report.checks.staleScope=true;
+  await call('saveCommand',{...ownCommand,confirmBeforeRun:true});
+  await assert.rejects(call('sendCommand',request(connected.id,ownCommand,own)),/已修改/);await call('saveCommand',ownCommand);report.checks.staleConfirmation=true;
+  const multiline=command('multiline',global.id,{command:'printf one\nprintf\ttwo'});await call('saveCommand',multiline);
+  await assert.rejects(call('sendCommand',request(connected.id,multiline,global)),/未启用括号粘贴/);
+  await call('sendCommand',request(connected.id,multiline,global,{bracketedPaste:true}));await checkBytes('\x1b[200~printf one\rprintf\ttwo\x1b[201~');
+  await call('sendCommand',request(connected.id,multiline,global,{bracketedPaste:true,mode:'execute'}));await checkBytes('\x1b[200~printf one\rprintf\ttwo\x1b[201~\r');report.checks.bracketedMultiline=true;
+  // Retarget the saved record while its old SSH session is still connected.
+  await call('saveConnection',{profile:{...profile,username:'replacement-device'},favorite:true});
+  await assert.rejects(call('sendCommand',request(connected.id,ownCommand,own)),/属于其他连接/);
+  await call('sendCommand',request(connected.id,globalCommand,global));await checkBytes(globalCommand.command);
+  await call('sendCommand',request(connected.id,ownCommand,own,{allowOtherConnection:true}));await checkBytes(ownCommand.command);report.checks.retargetedConnection=true;
+  profile=await call('saveConnection',{profile,favorite:true,credentials:{remember:'session',password:'fixture-only-password',sudoUsesLogin:true}});
+  await call('disconnect',connected.id);await assert.rejects(call('sendCommand',request(connected.id,ownCommand,own)),/已断开/);report.checks.disconnected=true;
+  const reconnected=await call('connect',{profile,attemptId:'command-reconnect'});assert.notEqual(reconnected.id,connected.id);
+  await call('sendCommand',request(reconnected.id,ownCommand,own));await waitFor(()=>Buffer.concat(received[1]).toString('utf8')===ownCommand.command);assert.equal(Buffer.concat(received[0]).toString('utf8'),expected);report.checks.reconnectIdentity=true;
+  await call('deleteConnection',profile.id);assert((await call('commandLibrary')).groups.some(value=>value.id===own.id&&value.connectionId===profile.id));report.checks.orphanGroupRetained=true;
+  await call('disconnect',reconnected.id);for(const peer of peers)peer.end();await new Promise(resolve=>server.close(resolve));
+  report.success=true;saveReport();app.exit(0);
+}
+require(path.resolve(__dirname,'../../dist-main/main/main.js'));

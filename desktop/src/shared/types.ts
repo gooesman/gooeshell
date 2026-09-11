@@ -12,6 +12,7 @@ export interface HostProfile {
 }
 export interface AppSettings {
   theme: 'dark' | 'light';
+  terminalPalette: string;
   showConnectionHistory: boolean; filesToggleIconOnly: boolean;
   fontWeight: number; chineseFontWeight: number;
   shortcutSchemaVersion: number;
@@ -59,6 +60,10 @@ export type TextWriteRequest = RemoteRequest & {
 };
 export interface TextWriteResult { revision: string; size: number; }
 export interface CommandResult { output: string; exitCode: number; }
+export interface CommandGroup { id: string; name: string; connectionId?: string; connectionName?: string; order: number; }
+export interface SavedCommand { id: string; groupId: string; name: string; command: string; description: string; mode: 'insert' | 'execute'; confirmBeforeRun: boolean; order: number; }
+export interface CommandLibrary { groups: CommandGroup[]; commands: SavedCommand[]; }
+export interface SendCommandRequest { sessionId: string; commandId: string; mode: 'insert' | 'execute'; allowOtherConnection: boolean; expectedCommand: string; expectedGroupId: string; expectedConnectionId?: string; expectedConfirmBeforeRun: boolean; bracketedPaste: boolean; }
 export type HostKeyDecision = 'once' | 'save' | 'reject';
 export type AppEvent =
   | { type: 'terminal'; sessionId: string; data: string; bytes: number }
@@ -70,6 +75,12 @@ export type AppEvent =
 
 export interface DesktopApi {
   initial(): Promise<InitialState>;
+  commandLibrary(): Promise<CommandLibrary>;
+  saveCommandGroup(group: CommandGroup): Promise<void>;
+  deleteCommandGroup(id: string): Promise<void>;
+  saveCommand(command: SavedCommand): Promise<void>;
+  deleteCommand(id: string): Promise<void>;
+  sendCommand(request: SendCommandRequest): Promise<void>;
   saveProfile(profile: HostProfile): Promise<void>;
   deleteProfile(id: string): Promise<void>;
   connections(): Promise<ConnectionsState>;

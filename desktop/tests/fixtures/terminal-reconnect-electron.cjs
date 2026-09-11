@@ -15,9 +15,11 @@ const inspect=()=>evaluate(String.raw`(()=>{
   return {type:terminal.buffer.active.type,text:text(terminal.buffer.active),normal:text(terminal.buffer.normal),rendered:window.__fixtureRenderedText,
     cols:terminal.cols,rows:terminal.rows,modes:terminal.modes,count:window.__fixtureTerminalCount,renderCount:window.__fixtureRenderCount,
     sameTerminal:window.__fixtureOriginalTerminal===terminal,connection:window.__fixtureConnection,attempts:window.__fixtureReconnectAttempts,
-    pendingCallbacks:window.__fixtureDeferredWriteCallbacks.length,keyDecisions:window.__fixtureKeyDecisions,reconnectVisible:!!document.querySelector('.terminal-reconnect'),canvas:document.querySelectorAll('canvas').length};
+    pendingCallbacks:window.__fixtureDeferredWriteCallbacks.length,keyDecisions:window.__fixtureKeyDecisions,reconnectVisible:!!document.querySelector('.terminal-reconnect'),domRendered:document.querySelector('.xterm-rows')?.textContent||'',canvas:document.querySelectorAll('canvas').length};
 })()`);
 const terminalCalls=method=>metrics.calls.filter(call=>call.method===method);
+const commandRequest={commandId:'fixture-command',mode:'insert',allowOtherConnection:false,expectedCommand:'echo fixture',expectedGroupId:'fixture-group',expectedConfirmBeforeRun:false};
+const sendCommand=id=>evaluate(`window.__fixtureCommandSenders.get(${JSON.stringify(id)})(${JSON.stringify(commandRequest)})`);
 function emit(event){window.webContents.send('reconnect-fixture:event',event);}
 function output(id,text){const bytes=Buffer.byteLength(text);emit({type:'terminal',sessionId:id,data:Buffer.from(text).toString('base64'),bytes});return bytes;}
 async function flush(){await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await delay(30);}
@@ -43,6 +45,9 @@ async function run(){
   await window.loadURL(url);
   window.setMenu(null);window.webContents.focus();
   await until(async()=>(await inspect())?.cols>0&&terminalCalls('terminalResize').length>0,'initial renderer and size');
+  await until(()=>evaluate('window.__fixtureCommandSenders.has("transport-old")'),'initial command sender registered');
+  await sendCommand('transport-old');await until(()=>terminalCalls('sendCommand').length===1,'initial command send bridge');
+  assert.deepEqual(terminalCalls('sendCommand')[0].args,[{...commandRequest,sessionId:'transport-old',bracketedPaste:false}]);
   await evaluate('void(window.__fixtureOriginalTerminal=window.__fixtureTerminal)');
   phase='normal scrollback';
   output('transport-old',Array.from({length:90},(_,index)=>`OLD_SCROLLBACK_${index}\r\n`).join(''));
@@ -59,6 +64,8 @@ async function run(){
   phase='alternate modes and deferred old acknowledgement';
   output('transport-old',alternateModes+'OLD_ALTERNATE_SCREEN');
   await until(async()=>{const state=await inspect();return state?.type==='alternate'&&state.modes.mouseTrackingMode==='any'&&state.modes.bracketedPasteMode;},'alternate and mouse modes enabled');
+  await sendCommand('transport-old');await until(()=>terminalCalls('sendCommand').length===2,'command send in bracketed-paste mode');
+  assert.deepEqual(terminalCalls('sendCommand')[1].args,[{...commandRequest,sessionId:'transport-old',bracketedPaste:true}]);metrics.checks.commandPasteMode=true;
   await until(()=>terminalCalls('terminalAck').length>=2,'previous output callbacks complete');
   await evaluate('window.__fixtureHoldWriteCallbacks=true');
   const pendingBytes=output('transport-old','PENDING_OLD_ACK');
@@ -67,12 +74,19 @@ async function run(){
   emit({type:'sessionClosed',sessionId:'transport-old',message:'Isolated network interruption'});
   await until(async()=>{const state=await inspect();return state?.reconnectVisible&&state.type==='normal';},'disconnect strip and normal screen');
   const disconnected=await inspect();assertReset(disconnected);assert.match(disconnected.normal,/OLD_SCROLLBACK_0/);
+  const commandCallsBeforeDisconnect=terminalCalls('sendCommand').length;
+  await assert.rejects(sendCommand('transport-old'),/已断开/);assert.equal(terminalCalls('sendCommand').length,commandCallsBeforeDisconnect);metrics.checks.commandOfflineRejected=true;
   const offlineInputs=terminalCalls('terminalInput').length;
   await evaluate('window.__fixtureTerminal.input("DO_NOT_SEND_OFFLINE",true)');await key('R',['control','shift']);
   await until(async()=>(await inspect()).attempts===1,'offline reconnect shortcut');
   assert.equal(terminalCalls('terminalInput').length,offlineInputs);metrics.checks.reconnectOfflineOnly=true;
   phase='replacement SSH transport keeps the same terminal';
   await replace('transport-new');
+  await until(()=>evaluate('!window.__fixtureCommandSenders.has("transport-old")&&window.__fixtureCommandSenders.has("transport-new")'),'command sender follows physical transport');
+  await assert.rejects(evaluate(`window.__fixtureOldCommandSender(${JSON.stringify(commandRequest)})`),/已断开/);
+  assert.equal(terminalCalls('sendCommand').length,commandCallsBeforeDisconnect);
+  await sendCommand('transport-new');await until(()=>terminalCalls('sendCommand').length===commandCallsBeforeDisconnect+1,'new command sender calls API');
+  assert.deepEqual(terminalCalls('sendCommand').at(-1).args,[{...commandRequest,sessionId:'transport-new',bracketedPaste:false}]);metrics.checks.commandReconnectedSender=true;
   const reconnected=await inspect();assertReset(reconnected);assert.equal(reconnected.sameTerminal,true);assert.equal(reconnected.count,1);
   assert.match(reconnected.normal,/OLD_SCROLLBACK_0/);assert.match(reconnected.normal,/OLD_SCROLLBACK_89/);assert.equal(reconnected.reconnectVisible,false);
   assert.deepEqual(reconnected.normal.split('\n').filter(line=>line.startsWith('OLD_SCROLLBACK_')),Array.from({length:90},(_,index)=>`OLD_SCROLLBACK_${index}`),'disconnect/reconnect banners must not overwrite any old output');
@@ -98,7 +112,7 @@ async function run(){
   phase='replacement without close notification still resets alternate modes';
   output('transport-new',alternateModes+'SECOND_ALTERNATE_SCREEN');await until(async()=>(await inspect()).type==='alternate','second alternate buffer');
   await replace('transport-third');assertReset(await inspect());assert.match((await inspect()).normal,/NEW_TRANSPORT_RENDERED/);metrics.checks.replacementWithoutCloseResetsModes=true;
-  const final=await inspect();assert.equal(final.count,1);assert.ok(final.canvas>0);assert.ok(final.renderCount>0);metrics.final=final;
+  const final=await inspect();assert.equal(final.count,1);assert.ok(final.canvas>0||final.domRendered.includes('NEW_TRANSPORT_RENDERED'),'GPU or DOM fallback must render the new transport output');assert.ok(final.renderCount>0);metrics.final=final;
   await fs.writeFile(reportFile+'.png',(await window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());
   assert.deepEqual(metrics.rendererErrors,[]);metrics.success=true;
 }

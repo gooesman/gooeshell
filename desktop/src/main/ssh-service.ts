@@ -10,6 +10,7 @@ import type {
 import { runRemoteOperation } from './remote-helper';
 import { isSftpClosed, performSftpTransfer, remoteClose, remoteStat, sftpCall, trackSftp } from './sftp-transfer';
 import { decodeEditableText, encodeEditableText, serializeTextWrite, textConflict, textRevision, validateExpectedRevision } from './text-files';
+import {cleanCommandText} from './command-store';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -555,6 +556,25 @@ export class SshService {
     await new Promise<void>((resolve,reject)=>{
       try{session.shell!.write(encoded,(error?:Error|null)=>{encoded.fill(0);error?reject(new Error('密码输入失败，连接可能已断开。')):resolve();});}
       catch{encoded.fill(0);reject(new Error('密码输入失败，连接可能已断开。'));}
+    });
+  }
+
+  async terminalCommandInput(id:string,command:string,mode:'insert'|'execute',bracketedPaste:boolean):Promise<void>{
+    const session=this.session(id);
+    if(!session.shell||session.shell.destroyed||!session.shell.writable)throw new Error('此 SSH 会话已断开，请先连接服务器');
+    const text=cleanCommandText(command);
+    if((mode!=='insert'&&mode!=='execute')||typeof bracketedPaste!=='boolean')throw new Error('命令发送方式无效');
+    // Without bracketed paste a newline or tab could execute a partial command or
+    // trigger completion before the user is able to review the inserted text.
+    if(!bracketedPaste&&/[\n\t]/.test(text))throw new Error('当前终端未启用括号粘贴，无法完整填入多行或含制表符的命令。请回到支持括号粘贴的 Shell 后重试，或改用单行命令。');
+    const normalized=text.replace(/\n/g,'\r');
+    const data=(bracketedPaste?'\x1b[200~'+normalized+'\x1b[201~':normalized)+(mode==='execute'?'\r':'');
+    const encoded=session.profile.encoding==='utf8'?Buffer.from(data,'utf8'):iconv.encode(data,session.profile.encoding);
+    const roundTrip=session.profile.encoding==='utf8'?encoded.toString('utf8'):iconv.decode(encoded,session.profile.encoding);
+    if(roundTrip!==data)throw new Error('当前终端编码无法完整表示此命令，请切换 UTF-8 后再发送。');
+    await new Promise<void>((resolve,reject)=>{
+      try{session.shell!.write(encoded,(error?:Error|null)=>error?reject(new Error('命令发送失败，连接可能已断开。')):resolve());}
+      catch{reject(new Error('命令发送失败，连接可能已断开。'));}
     });
   }
 

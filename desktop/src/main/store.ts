@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {defaultSettings,migrateDefaultShortcuts,normalizeShortcut} from '../shared/defaults';
 import {preferredChineseFont,systemFontCatalog} from './font-catalog';
 import {connectionIdentity} from '../shared/connections';
+import {normalizeTerminalPalette} from '../shared/terminal-palettes';
 import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,ConnectionGroup,ConnectionIcon} from '../shared/types';
 const connectionIcons=new Set<ConnectionIcon>(['server','cloud','database','router','code','folder']);
 function identifier(input:unknown,label='连接'):string{
@@ -31,6 +32,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   const result=structuredClone(defaultSettings);
   if(!input||typeof input!=='object')return result;
   if(input.theme==='dark'||input.theme==='light')result.theme=input.theme;
+  result.terminalPalette=normalizeTerminalPalette(input.terminalPalette);
   if(Number.isInteger(input.fontWeight)&&input.fontWeight>=1&&input.fontWeight<=1000)result.fontWeight=input.fontWeight;
   result.chineseFontWeight=result.fontWeight;
   if(Number.isInteger(input.chineseFontWeight)&&input.chineseFontWeight>=1&&input.chineseFontWeight<=1000)result.chineseFontWeight=input.chineseFontWeight;
@@ -38,7 +40,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly','sudoPasswordSubmit'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
   for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=normalizeShortcut(input.shortcuts[id]);
-  for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword']){
+  for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword','commands']){
     if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)continue;
     const binding=result.shortcuts[id].toLowerCase();
     if(Object.entries(result.shortcuts).some(([other,value])=>other!==id&&value.toLowerCase()===binding))result.shortcuts[id]='';

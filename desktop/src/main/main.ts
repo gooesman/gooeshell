@@ -7,12 +7,27 @@ import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {Store,cleanProfile} from './store';
 import {CredentialStore} from './credential-store';
+import {CommandStore} from './command-store';
 import {connectionIdentity} from '../shared/connections';
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
 import {systemFontCatalog} from './font-catalog';
 import type {AppEvent,CredentialUpdate,FileListing,HostProfile} from '../shared/types';
-let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let shuttingDown=false;let workerAvailable=false;
+let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let commands:CommandStore;let shuttingDown=false;let workerAvailable=false;
+// Electron scopes this lock to userData. Different test/portable data directories
+// stay independent, while two copies using the same catalog cannot lose writes.
+app.setName('gooeshell');
+const primaryInstance=app.requestSingleInstanceLock();
+let activateWhenReady=false;
+function activateWindow(){
+ if(!win||win.isDestroyed()){activateWhenReady=true;return;}
+ activateWhenReady=false;
+ if(win.isMinimized())win.restore();
+ if(!win.isVisible())win.show();
+ win.focus();
+}
+if(!primaryInstance)app.quit();
+else app.on('second-instance',activateWindow);
 const sessionProfiles=new Map<string,HostProfile>();
 const closedSessions=new Set<string>();
 const connectAttempts=new Map<string,{cancelled:boolean;started:boolean;profileId:string}>();
@@ -36,9 +51,10 @@ async function fonts():Promise<string[]>{
  return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve(availableFontFamilies(Array.isArray(data)?data:typeof data==='string'?[data]:[]));}catch{resolve(known);}}));
 }
 const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','chmod','runFile']);
-app.whenReady().then(async()=>{
+if(primaryInstance)app.whenReady().then(async()=>{
  void systemFontCatalog().catch(()=>{});
  app.setName('gooeshell');if(process.platform==='win32')app.setAppUserModelId('com.gooesman.gooeshell');store=new Store(app.getPath('userData'));
+ commands=new CommandStore(app.getPath('userData'));
  credentials=new CredentialStore(app.getPath('userData'),{
   // Linux's synchronous API exposes the selected backend, so reject its plaintext fallback.
   available:async()=>process.platform==='linux'?safeStorage.isEncryptionAvailable()&&['gnome_libsecret','kwallet','kwallet5','kwallet6'].includes(safeStorage.getSelectedStorageBackend()):safeStorage.isAsyncEncryptionAvailable(),
@@ -81,6 +97,26 @@ app.whenReady().then(async()=>{
   switch(method){
    case 'initial':return{profiles:await store.profiles(),connections:await store.connections(),groups:await store.groups(),settings:await store.settings(),connectionHistory:await store.history(),hostKeyPreferences:await store.hostKeyPreferences(),localHome:os.homedir(),version:app.getVersion()};
    case 'connections':return{profiles:await store.profiles(),connections:await store.connections(),history:await store.history(),groups:await store.groups()};
+   case 'commandLibrary':return commands.library();
+   case 'saveCommandGroup':return commands.saveGroup(value);
+   case 'deleteCommandGroup':return commands.deleteGroup(value);
+   case 'saveCommand':return commands.saveCommand(value);
+   case 'deleteCommand':return commands.deleteCommand(value);
+   case 'sendCommand':{
+    if(!value||typeof value.sessionId!=='string')throw new Error('命令发送请求无效');
+    const profile=sessionProfiles.get(value.sessionId);if(!profile)throw new Error('此 SSH 会话已断开，请先连接服务器');
+    const effectiveConnectionId=async()=>{
+     const saved=(await store.connections()).find(candidate=>candidate.id===profile.id);
+     return saved&&connectionIdentity(saved)!==connectionIdentity(profile)?'live:'+value.sessionId:profile.id;
+    };
+    const command=await commands.commandForSend(value,await effectiveConnectionId());
+    // A saved connection can be retargeted while its previous device is still
+    // connected. Its commands now require the same explicit borrowing as any
+    // other connection, even though the saved record retained its ID.
+    if(value.expectedConnectionId&&value.expectedConnectionId!==await effectiveConnectionId()&&!value.allowOtherConnection)throw new Error('此命令属于其他连接，请确认目标终端后再借用');
+    if(sessionProfiles.get(value.sessionId)!==profile)throw new Error('此 SSH 会话已断开，请先连接服务器');
+    return remote('terminalCommandInput',value.sessionId,command.command,value.mode,value.bracketedPaste);
+   }
    case 'saveConnection':{
     const profile=await store.resolveConnection(cleanProfile(value.profile));
     if(value.credentials&&value.credentials.remember!=='never')await credentials.prepare(profile,value.credentials);
@@ -196,6 +232,9 @@ app.whenReady().then(async()=>{
  const dev=process.env.GOOESHELL_DEV_URL;
  if(dev){if(!/^http:\/\/127\.0\.0\.1:5173\/?$/.test(dev))throw new Error('Invalid development URL');await win.loadURL(dev);}else await win.loadFile(path.join(__dirname,'../../dist/index.html'));
  win.show();
+ if(activateWhenReady)activateWindow();
 });
-app.on('window-all-closed',shutdown);
-app.on('before-quit',event=>{if(shuttingDown)return;event.preventDefault();if(win&&!win.isDestroyed())win.close();else shutdown();});
+if(primaryInstance){
+ app.on('window-all-closed',shutdown);
+ app.on('before-quit',event=>{if(shuttingDown)return;event.preventDefault();if(win&&!win.isDestroyed())win.close();else shutdown();});
+}

@@ -6,6 +6,16 @@ import path from 'node:path';
 import {Store,cleanProfile,cleanSettings} from '../src/main/store';
 import {defaultSettings} from '../src/shared/defaults';
 const profile={id:'test',name:'test host',host:'example.com',port:22,username:'alice',auth:'password' as const,rememberHost:true,encoding:'utf8' as const};
+test('terminal palette migrates independently and command shortcut preserves an occupied binding',async()=>{
+ const legacy={...defaultSettings,terminalPalette:undefined,shortcuts:{...defaultSettings.shortcuts,commands:undefined,search:'Ctrl+Shift+M'}} as unknown as typeof defaultSettings;
+ assert.equal(cleanSettings(legacy).terminalPalette,'follow-interface');
+ assert.equal(cleanSettings(legacy).shortcuts.commands,'');
+ assert.equal(cleanSettings(legacy).shortcuts.search,'Ctrl+Shift+M');
+ assert.equal(cleanSettings({...defaultSettings,terminalPalette:'unknown'}).terminalPalette,'follow-interface');
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-palette-store-'));
+ try{const store=new Store(root);await store.saveSettings({...defaultSettings,theme:'light',terminalPalette:'midnight'});const restored=await new Store(root).settings();assert.equal(restored.theme,'light');assert.equal(restored.terminalPalette,'midnight');}
+ finally{await fs.unlink(path.join(root,'settings.json'));await fs.rmdir(root);}
+});
 test('profiles persist only intended fields and never credentials',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-store-test-'));
  const store=new Store(root);

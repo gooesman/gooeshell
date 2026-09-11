@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('gooeshell',{
   terminalBinaryInput:(id,data)=>send('terminalBinaryInput',id,data),
   terminalResize:(id,cols,rows)=>send('terminalResize',id,cols,rows),
   terminalAck:(id,bytes)=>send('terminalAck',id,bytes),
+  sendCommand:async request=>send('sendCommand',request),
   fontCatalog:async()=>[],backgroundData:async()=>'',readClipboard:async()=>'',writeClipboard:async()=>{},
   onEvent:callback=>{
     const listener=(_event,value)=>callback(value);ipcRenderer.on('reconnect-fixture:event',listener);

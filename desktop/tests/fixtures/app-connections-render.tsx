@@ -17,6 +17,8 @@ const control = {
   calls, holdConnect: false,
   releaseConnect: () => { held?.(); held = null; },
   state: () => api.connections(),
+  commandLibrary: () => api.commandLibrary(),
+  settings: () => api.initial().then(value => value.settings),
   disconnect: (id: string) => api.disconnect(id),
   emit: (event: AppEvent) => eventListeners.forEach(handler => handler(event)),
 };
