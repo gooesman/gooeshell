@@ -31,6 +31,13 @@ async function context(selector) {
   await until(() => evaluate('Boolean(document.querySelector(".connection-context-menu"))'), 'connection menu');
 }
 const connectCount = () => evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'connect').length`);
+const historySelector = '[aria-label="最近连接"] .recent-connection';
+const activeSession = () => evaluate(`document.querySelector('[data-terminal-session][data-active="true"]')?.dataset.terminalSession || ''`);
+async function shortcut(keyCode) {
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: ['control', 'shift'] });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: ['control', 'shift'] });
+  await delay(35);
+}
 const noDialog = () => until(() => evaluate('!document.querySelector("[role=dialog]")'), 'dialog closed');
 async function picture(label) {
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -46,16 +53,20 @@ async function run() {
   window.webContents.on('console-message', (...args) => { const details = args[0], message = typeof args[2] === 'string' ? args[2] : details.message, level = typeof args[1] === 'number' ? args[1] : details.level; if (level >= 3 || level === 'error') result.errors.push(message); });
   window.webContents.on('render-process-gone', (_event, detail) => result.errors.push(JSON.stringify(detail)));
   await window.loadURL(url);
-  await until(() => evaluate('Boolean(document.querySelector(".recent-connection")) && Boolean(document.querySelector("#connection-group-development .host"))'), 'App history and grouped sidebar');
+  await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(historySelector)})) && Boolean(document.querySelector("#connection-group-development .host"))`), 'App history and grouped sidebar');
   assert.equal(await evaluate(`document.getElementById('file-manager').hidden`), true);
   assert.equal(await evaluate(`document.getElementById('command-library-dock').hidden`), true);
   assert.equal(await connectCount(), 0);
+  assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 1);
+  assert.match(await evaluate(`document.querySelector('.terminal-tab.active').textContent`), /新标签页/);
+  assert.equal(await evaluate(`document.querySelectorAll('.saved-connection').length`), 1);
+  result.checks.initialHomeTab = true;
   phase = 'recent menu edits and saves without connecting';
-  await context('.recent-connection'); await click('编辑连接设置…');
+  await context(historySelector); await click('编辑连接设置…');
   await until(() => evaluate(`!!document.getElementById('credential-remember') && !document.getElementById('credential-remember').disabled`), 'connection settings loaded');
   await fill('#host-name', '开发工作站'); await click('保存'); await noDialog();
   await until(() => evaluate(`document.querySelector('.recent-copy strong').textContent === '开发工作站' && document.querySelector('.host-name').textContent === '开发工作站'`), 'name synced in history and sidebar');
-  assert.equal(await connectCount(), 0); assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 0);
+  assert.equal(await connectCount(), 0); assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 1);
   result.checks.recentEditSavesWithoutConnection = true;
 
   phase = 'host-key cancellation advances the pending dialog queue';
@@ -88,8 +99,8 @@ async function run() {
   result.checks.groupDeletionPreservesConnections = true;
 
   phase = 'delete recent record keeps the saved connection';
-  await context('.recent-connection'); await click('删除这条最近记录');
-  await until(() => evaluate(`!document.querySelector('.recent-connection')`), 'recent removed');
+  await context(historySelector); await click('删除这条最近记录');
+  await until(() => evaluate(`!document.querySelector(${JSON.stringify(historySelector)})`), 'recent removed');
   assert.equal(await evaluate(`document.querySelectorAll('.host').length`), 1);
   result.checks.historyDeletionPreservesFavorite = true;
 
@@ -123,6 +134,92 @@ async function run() {
   assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 1);
   result.checks.reconnectShortcutPreservesRenderer = true;
+
+  phase = 'plus opens independent home tabs and quick connect remains separate';
+  const reconnectedId = await activeSession(), connectsBeforeHomes = await connectCount();
+  await evaluate(`window.fixtureOriginalTab = document.querySelector('.terminal-tab.active')`);
+  await click('新建标签页');
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 2 && Boolean(document.querySelector('.connection-home'))`), 'first new home tab');
+  assert.equal(await activeSession(), ''); assert.equal(await connectCount(), connectsBeforeHomes);
+  assert.equal(await evaluate(`Boolean(document.querySelector('[role="dialog"]'))`), false);
+  assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  await evaluate(`window.fixtureFirstHomeTab = document.querySelector('.terminal-tab.active')`);
+  await evaluate(`document.querySelector('.host').click()`);
+  await until(async () => await activeSession() === reconnectedId, 'sidebar reuses the live connection from a home');
+  assert.equal(await connectCount(), connectsBeforeHomes);
+  await evaluate(`window.fixtureFirstHomeTab.click()`);
+  await click('新建标签页');
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 3`), 'second independent home tab');
+  await evaluate(`window.fixtureSecondHomeTab = document.querySelector('.terminal-tab.active')`);
+  assert.equal(await evaluate(`window.fixtureFirstHomeTab !== window.fixtureSecondHomeTab && [...document.querySelectorAll('.terminal-tab')].filter(tab => tab.textContent.includes('新标签页')).length === 2`), true);
+  await shortcut('P'); await until(() => evaluate(`Boolean(document.getElementById('host-address'))`), 'quick-connect shortcut opens settings');
+  await click('关闭连接设置'); await noDialog();
+  assert.equal(await connectCount(), connectsBeforeHomes);
+  assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixtureSecondHomeTab`), true);
+  result.checks.plusCreatesIndependentHomeTabs = true;
+
+  phase = 'home has saved and recent choices and never lists a remote home identity';
+  const listsBeforeHome = await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'remoteList').length`);
+  await click('展开文件管理'); await delay(100);
+  assert.equal(await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'remoteList').length`), listsBeforeHome);
+  assert.equal(await evaluate(`document.querySelector('[aria-label="远程目录路径"]').disabled`), true);
+  await click('收起文件管理');
+  await picture('dark-new-tab');
+  assert.equal(await evaluate(`document.querySelectorAll('.saved-connection').length`), 1);
+  assert.equal(await evaluate(`document.querySelectorAll(${JSON.stringify(historySelector)}).length`), 1);
+  window.setSize(960, 760); await click('切换为白色主题'); await picture('light-new-tab-small');
+  const homeLayout = await evaluate(`(() => { const home = document.querySelector('.connection-home'), cards = [...home.querySelectorAll('.recent-connection')].map(card => card.getBoundingClientRect()), bounds = home.getBoundingClientRect(); return { overflow: document.documentElement.scrollWidth > innerWidth, contained: cards.every(card => card.left >= bounds.left && card.right <= bounds.right && card.width > 100) }; })()`);
+  assert.equal(homeLayout.overflow, false); assert.equal(homeLayout.contained, true);
+  await click('切换为黑色主题'); window.setSize(1280, 860); await delay(60);
+  result.checks.homeRemoteOperationsDisabled = true;
+
+  phase = 'saved and recent selections replace their blank tabs without reusing another session';
+  await evaluate(`window.fixtureFirstHomeTab.click()`);
+  await click('连接已保存服务器 开发工作站');
+  await until(async () => (await activeSession()) !== '' && (await activeSession()) !== reconnectedId, 'saved choice fills first home');
+  const firstNewSession = await activeSession();
+  assert.equal(await connectCount(), connectsBeforeHomes + 1);
+  assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 3);
+  assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixtureFirstHomeTab && !window.fixtureFirstHomeTab.textContent.includes('新标签页')`), true);
+  await evaluate(`window.fixtureSecondHomeTab.click()`);
+  await click('连接最近服务器 开发工作站');
+  await until(async () => (await activeSession()) !== '' && ![reconnectedId, firstNewSession].includes(await activeSession()), 'recent choice fills second home');
+  const secondNewSession = await activeSession();
+  assert.equal(await connectCount(), connectsBeforeHomes + 2);
+  assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 3);
+  assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixtureSecondHomeTab && document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  result.checks.homeSelectionsReplaceExactTabs = true;
+
+  phase = 'tab navigation includes homes and terminal renderers stay mounted';
+  await shortcut('Left'); assert.equal(await activeSession(), firstNewSession);
+  await shortcut('Left'); assert.equal(await activeSession(), reconnectedId);
+  await shortcut('Right'); assert.equal(await activeSession(), firstNewSession);
+  await evaluate(`window.fixtureOriginalTab.click(); window.fixtureFirstHomeTab.querySelector('.tab-close').click(); window.fixtureSecondHomeTab.querySelector('.tab-close').click()`);
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 1`), 'extra sessions closed');
+  assert.equal(await activeSession(), reconnectedId);
+  await click('新建标签页'); await evaluate(`window.fixturePendingHomeTab = document.querySelector('.terminal-tab.active')`);
+  await shortcut('Left'); assert.equal(await activeSession(), reconnectedId);
+  await shortcut('Right'); assert.equal(await activeSession(), '');
+  assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixturePendingHomeTab && document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  result.checks.homeTabNavigationPreservesRenderers = true;
+
+  phase = 'closing a pending home cancels its attempt and disposes a late transport';
+  const disconnectsBeforePending = await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').length`);
+  const pendingConnectCount = await connectCount();
+  await evaluate(`window.appConnectionsFixture.holdConnect = true`); await click('连接已保存服务器 开发工作站');
+  await until(async () => await connectCount() === pendingConnectCount + 1, 'held home attempt started');
+  const pendingAttempt = await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'connect').at(-1).requestId`);
+  await evaluate(`window.fixturePendingHomeTab.querySelector('.tab-close').click()`);
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 1`), 'pending home closed');
+  assert.equal(await activeSession(), reconnectedId);
+  assert.equal(await evaluate(`window.appConnectionsFixture.calls.some(call => call.method === 'cancelConnect' && call.requestId === ${JSON.stringify(pendingAttempt)})`), true);
+  assert.equal(await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').length`), disconnectsBeforePending);
+  await evaluate(`window.appConnectionsFixture.holdConnect = false; window.appConnectionsFixture.releaseConnect()`);
+  await until(() => evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').length === ${disconnectsBeforePending + 1}`), 'late transport disposed');
+  assert.equal(await activeSession(), reconnectedId);
+  assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length === 1 && document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  assert.equal(await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').at(-1).sessionId === ${JSON.stringify(reconnectedId)}`), false);
+  result.checks.pendingHomeCloseCancelsOnlyItsAttempt = true;
 
   phase = 'command dock shortcut and connection-scoped editing';
   await evaluate(`document.querySelector('.xterm-helper-textarea').focus()`);
@@ -174,6 +271,7 @@ async function run() {
 
   phase = 'saving a brand-new connection adds a visible favorite without connecting';
   const connectsBeforeSave = await connectCount();
+  await click('新建标签页'); await evaluate(`window.fixtureSaveOnlyHome = document.querySelector('.terminal-tab.active')`);
   await click('快速连接');
   await fill('#host-address', 'new.example.test');
   await until(() => evaluate(`!!document.getElementById('credential-remember') && !document.getElementById('credential-remember').disabled`), 'new connection ready');
@@ -181,7 +279,22 @@ async function run() {
   await until(() => evaluate(`document.querySelectorAll('.host').length === 2`), 'saved connection is visible');
   assert.equal(await connectCount(), connectsBeforeSave);
   assert.equal(await evaluate(`window.appConnectionsFixture.state().then(state => state.profiles.some(profile => profile.host === 'new.example.test'))`), true);
+  assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixtureSaveOnlyHome && Boolean(document.querySelector('.connection-home')) && document.querySelectorAll('.saved-connection').length === 2`), true);
+  await evaluate(`window.fixtureSaveOnlyHome.querySelector('.tab-close').click()`);
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 1 && !document.querySelector('.connection-home')`), 'saved-only home closed without altering original terminal');
   result.checks.newSaveCreatesVisibleFavorite = true;
+
+  phase = 'closing the last terminal and last home always leaves a usable home';
+  await evaluate(`document.querySelector('.terminal-tab.active .tab-close').click()`);
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 1 && Boolean(document.querySelector('.connection-home')) && !document.querySelector('.xterm')`), 'last terminal replaced by home');
+  assert.match(await evaluate(`document.querySelector('.terminal-tab.active').textContent`), /新标签页/);
+  assert.equal(await evaluate(`document.querySelectorAll('.saved-connection').length`), 2);
+  const disconnectsBeforeHomeClose = await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').length`);
+  await evaluate(`window.fixtureLastHome = document.querySelector('.terminal-tab.active'); window.fixtureLastHome.querySelector('.tab-close').click()`);
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 1 && document.querySelector('.terminal-tab.active') !== window.fixtureLastHome && Boolean(document.querySelector('.connection-home'))`), 'last home replaced by a fresh home');
+  assert.equal(await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').length`), disconnectsBeforeHomeClose);
+  assert.equal(await connectCount(), connectsBeforeSave);
+  result.checks.lastTabCloseReturnsToFreshHome = true;
   result.success = true;
 }
 run().catch(error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); }).finally(async () => {

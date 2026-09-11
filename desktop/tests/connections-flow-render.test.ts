@@ -28,5 +28,6 @@ test('connection lifecycle keeps terminal identity and prevents cancelled or ret
   t.diagnostic(`connection lifecycle artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
   for (const name of ['onlineDirectFocusesExisting', 'reconnectKeepsTabAndOneAttempt', 'backgroundReconnectPreservesSelection', 'cancelCleansLateTransport', 'closeCleansPendingReconnect', 'authenticationUsesCompactPrompt', 'sudoRechecksCapturedTargetAfterSaving', 'saveMetadataDoesNotConnect', 'endpointEditDoesNotRetargetOpenSession', 'oldTargetCannotReplaceNewCredentials', 'oldTargetReconnectUsesSeparateProfile']) assert.equal(result.checks[name], true, name);
+  for (const name of ['initialHomeBecomesTerminal', 'explicitHomeDoesNotReuseTransport', 'untargetedConnectAppendsTab', 'backgroundHomeDoesNotStealSelection', 'closedHomeCannotResurrect', 'closedHomeRejectsStaleAuthentication', 'homeAuthenticationPreservesTargetAndSelection', 'closeUsesWorkspaceOrder', 'batchedClosePreservesQueuedSelection']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []);
 });

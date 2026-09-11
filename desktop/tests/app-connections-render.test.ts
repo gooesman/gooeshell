@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
-test('full App connects grouped favorites and edits recent entries without connecting', {
+test('full App creates independent home tabs, connects in place, and preserves connection management', {
   skip: process.env.GOOESHELL_APP_CONNECTIONS_TEST !== '1' && 'Set GOOESHELL_APP_CONNECTIONS_TEST=1 with Electron installed', timeout: 90_000,
 }, async t => {
   const root = process.cwd(), artifactsRoot = path.resolve('../.build'); await fs.mkdir(artifactsRoot, { recursive: true });
@@ -21,6 +21,6 @@ test('full App connects grouped favorites and edits recent entries without conne
   const exit = await new Promise<number | null>((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error('No App connections report: ' + stderr); }));
   t.diagnostic(`full App connections artifacts: ${artifacts}`); assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
-  for (const name of ['recentEditSavesWithoutConnection', 'hostKeyCancellationQueue', 'groupCreateMoveAndSort', 'groupDeletionPreservesConnections', 'historyDeletionPreservesFavorite', 'sidebarDirectConnectsAndReusesTab', 'reconnectStripLayout', 'reconnectShortcutPreservesRenderer', 'commandDockShortcutAndPersistence', 'independentTerminalPaletteAndDockLayout', 'cancelReconnectWiring', 'newSaveCreatesVisibleFavorite']) assert.equal(result.checks[name], true, name);
+  for (const name of ['initialHomeTab', 'recentEditSavesWithoutConnection', 'hostKeyCancellationQueue', 'groupCreateMoveAndSort', 'groupDeletionPreservesConnections', 'historyDeletionPreservesFavorite', 'sidebarDirectConnectsAndReusesTab', 'reconnectStripLayout', 'reconnectShortcutPreservesRenderer', 'plusCreatesIndependentHomeTabs', 'homeRemoteOperationsDisabled', 'homeSelectionsReplaceExactTabs', 'homeTabNavigationPreservesRenderers', 'pendingHomeCloseCancelsOnlyItsAttempt', 'commandDockShortcutAndPersistence', 'independentTerminalPaletteAndDockLayout', 'cancelReconnectWiring', 'newSaveCreatesVisibleFavorite', 'lastTabCloseReturnsToFreshHome']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []); assert.equal(result.visuals['dark-home'].theme, 'dark'); assert.equal(result.visuals['light-home'].theme, 'light');
 });

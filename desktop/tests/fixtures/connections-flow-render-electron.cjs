@@ -27,12 +27,13 @@ async function invoke(method, args = [], wait = true) {
   const expression = `window.connectionHarness.${method}(...${JSON.stringify(args)})`;
   return evaluate(wait ? expression : `void ${expression}`);
 }
-async function reset({ offline = false, empty = false } = {}) {
+async function reset({ offline = false, empty = false, tabs, activeId } = {}) {
   assert.equal(backend.pending.length, 0, 'previous attempts must settle before the next scenario');
   backend.connections = [structuredClone(profile), structuredClone(other)]; backend.calls = []; backend.plan = 'success'; backend.sudoMissing = true;
   const sessions = empty ? [] : [first, second];
-  await invoke('reset', [{ sessions, activeId: empty ? '' : first.id, closed: offline ? { [first.id]: '断开' } : {} }]);
-  await until(async () => (await state()).sessions.length === sessions.length && (await state()).activeId === (empty ? '' : first.id), 'state reset');
+  activeId ??= empty ? '' : first.id;
+  await invoke('reset', [{ sessions, tabs, activeId, closed: offline ? { [first.id]: '断开' } : {} }]);
+  await until(async () => (await state()).sessions.length === sessions.length && (await state()).activeId === activeId, 'state reset');
   await invoke('refresh');
   await until(async () => (await state()).catalog.length === 2, 'catalog refresh');
   backend.calls = [];
@@ -106,8 +107,10 @@ async function run() {
   phase = 'a cancelled late success is disconnected instead of added';
   await reset({ empty: true }); backend.plan = 'deferred';
   await invoke('direct', [profile], false); await until(() => backend.pending.length === 1, 'connect starts');
+  await until(async () => (await state()).hasUntargetedPending, 'untargeted pending banner');
   const pendingAttempt = backend.pending[0].request.attemptId;
   await invoke('cancel');
+  await until(async () => !(await state()).hasUntargetedPending, 'cancel hides untargeted pending banner');
   assert.ok(backend.calls.some(call => call.method === 'cancelConnect' && call.value === pendingAttempt));
   const cancelledId = resolvePending();
   await until(() => backend.calls.some(call => call.method === 'disconnect' && call.value === cancelledId), 'cancelled transport cleanup');
@@ -191,6 +194,123 @@ async function run() {
   assert.equal((await state()).sessions.find(session => session.profile.id === reconnectCall.value.profile.id).tabId, first.tabId);
   assert.equal((await state()).catalog.find(value => value.id === profile.id).host, 'replacement.example.test');
   result.checks.oldTargetReconnectUsesSeparateProfile = true;
+
+  phase = 'an initial blank tab becomes the connected terminal without adding another tab';
+  await reset({ empty: true, tabs: ['home-one'], activeId: 'home-one' });
+  await invoke('direct', [profile]);
+  await until(async () => (await state()).sessions.length === 1, 'initial home connected');
+  let workspace = await state();
+  assert.deepEqual(workspace.tabs, ['home-one']);
+  assert.equal(workspace.sessions[0].tabId, 'home-one');
+  assert.equal(workspace.activeId, workspace.sessions[0].id);
+  result.checks.initialHomeBecomesTerminal = true;
+
+  phase = 'an explicit home tab opens a second transport instead of reusing an existing connection';
+  await reset({ tabs: [first.tabId, 'home-one', second.tabId], activeId: 'home-one' });
+  await invoke('direct', [profile, false, 'home-one']);
+  await until(async () => (await state()).sessions.length === 3, 'explicit home connected');
+  workspace = await state();
+  assert.deepEqual(workspace.tabs, [first.tabId, 'home-one', second.tabId]);
+  assert.equal(workspace.sessions.find(session => session.id === workspace.activeId).tabId, 'home-one');
+  assert.ok(workspace.sessions.some(session => session.id === first.id));
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, 1);
+  result.checks.explicitHomeDoesNotReuseTransport = true;
+
+  phase = 'untargeted connections append a tab while ordinary direct actions can reuse a live terminal';
+  await reset({ tabs: [first.tabId, 'home-one', second.tabId], activeId: 'home-one' });
+  await invoke('direct', [profile]);
+  await until(async () => (await state()).activeId === first.id, 'existing transport reused from home');
+  assert.equal(backend.calls.some(call => call.method === 'connect'), false);
+  await invoke('establish', [other]);
+  await until(async () => (await state()).sessions.length === 3 && (await state()).tabs.length === 4, 'untargeted tab appended');
+  workspace = await state();
+  assert.deepEqual(workspace.tabs.slice(0, 3), [first.tabId, 'home-one', second.tabId]);
+  assert.equal(workspace.tabs[3], workspace.sessions.find(session => session.id === workspace.activeId).tabId);
+  result.checks.untargetedConnectAppendsTab = true;
+
+  phase = 'a home connection finishing in the background preserves the selected home tab';
+  await reset({ empty: true, tabs: ['home-one', 'home-two'], activeId: 'home-one' }); backend.plan = 'deferred';
+  await invoke('direct', [profile, false, 'home-one'], false);
+  await until(() => backend.pending.length === 1, 'home connection pending');
+  assert.equal((await state()).hasUntargetedPending, false, 'targeted home must not create a global pending banner');
+  await invoke('direct', [profile, false, 'home-one']);
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, 1);
+  await invoke('setActiveId', ['home-two']);
+  await until(async () => (await state()).activeId === 'home-two', 'other home selected');
+  const homeBackgroundId = resolvePending();
+  await until(async () => (await state()).sessions.some(session => session.id === homeBackgroundId), 'background home finished');
+  workspace = await state();
+  assert.equal(workspace.activeId, 'home-two');
+  assert.equal(workspace.sessions[0].tabId, 'home-one');
+  assert.deepEqual(workspace.tabs, ['home-one', 'home-two']);
+  result.checks.backgroundHomeDoesNotStealSelection = true;
+
+  phase = 'closing a connecting home cancels and disposes a late SSH result';
+  await reset({ empty: true, tabs: ['home-one', 'home-two'], activeId: 'home-one' }); backend.plan = 'deferred';
+  await invoke('direct', [profile, false, 'home-one'], false);
+  await until(() => backend.pending.length === 1, 'closing home pending');
+  const homeAttempt = backend.pending[0].request.attemptId;
+  await invoke('cancel', ['home-one']); await invoke('setTabs', [['home-two']]); await invoke('setActiveId', ['home-two']);
+  await until(async () => !(await state()).pending['home-one'], 'cancel clears closed home pending marker');
+  assert.equal((await state()).hasUntargetedPending, false, 'closed home must not become an untargeted pending banner');
+  assert.ok(backend.calls.some(call => call.method === 'cancelConnect' && call.value === homeAttempt));
+  const closedHomeId = resolvePending();
+  await until(() => backend.calls.some(call => call.method === 'disconnect' && call.value === closedHomeId), 'closed home transport disposed');
+  await until(async () => !Object.values((await state()).pending).some(Boolean), 'closed home settled');
+  assert.equal((await state()).sessions.length, 0);
+  assert.deepEqual((await state()).tabs, ['home-two']);
+  result.checks.closedHomeCannotResurrect = true;
+
+  phase = 'a targeted auth prompt cannot reconnect after its home tab was removed';
+  await reset({ empty: true, tabs: ['home-one', 'home-two'], activeId: 'home-one' }); backend.plan = 'auth';
+  await invoke('direct', [profile, false, 'home-one']);
+  await until(async () => (await state()).prompt?.tabId === 'home-one', 'auth bound to home');
+  // Remove without cancel to exercise the stale-prompt guard independently.
+  await invoke('setTabs', [['home-two']]); await invoke('setActiveId', ['home-two']);
+  await until(async () => (await state()).tabs.length === 1, 'auth target removed');
+  const authAttemptsBefore = backend.calls.filter(call => call.method === 'connect').length;
+  backend.plan = 'success'; await invoke('submitAuth', [secret]);
+  await until(async () => !(await state()).prompt && !(await state()).authBusy, 'stale prompt dismissed');
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, authAttemptsBefore);
+  assert.equal((await state()).sessions.length, 0);
+  result.checks.closedHomeRejectsStaleAuthentication = true;
+
+  phase = 'authentication retry fills its original home and preserves a later selection';
+  await reset({ empty: true, tabs: ['home-one', 'home-two'], activeId: 'home-one' }); backend.plan = 'auth';
+  await invoke('direct', [profile, false, 'home-one']);
+  await until(async () => (await state()).prompt?.tabId === 'home-one', 'retry auth bound to home');
+  backend.plan = 'deferred'; await invoke('submitAuth', [secret], false);
+  await until(() => backend.pending.length === 1, 'authenticated home pending');
+  await invoke('setActiveId', ['home-two']); await until(async () => (await state()).activeId === 'home-two', 'switch during authentication');
+  const authenticatedHomeId = resolvePending();
+  await until(async () => (await state()).sessions.some(session => session.id === authenticatedHomeId) && !(await state()).prompt, 'authenticated home finished');
+  assert.equal((await state()).activeId, 'home-two');
+  assert.equal((await state()).sessions[0].tabId, 'home-one');
+  result.checks.homeAuthenticationPreservesTargetAndSelection = true;
+
+  phase = 'closing a terminal selects an adjacent home in workspace order';
+  await reset({ tabs: [first.tabId, 'home-one', second.tabId], activeId: first.id });
+  await invoke('close', [first.id]);
+  await until(async () => (await state()).sessions.length === 1 && (await state()).activeId === 'home-one', 'adjacent home selected');
+  assert.deepEqual((await state()).tabs, ['home-one', second.tabId]);
+  await invoke('close', [second.id]);
+  await until(async () => (await state()).sessions.length === 0, 'background terminal closed');
+  assert.equal((await state()).activeId, 'home-one');
+  assert.deepEqual((await state()).tabs, ['home-one']);
+  result.checks.closeUsesWorkspaceOrder = true;
+
+  phase = 'batched tab selection and multiple closes preserve the queued selection';
+  await reset({ tabs: [first.tabId, second.tabId], activeId: second.id });
+  await invoke('establish', [other]);
+  await until(async () => (await state()).sessions.length === 3, 'third terminal added');
+  const thirdId = (await state()).sessions.find(session => session.id !== first.id && session.id !== second.id).id;
+  await invoke('setActiveId', [second.id]);
+  await until(async () => (await state()).activeId === second.id, 'middle terminal selected');
+  await evaluate(`window.connectionHarness.setActiveId(${JSON.stringify(first.id)}); void window.connectionHarness.close(${JSON.stringify(second.id)}); void window.connectionHarness.close(${JSON.stringify(thirdId)});`);
+  await until(async () => (await state()).sessions.length === 1, 'batched terminal closes settled');
+  assert.equal((await state()).activeId, first.id);
+  assert.deepEqual((await state()).tabs, [first.tabId]);
+  result.checks.batchedClosePreservesQueuedSelection = true;
   result.success = true;
 }
 run().catch(error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); }).finally(async () => {

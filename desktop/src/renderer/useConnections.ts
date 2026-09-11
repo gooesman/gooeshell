@@ -8,8 +8,9 @@ type Attempt = { id: string; cancelled: boolean; tabId?: string; profile: HostPr
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const authenticationError = (error: unknown) => /AUTH_REQUIRED|authentication|authenticate|encrypted.*key|passphrase|私钥口令/i.test(message(error));
 
-export default function useConnections({ sessions, setSessions, activeId, setActiveId, closed, notify, sudoSubmit }: {
+export default function useConnections({ sessions, setSessions, tabs, setTabs, activeId, setActiveId, closed, notify, sudoSubmit }: {
   sessions: SessionInfo[]; setSessions: Dispatch<SetStateAction<SessionInfo[]>>;
+  tabs?: string[]; setTabs?: Dispatch<SetStateAction<string[]>>;
   activeId: string; setActiveId: Dispatch<SetStateAction<string>>; closed: Record<string, string>;
   notify: (message: string, error?: boolean) => void; sudoSubmit: boolean;
 }) {
@@ -23,7 +24,10 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
   const [authBusy, setAuthBusy] = useState(false), [authError, setAuthError] = useState('');
   const attempts = useRef(new Map<string, Attempt>());
   const refreshGeneration = useRef(0);
-  const current = useRef({ sessions, activeId, closed, catalog }); current.current = { sessions, activeId, closed, catalog };
+  const current = useRef({ sessions, tabs, activeId, closed, catalog }); current.current = { sessions, tabs, activeId, closed, catalog };
+  const hasTab = (tabId: string) => current.current.tabs
+    ? current.current.tabs.includes(tabId)
+    : current.current.sessions.some(session => (session.tabId || session.id) === tabId);
   const refresh = async () => {
     const generation = ++refreshGeneration.current;
     const state = await api.connections();
@@ -38,6 +42,8 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
     const saved = await api.saveConnection({ profile, favorite, credentials }); await refresh(); return saved;
   };
   const establish = async (profile: HostProfile, credentials?: CredentialUpdate, tabId?: string) => {
+    // A home tab is a real target even though it has no SSH transport yet.
+    if (tabId && !hasTab(tabId)) return false;
     const key = tabId || profile.id;
     if (attempts.current.has(key)) return false;
     const attempt: Attempt = { id: crypto.randomUUID(), cancelled: false, tabId, profile };
@@ -46,15 +52,17 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
     try {
       const connected = await api.connect({ profile, credentials, attemptId: attempt.id });
       const previous = tabId ? current.current.sessions.find(session => (session.tabId || session.id) === tabId) : undefined;
-      if (attempt.cancelled || (tabId && !previous)) { await api.disconnect(connected.id); return false; }
+      if (attempt.cancelled || (tabId && !hasTab(tabId))) { await api.disconnect(connected.id); return false; }
       const session = { ...connected, tabId: tabId || connected.id };
-      setSessions(items => tabId ? items.map(item => (item.tabId || item.id) === tabId ? session : item) : [...items, session]);
-      if (!previous || current.current.activeId === previous.id) setActiveId(session.id);
+      setSessions(items => previous ? items.map(item => (item.tabId || item.id) === tabId ? session : item) : [...items, session]);
+      if (!tabId) setTabs?.(items => [...items, session.tabId]);
+      if (!tabId) setActiveId(session.id);
+      else setActiveId(selected => selected === (previous?.id || tabId) ? session.id : selected);
       void refresh().catch(error => notify(message(error), true));
       notify(isPreview ? '已打开演示会话，没有连接真实服务器' : `已连接 ${profile.name}`);
       return true;
     } catch (error) {
-      if (attempt.cancelled || /CONNECTION_CANCELLED/.test(message(error))) return false;
+      if (attempt.cancelled || (tabId && !hasTab(tabId)) || /CONNECTION_CANCELLED/.test(message(error))) return false;
       if (tabId) setReconnectErrors(previous => ({ ...previous, [tabId]: message(error) }));
       throw error;
     } finally {
@@ -65,6 +73,12 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
   const cancel = async (tabId?: string) => {
     const selected = [...attempts.current.values()].filter(attempt => tabId ? attempt.tabId === tabId : !attempt.tabId);
     for (const attempt of selected) attempt.cancelled = true;
+    if (selected.length) setPending(previous => {
+      const next = { ...previous };
+      for (const attempt of selected) next[attempt.tabId || attempt.profile.id] = false;
+      return next;
+    });
+    if (tabId) setAuthPrompt(prompt => prompt?.mode === 'connect' && prompt.tabId === tabId ? null : prompt);
     await Promise.all(selected.map(attempt => api.cancelConnect(attempt.id).catch(error => notify(message(error), true))));
   };
   const cancelProfile = async (profileId: string) => {
@@ -73,12 +87,15 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
     await Promise.all(selected.map(attempt => api.cancelConnect(attempt.id)));
   };
   const showAuth = (prompt: AuthPrompt) => { setAuthError(''); setAuthPrompt(prompt); };
-  const direct = async (supplied: HostProfile, newTab = false) => {
+  const direct = async (supplied: HostProfile, newTab = false, targetTabId?: string) => {
     const profile = catalog.find(value => value.id === supplied.id) || supplied;
-    const existing = !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && !current.current.closed[session.id]);
+    const existing = !targetTabId && !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && !current.current.closed[session.id]);
     if (existing) { setActiveId(existing.id); return; }
-    const offline = !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && current.current.closed[session.id]);
-    const tabId = offline ? offline.tabId || offline.id : undefined;
+    const offline = !targetTabId && !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && current.current.closed[session.id]);
+    const activeHome = !newTab && current.current.tabs?.includes(current.current.activeId)
+      && !current.current.sessions.some(session => (session.tabId || session.id) === current.current.activeId)
+      ? current.current.activeId : undefined;
+    const tabId = targetTabId || (offline ? offline.tabId || offline.id : activeHome);
     if (offline) setActiveId(offline.id);
     try { await establish(profile, undefined, tabId); }
     catch (error) {
@@ -105,7 +122,17 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
     const tabId = target.tabId || target.id;
     void cancel(tabId);
     if (authPrompt?.tabId === tabId || authPrompt?.sessionId === id) setAuthPrompt(null);
-    if (current.current.activeId === id) setActiveId(current.current.sessions.filter(item => (item.tabId || item.id) !== tabId).at(-1)?.id || '');
+    const remaining = current.current.sessions.filter(item => (item.tabId || item.id) !== tabId);
+    const orderedTabs = current.current.tabs;
+    if (orderedTabs) {
+      const remainingTabs = orderedTabs.filter(value => value !== tabId);
+      const nextTabId = remainingTabs[Math.min(orderedTabs.indexOf(tabId), remainingTabs.length - 1)];
+      const nextActiveId = remaining.find(item => (item.tabId || item.id) === nextTabId)?.id || nextTabId || '';
+      setActiveId(selected => selected === id ? nextActiveId : selected);
+      current.current.tabs = remainingTabs;
+      setTabs?.(items => items.filter(value => value !== tabId));
+    } else setActiveId(selected => selected === id ? remaining.at(-1)?.id || '' : selected);
+    current.current.sessions = remaining;
     setSessions(items => items.filter(item => (item.tabId || item.id) !== tabId));
     try { await api.disconnect(id); } catch (error) { notify(message(error), true); }
   };
@@ -123,6 +150,7 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
     if (!authPrompt || authBusy) return;
     const prompt = authPrompt; setAuthBusy(true); setAuthError('');
     try {
+      if (prompt.mode === 'connect' && prompt.tabId && !hasTab(prompt.tabId)) { setAuthPrompt(null); return; }
       if (prompt.mode === 'sudo') {
         const configured = current.current.catalog.find(profile => profile.id === prompt.profile.id);
         if (configured && !sameConnection(configured, prompt.profile)) throw new Error('此连接配置已更换地址或账号。请为原地址新建连接后设置密码。');
@@ -135,5 +163,6 @@ export default function useConnections({ sessions, setSessions, activeId, setAct
     } catch (error) { setAuthError(message(error)); }
     finally { setAuthBusy(false); }
   };
-  return { profiles, setProfiles, catalog, setCatalog, history, setHistory, groups, setGroups, refresh, save, establish, direct, reconnect, close, cancel, cancelProfile, pending, reconnectErrors, sudo, authPrompt, setAuthPrompt, authBusy, authError, submitAuth };
+  const hasUntargetedPending = [...attempts.current.values()].some(attempt => !attempt.tabId && !attempt.cancelled);
+  return { profiles, setProfiles, catalog, setCatalog, history, setHistory, groups, setGroups, refresh, save, establish, direct, reconnect, close, cancel, cancelProfile, pending, hasUntargetedPending, reconnectErrors, sudo, authPrompt, setAuthPrompt, authBusy, authError, submitAuth };
 }

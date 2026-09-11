@@ -10,7 +10,7 @@ if (!isPreview) throw new Error('This App fixture requires the isolated demo API
 const initial = await api.initial();
 await api.saveGroup({ id: 'development', name: '开发环境', icon: 'code', order: 0 });
 await api.saveConnection({ profile: { ...initial.profiles[0], groupId: 'development', icon: 'code' }, favorite: true });
-const calls: Array<{ method: string; profileId?: string; requestId?: string; decision?: string }> = [];
+const calls: Array<{ method: string; profileId?: string; requestId?: string; decision?: string; sessionId?: string; path?: string }> = [];
 const eventListeners = new Set<(event: AppEvent) => void>();
 let held: (() => void) | null = null;
 const control = {
@@ -24,10 +24,16 @@ const control = {
 };
 const connect = api.connect;
 api.connect = async request => {
-  calls.push({ method: 'connect', profileId: request.profile.id });
+  calls.push({ method: 'connect', profileId: request.profile.id, requestId: request.attemptId });
   if (control.holdConnect) await new Promise<void>(resolve => { held = resolve; });
   return connect(request);
 };
+const disconnect = api.disconnect;
+api.disconnect = async sessionId => { calls.push({ method: 'disconnect', sessionId }); return disconnect(sessionId); };
+const cancelConnect = api.cancelConnect;
+api.cancelConnect = async requestId => { calls.push({ method: 'cancelConnect', requestId }); return cancelConnect(requestId); };
+const remoteList = api.remoteList;
+api.remoteList = async request => { calls.push({ method: 'remoteList', sessionId: request.sessionId, path: request.path }); return remoteList(request); };
 const saveConnection = api.saveConnection;
 api.saveConnection = async request => { calls.push({ method: 'save', profileId: request.profile.id }); return saveConnection(request); };
 const onEvent = api.onEvent;
