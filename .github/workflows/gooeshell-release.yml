@@ -1,0 +1,35 @@
+name: Publish gooeshell release
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful gooeshell Desktop build run ID
+        required: true
+        type: string
+      version:
+        description: Stable version, for example 0.2.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: gooeshell-release-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate native builds and publish with GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+        run: node .github/scripts/publish-gooeshell.mjs
