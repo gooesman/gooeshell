@@ -71,7 +71,7 @@ export default function ConnectionSidebar(props: ConnectionSidebarProps) {
     </button>;
   });
   return <aside id="server-sidebar" className={`sidebar connection-sidebar${collapsed ? ' collapsed' : ''}`}>
-    <div className="brand"><img className="brand-mark" src="./gooeshell-icon.png" alt="" aria-hidden="true" draggable={false} /><span>gooeshell</span><small>PREVIEW</small></div>
+    <div className="brand"><img className="brand-mark" src="./gooeshell-icon.png" alt="" aria-hidden="true" draggable={false} /><span>gooeshell</span></div>
     <div className="sidebar-actions"><button type="button" className="button primary" aria-label="快速连接" title={`快速连接${props.connectShortcut ? ` · ${props.connectShortcut}` : ''}`} onClick={props.onQuickConnect}><Plus size={16} /><span className="item-label">快速连接</span></button></div>
     <div className="sidebar-heading connection-heading"><span>我的服务器 <span className="connection-total">{profiles.length}</span></span><button type="button" className="icon-button" aria-label="新建连接分组" title="新建分组" onClick={props.onGroupCreate}><FolderPlus size={15} /></button></div>
     <nav className="hosts" aria-label="已保存的服务器">

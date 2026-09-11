@@ -1,6 +1,6 @@
 # gooeshell
 
-Windows 优先的图形 SSH 终端与文件工作区，同时提供 macOS 和 Linux 预览包。默认黑色主题，也可切换白色；文件区默认收起，展开后在终端下方显示远程资源管理器，本地栏和传输队列默认折叠。
+Windows 优先的图形 SSH 终端与文件工作区，同时提供 macOS 和 Linux 版本。当前正式版本为 **0.2.0**。默认黑色主题，也可切换白色；文件区默认收起，展开后在终端下方显示远程资源管理器，本地栏和传输队列默认折叠。
 
 应用使用白鹅与橙色 `>_` 提示符图标，桌面程序、窗口及界面品牌保持一致。
 
@@ -17,7 +17,7 @@ Windows 优先的图形 SSH 终端与文件工作区，同时提供 macOS 和 Li
 | Mac Intel | `mac-x64.dmg`，拖入“应用程序”；也提供 ZIP。 |
 | Linux x64 | Ubuntu / Debian 可安装 `linux-x64.deb`；另提供 `linux-x64.AppImage`，赋予执行权限后运行。 |
 
-Mac 版本要求 macOS 13 或更新版本，与所用 [Electron 44 的系统要求](https://www.electronjs.org/zh/docs/latest/breaking-changes)一致。目前采用本地临时签名，尚未完成 Apple Developer ID 签名与公证；首次打开可能需要按 [Apple 的说明](https://support.apple.com/guide/mac-help/mh40616/mac)，在“系统设置 → 隐私与安全性”中允许打开。Linux 预览包在 Ubuntu 24.04 构建与验证，其他发行版的完整桌面兼容性仍待实机验证。
+Mac 版本要求 macOS 13 或更新版本，与所用 [Electron 44 的系统要求](https://www.electronjs.org/zh/docs/latest/breaking-changes)一致。目前采用本地临时签名，尚未完成 Apple Developer ID 签名与公证；首次打开可能需要按 [Apple 的说明](https://support.apple.com/guide/mac-help/mh40616/mac)，在“系统设置 → 隐私与安全性”中允许打开。Linux 版本在 Ubuntu 24.04 构建与验证，其他发行版的完整桌面兼容性仍待实机验证。
 
 开发构建可从 **Actions → gooeshell Desktop** 下载对应平台的构建产物。
 
@@ -46,6 +46,21 @@ Mac 版本要求 macOS 13 或更新版本，与所用 [Electron 44 的系统要�
 默认键位：`Ctrl+Shift+R` 断线重连、`Ctrl+Alt+P` 填入 sudo 密码、`Ctrl+Shift+P` 快速连接、`Ctrl+Shift+F1` 设置、`Ctrl+Shift+[` 折叠 / 展开侧边栏、`Ctrl+Shift+]` 显示 / 隐藏终端标题及标签栏、`Ctrl+Shift+←/→` 切换前后终端标签、`Ctrl+Shift+E` 收起 / 展开文件区、`F11` 全屏、`Ctrl+Shift+F11` 纯终端、`Ctrl+Shift+C/V` 复制 / 粘贴。标题及标签栏默认显示，进入全屏或纯终端模式时保留其显示状态，也可随时使用快捷键隐藏、恢复。旧版连接与设置的默认键位自动迁移，已有自定义键位保留；旧绑定占用新增动作的默认键时，新动作保持未设置，可在设置页自行分配。显式鼠标绑定优先于“右键粘贴”偏好；文件列表右键保留文件菜单。
 
 在 **设置 → 字体与外观** 中，英文字重与中文字重可分别选择，例如英文普通 400、中文粗体 700。下拉列表根据字体实际字形生成，过滤 Windows 模拟的粗体和斜体；某字体只有一种字重时会明确提示。更换字体会选择最接近的可用字重；旧版共用字重会同时迁移到中英文，保留原来的偏好。中文选项作用于 CJK 字符、全角字符和相应标点，英文字母、数字与终端线框保持独立。系统字体首次读取后复用缓存，新安装字体需重启应用。Windows 使用系统字体接口，macOS / Linux 读取系统 OpenType / TTC 字体，Linux 同时支持 Fontconfig 目录；新平台首次启动会选择可用的中文字体。当前字重列表读取静态字体字形，可变字体的完整连续轴尚未展开。
+
+## 配置与备份
+
+配置保存在当前用户的应用数据目录，独立于程序安装目录：Windows 为 `%APPDATA%\gooeshell`，macOS 为 `~/Library/Application Support/gooeshell`，Linux 为 `${XDG_CONFIG_HOME:-~/.config}/gooeshell`。
+
+| 文件 | 内容 |
+| --- | --- |
+| `connections.json` | 服务器属性、收藏、分组和最近连接 |
+| `settings.json` | 主题、字体、快捷键等设置 |
+| `known-hosts.json` | 保存的服务器指纹 |
+| `host-key-preferences.json` | 各地址和端口的指纹验证偏好 |
+| `credentials.encrypted.json` | 使用系统加密长期记住的密码和私钥口令 |
+| `command-library.json` | 命令与命令分组 |
+
+部分文件在使用对应功能后才创建。应用不读取或修改 OpenSSH 的 `~/.ssh/config` 和 `~/.ssh/known_hosts`；私钥仍保存在选择的原文件路径，连接配置只记录路径。升级或删除旧程序包不会清理上述数据。备份时先退出程序，复制整个应用数据目录，并另行保留原私钥文件；加密密码依赖系统密钥，换电脑后可能需要重新输入。`--user-data-dir` 可用于显式指定独立配置目录。
 
 ## 当前边界
 
