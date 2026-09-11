@@ -1,4 +1,4 @@
-import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference} from '../shared/types';
+import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,EditableTextFile} from '../shared/types';
 import {defaultSettings} from '../shared/defaults';
 import {bundledFontFamilies} from '../shared/fonts';
 import {previewFontCatalog} from './preview-font-catalog';
@@ -13,6 +13,8 @@ const previewListing=(p:string,local:boolean):FileListing=>({path:p,entries:(loc
  ['项目文件','directory',0],['Downloads','directory',0],['deploy.sh','file',1248],['README.md','file',2870]
 ]:[['app','directory',0],['logs','directory',0],['backups','directory',0],['deploy.sh','file',1248],['nginx.conf','file',2910],['README.md','file',2870]]).map(([name,type,size])=>({name:String(name),path:p.replace(/[\\/]$/,'')+(local?'\\':'/')+name,type:type as 'directory'|'file',size:Number(size),modified:1789027200000,mode:type==='directory'?0o40755:0o100644,owner:'developer',group:'developer'}))});
 const unavailable=async()=>{throw new Error('这是浏览器界面预览；请在 gooeshell 桌面程序中进行真实连接和文件操作。');};
+const previewTexts=new Map<string,EditableTextFile>();
+let previewRevision=0;
 const preview:DesktopApi={
  initial:async()=>({profiles:previewProfiles,connectionHistory:previewHistory,hostKeyPreferences:previewHostPreferences,settings:previewSettings,localHome:'C:\\Users\\developer',version:'界面演示 · 不会连接服务器'}),
  setHostKeyPreference:async p=>{previewHostPreferences=[...previewHostPreferences.filter(entry=>entry.host.toLowerCase()!==p.host.toLowerCase()||entry.port!==p.port),...(p.skipVerification?[p]:[])];},
@@ -23,6 +25,13 @@ const preview:DesktopApi={
  localList:async p=>previewListing(p||'C:\\Users\\developer',true),remoteList:async r=>previewListing(r.path==='.'?'/home/developer':r.path,false),
  chooseFiles:async()=>[],showInFolder:unavailable,transfer:unavailable,cancelTransfer:async()=>{},
  readFile:async()=>({text:'# 界面预览\n这里显示文件内容。桌面程序支持真实文件读取和保存。\n',truncated:false}),writeFile:unavailable,chmod:unavailable,runFile:unavailable,mkdir:unavailable,rename:unavailable,
+ readTextFile:async r=>{
+  const key=r.side+':'+r.path;let file=previewTexts.get(key);
+  if(!file){const text=r.path.endsWith('.sh')?'#!/usr/bin/env bash\nset -euo pipefail\n\n# 部署服务 · 编辑器界面演示\nAPP_DIR="/srv/app"\n\ncd "$APP_DIR"\nprintf "Starting deployment...\\n"\n\nfor service in web worker; do\n  echo "Restarting $service"\n  systemctl restart "$service"\ndone\n':'# gooeshell 文本编辑器\n\n这是浏览器演示文档，不会修改真实文件。\n\n支持查找替换、行号、撤销与重做。\n按 Ctrl+S 保存到本次演示会话。\n';file={text,truncated:false,encoding:'utf8',bom:false,lineEnding:'lf',revision:`demo:${++previewRevision}`,size:new TextEncoder().encode(text).length};previewTexts.set(key,file);}
+  return {...file};
+ },
+ writeTextFile:async r=>{const key=r.side+':'+r.path;if(previewTexts.get(key)?.revision!==r.expectedRevision)throw new Error('TEXT_CONFLICT: 演示文件已变化');const revision=`demo:${++previewRevision}`,size=new TextEncoder().encode(r.text).length;previewTexts.set(key,{text:r.text,truncated:false,encoding:r.encoding,bom:r.bom??false,lineEnding:r.text.includes('\r\n')?'crlf':'lf',revision,size});return{revision,size};},
+ saveTextCopy:unavailable,editorState:()=>{},
  fonts:async()=>[...bundledFontFamilies,...['Cascadia Code','Consolas','Microsoft YaHei','SimSun'].filter(font=>document.fonts.check(`14px \"${font}\"`))],fontCatalog:previewFontCatalog,backgroundData:async()=>'',
  readClipboard:()=>navigator.clipboard.readText(),writeClipboard:text=>navigator.clipboard.writeText(text),
  fullscreen:async()=>{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();},minimize:()=>{},maximize:()=>{},closeWindow:()=>{},

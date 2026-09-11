@@ -9,6 +9,8 @@ const api: DesktopApi = {
   confirmHostKey:(id,d)=>call('confirmHostKey',id,d),localList:p=>call('localList',p),remoteList:r=>call('remoteList',r),
   chooseFiles:o=>call('chooseFiles',o),showInFolder:p=>call('showInFolder',p),transfer:r=>call('transfer',r),
   cancelTransfer:id=>call('cancelTransfer',id),readFile:r=>call('readFile',r),writeFile:r=>call('writeFile',r),
+  readTextFile:r=>call('readTextFile',r),writeTextFile:r=>call('writeTextFile',r),saveTextCopy:r=>call('saveTextCopy',r),
+  editorState:state=>ipcRenderer.send('gooeshell:editor-state',state),
   chmod:r=>call('chmod',r),runFile:r=>call('runFile',r),mkdir:r=>call('mkdir',r),rename:r=>call('rename',r),
   fonts:()=>call('fonts'),backgroundData:p=>call('backgroundData',p),fullscreen:()=>call('fullscreen'),
   fontCatalog:()=>call('fontCatalog'),

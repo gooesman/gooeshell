@@ -3,11 +3,11 @@ import type { Client, ClientChannel } from 'ssh2';
 
 const MAX_TEXT = 2 * 1024 * 1024;
 const MAX_WIRE = MAX_TEXT * 8 + 128 * 1024;
-const operations = new Set(['list', 'read', 'write', 'chmod', 'run', 'mkdir', 'rename']);
+const operations = new Set(['list', 'read', 'write', 'readBytes', 'writeBytes', 'chmod', 'run', 'mkdir', 'rename']);
 
 /** Fixed program: paths and contents arrive only over stdin, never in shell source. */
 export const REMOTE_HELPER_PYTHON = String.raw`
-import base64, errno, json, os, secrets, selectors, signal, stat, subprocess, sys, time
+import base64, errno, hashlib, json, os, secrets, selectors, signal, stat, subprocess, sys, time
 
 MAX_TEXT = 2 * 1024 * 1024
 MAX_WIRE = MAX_TEXT * 8 + 128 * 1024
@@ -135,6 +135,95 @@ def write_text(path, text, elevated):
             os.unlink(temporary, dir_fd=parent)
         os.close(parent)
 
+def bytes_revision(data, info, truncated=False):
+    metadata = [info.st_size, int(info.st_mtime), info.st_mode, info.st_uid, info.st_gid]
+    digest = hashlib.sha256(json.dumps(metadata, separators=(',', ':')).encode('ascii') + b'\0' + data).hexdigest()
+    return ('preview:' if truncated else 'v1:') + digest
+
+def same_snapshot(a, b):
+    return (a.st_dev, a.st_ino, a.st_size, a.st_mtime_ns, a.st_ctime_ns, a.st_mode, a.st_uid, a.st_gid) == (b.st_dev, b.st_ino, b.st_size, b.st_mtime_ns, b.st_ctime_ns, b.st_mode, b.st_uid, b.st_gid)
+
+def conflict():
+    return RuntimeError('TEXT_CONFLICT：文件自打开后已被修改、替换或删除，本次保存已停止。请重新读取并比较内容。')
+
+def bytes_snapshot(parent, name):
+    before = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('文本编辑仅支持普通文件，请先打开符号链接的实际目标')
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    with os.fdopen(fd, 'rb') as source:
+        opened = os.fstat(source.fileno())
+        if not stat.S_ISREG(opened.st_mode) or not same_snapshot(before, opened):
+            raise conflict()
+        data = source.read(MAX_TEXT + 1)
+        after = os.fstat(source.fileno())
+    current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    if not same_snapshot(opened, after) or not same_snapshot(after, current):
+        raise conflict()
+    truncated = len(data) > MAX_TEXT or after.st_size > MAX_TEXT
+    data = data[:MAX_TEXT]
+    return data, after, truncated, bytes_revision(data, after, truncated)
+
+def read_bytes(path, elevated):
+    parent, name, _ = parent_handle(path, elevated)
+    try:
+        data, info, truncated, revision = bytes_snapshot(parent, name)
+        return {'data': base64.b64encode(data).decode('ascii'), 'size': info.st_size, 'truncated': truncated, 'revision': revision}
+    finally:
+        os.close(parent)
+
+def write_bytes(path, encoded, expected, elevated):
+    if not isinstance(encoded, str) or len(encoded) > ((MAX_TEXT + 2) // 3) * 4:
+        raise ValueError('文本写入不能超过 2 MiB')
+    data = base64.b64decode(encoded, validate=True)
+    if len(data) > MAX_TEXT:
+        raise ValueError('文本写入不能超过 2 MiB')
+    if not isinstance(expected, str) or (expected != 'missing' and (len(expected) != 67 or not expected.startswith('v1:') or any(c not in '0123456789abcdef' for c in expected[3:]))):
+        raise ValueError('该文件没有可保存的完整版本，请重新打开')
+    parent, name, _ = parent_handle(path, elevated)
+    temporary = '.gooeshell-edit-' + secrets.token_hex(16)
+    created = False
+    def baseline():
+        try:
+            _, info, _, revision = bytes_snapshot(parent, name)
+            if revision != expected:
+                raise conflict()
+            return info
+        except FileNotFoundError:
+            if expected == 'missing':
+                return None
+            raise conflict()
+    try:
+        before = baseline()
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        created = True
+        with os.fdopen(fd, 'wb') as target:
+            target.write(data)
+            target.flush()
+            if before:
+                attrs = os.fstat(target.fileno())
+                if attrs.st_uid != before.st_uid or attrs.st_gid != before.st_gid:
+                    os.fchown(target.fileno(), before.st_uid, before.st_gid)
+                os.fchmod(target.fileno(), stat.S_IMODE(before.st_mode))
+            os.fsync(target.fileno())
+            written = os.fstat(target.fileno())
+        baseline()
+        if before:
+            os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        else:
+            try:
+                os.link(temporary, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+            except FileExistsError:
+                raise conflict()
+            os.unlink(temporary, dir_fd=parent)
+        created = False
+        os.fsync(parent)
+        return {'revision': bytes_revision(data, written), 'size': len(data)}
+    finally:
+        if created:
+            os.unlink(temporary, dir_fd=parent)
+        os.close(parent)
+
 def chmod_target(path, mode, elevated):
     if isinstance(mode, bool) or not isinstance(mode, int) or mode < 0 or mode > 0o777:
         raise ValueError('权限必须在 000 至 777 之间，不能添加特殊权限位')
@@ -234,6 +323,10 @@ def operate(request):
         return read_text(path)
     if op == 'write':
         return write_text(path, payload.get('text'), elevated)
+    if op == 'readBytes':
+        return read_bytes(path, elevated)
+    if op == 'writeBytes':
+        return write_bytes(path, payload.get('data'), payload.get('expectedRevision'), elevated)
     if op == 'chmod':
         return chmod_target(path, payload.get('mode'), elevated)
     if op == 'run':
@@ -307,6 +400,10 @@ export async function runRemoteOperation(
   if (op === 'write' && (typeof payload.text !== 'string' || payload.text.includes('\0') || Buffer.byteLength(payload.text) > MAX_TEXT)) {
     throw new Error('文本写入必须是不含 NUL 字符、大小不超过 2 MiB 的文本');
   }
+  if (op === 'writeBytes' && (typeof payload.data !== 'string' || payload.data.length > Math.ceil(MAX_TEXT / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload.data)
+    || typeof payload.expectedRevision !== 'string' || !/^(missing|v1:[a-f0-9]{64})$/.test(payload.expectedRevision))) {
+    throw new Error('文本内容或原始版本无效，未执行写入');
+  }
   if (op === 'chmod' && (!Number.isInteger(payload.mode) || (payload.mode as number) < 0 || (payload.mode as number) > 0o777)) {
     throw new Error('权限必须在 000 至 777 之间，不能添加特殊权限位');
   }
@@ -320,6 +417,7 @@ export async function runRemoteOperation(
   const extraFields: Record<string, string> = { write: 'text', chmod: 'mode', run: 'makeExecutable', rename: 'destination' };
   const extraField = extraFields[op];
   if (extraField) cleanPayload[extraField] = payload[extraField];
+  if (op === 'writeBytes') { cleanPayload.data = payload.data; cleanPayload.expectedRevision = payload.expectedRevision; }
   const request = JSON.stringify({ op, payload: cleanPayload, elevated: !!options.elevated, timeoutMs }) + '\n';
   if (Buffer.byteLength(request) > MAX_WIRE) throw new Error('请求超过大小限制');
   const frame = `GOOESHELL_${randomBytes(18).toString('hex')}`;

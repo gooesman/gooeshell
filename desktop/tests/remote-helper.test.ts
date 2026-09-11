@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import type { Client } from 'ssh2';
 import { REMOTE_HELPER_PYTHON, runRemoteOperation } from '../src/main/remote-helper.ts';
+import { encodeEditableText, textRevision } from '../src/main/text-files';
 
 class FakeChannel extends EventEmitter {
   stderr = new EventEmitter();
@@ -128,6 +129,7 @@ test('invalid permissions, NUL paths and oversized writes are rejected before ex
   await assert.rejects(runRemoteOperation(connection.client, 'chmod', { path: '/tmp/a', mode: 0o4755 }), /特殊权限位/);
   await assert.rejects(runRemoteOperation(connection.client, 'read', { path: '/tmp/a\0b' }), /NUL/);
   await assert.rejects(runRemoteOperation(connection.client, 'write', { path: '/tmp/a', text: 'x'.repeat(2 * 1024 * 1024 + 1) }), /2 MiB/);
+  await assert.rejects(runRemoteOperation(connection.client, 'writeBytes', { path: '/tmp/a', data: 'not-base64', expectedRevision: 'missing' }), /原始版本无效/);
   assert.equal(connection.command, '');
 });
 
@@ -199,6 +201,36 @@ test('real Linux helper validates edits, no-follow mutations, permissions, sheba
     const preview = operation('read', { path: directory + '/large.txt' }).value;
     assert.equal(preview.truncated, true);
     assert.equal(preview.text.length, 2 * 1024 * 1024);
+
+    // The new editor sends exact encoded bytes; root writes use the same content
+    // revision as regular SFTP so a sudo retry does not discard the original baseline.
+    const encodedPath = directory + '/encoded.txt';
+    const encoded = encodeEditableText('中文\r\nnext\n', 'utf16be');
+    const created = operation('writeBytes', { path: encodedPath, data: encoded.toString('base64'), expectedRevision: 'missing' }, true);
+    assert.equal(created.ok, true, created.error);
+    const raw = operation('readBytes', { path: encodedPath }, true).value;
+    assert.deepEqual(Buffer.from(raw.data, 'base64'), encoded);
+    assert.equal(raw.revision, created.value.revision);
+    const metadata = JSON.parse(fixture('s=os.stat(values[0]); print(json.dumps([s.st_size,int(s.st_mtime),s.st_mode,s.st_uid,s.st_gid]))', [encodedPath]));
+    assert.equal(raw.revision, textRevision(encoded, metadata));
+    const changed = encodeEditableText('修改\r\nnext\n', 'utf16be');
+    const saved = operation('writeBytes', { path: encodedPath, data: changed.toString('base64'), expectedRevision: raw.revision }, true);
+    assert.equal(saved.ok, true, saved.error);
+    assert.equal(operation('readBytes', { path: encodedPath }).value.revision, saved.value.revision);
+    const stale = operation('writeBytes', { path: encodedPath, data: encoded.toString('base64'), expectedRevision: raw.revision }, true);
+    assert.equal(stale.ok, false);
+    assert.match(stale.error, /TEXT_CONFLICT/);
+    assert.deepEqual(Buffer.from(operation('readBytes', { path: encodedPath }).value.data, 'base64'), changed);
+    const sameTime = operation('readBytes', { path: encodedPath }).value;
+    fixture('s=os.stat(values[0]); pathlib.Path(values[0]).write_bytes(b"x" * s.st_size); os.utime(values[0], ns=(s.st_atime_ns,s.st_mtime_ns))', [encodedPath]);
+    assert.match(operation('writeBytes', { path: encodedPath, data: encoded.toString('base64'), expectedRevision: sameTime.revision }, true).error, /TEXT_CONFLICT/);
+    const rawPreview = operation('readBytes', { path: directory + '/large.txt' }).value;
+    assert.equal(rawPreview.truncated, true);
+    assert.match(rawPreview.revision, /^preview:/);
+    assert.equal(operation('writeBytes', { path: directory + '/large.txt', data: '', expectedRevision: rawPreview.revision }, true).ok, false);
+    assert.equal(operation('writeBytes', { path: symlink, data: '', expectedRevision: 'missing' }, true).ok, false);
+    assert.equal(operation('readBytes', { path: symlink }, true).ok, false);
+    assert.equal(operation('writeBytes', { path: directory + '/linked-parent/new.txt', data: '', expectedRevision: 'missing' }, true).ok, false);
   } finally {
     python('import os, shutil, sys; root=os.path.realpath(sys.argv[1]); assert os.path.dirname(root)=="/tmp" and os.path.basename(root).startswith("gooeshell-helper-test-"); shutil.rmtree(root)', [directory]);
   }

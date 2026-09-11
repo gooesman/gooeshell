@@ -5,10 +5,11 @@ import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper, type 
 import iconv from 'iconv-lite';
 import type {
   AppEvent, CommandResult, ConnectRequest, FileListing, HostKeyDecision, HostProfile,
-  RemoteRequest, SessionInfo, TextFile, TransferInfo, TransferRequest,
+  EditableTextFile, EditorEncoding, RemoteRequest, SessionInfo, TextFile, TextWriteResult, TransferInfo, TransferRequest,
 } from '../shared/types';
 import { runRemoteOperation } from './remote-helper';
 import { isSftpClosed, performSftpTransfer, remoteClose, remoteStat, sftpCall, trackSftp } from './sftp-transfer';
+import { decodeEditableText, encodeEditableText, serializeTextWrite, textConflict, textRevision, validateExpectedRevision } from './text-files';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -44,6 +45,7 @@ function modeValue(mode: number): number {
   return mode;
 }
 function sameFile(a: Stats, b: Stats): boolean { return a.size === b.size && a.mtime === b.mtime && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid; }
+function textMetadata(info: Stats): number[] { return [info.size, info.mtime, info.mode, info.uid, info.gid]; }
 function remoteError(error: unknown): Error {
   if ((error as { code?: number }).code === 3) return new Error('PERMISSION_DENIED：权限不足。可选择“使用 sudo 重试”，并为本次操作输入 sudo 密码。');
   return error instanceof Error ? error : new Error(String(error));
@@ -279,7 +281,7 @@ export class SshService {
       const buffer = Buffer.alloc(Math.min(opened.size, MAX_TEXT) + 1);
       let done = 0;
       while (done < buffer.length) {
-        const bytes = await new Promise<number>((resolve, reject) => sftp.read(handle!, buffer, done, buffer.length - done, done, (error, count) => error ? reject(error) : resolve(count)));
+        const bytes = await new Promise<number>((resolve, reject) => sftp.read(handle!, buffer, done, Math.min(64 * 1024, buffer.length - done), done, (error, count) => error ? reject(error) : resolve(count)));
         if (!bytes) break;
         done += bytes;
       }
@@ -334,6 +336,101 @@ export class SshService {
       if (handle) await remoteClose(sftp, handle).catch(() => {});
       if (created && !isSftpClosed(sftp)) await new Promise<void>(resolve => sftp.unlink(temporary, () => resolve()));
     }
+  }
+
+  private async textSnapshot(sftp: SFTPWrapper, target: string): Promise<{ data: Buffer; info: Stats; truncated: boolean; revision: string }> {
+    const initial = await remoteStat(sftp, target);
+    if (!initial) throw textConflict();
+    if (!initial.isFile()) throw new Error('文本编辑仅支持普通文件，请先打开符号链接的实际目标');
+    let handle: Buffer | undefined;
+    try {
+      handle = await sftpCall<Buffer>(cb => sftp.open(target, 'r', cb));
+      const opened = await sftpCall<Stats>(cb => sftp.fstat(handle!, cb));
+      if (!opened.isFile() || !sameFile(initial, opened)) throw textConflict();
+      const buffer = Buffer.alloc(Math.min(opened.size, MAX_TEXT) + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const count = await new Promise<number>((resolve, reject) => sftp.read(handle!, buffer, length, Math.min(64 * 1024, buffer.length - length), length, (error, bytes) => error ? reject(error) : resolve(bytes)));
+        if (!count) break;
+        length += count;
+      }
+      const after = await sftpCall<Stats>(cb => sftp.fstat(handle!, cb));
+      const current = await remoteStat(sftp, target);
+      if (!current?.isFile() || !sameFile(opened, after) || !sameFile(after, current)) throw textConflict();
+      const truncated = length > MAX_TEXT || after.size > MAX_TEXT;
+      const data = buffer.subarray(0, Math.min(length, MAX_TEXT));
+      return { data, info: after, truncated, revision: textRevision(data, textMetadata(after), truncated) };
+    } finally { if (handle) await remoteClose(sftp, handle).catch(() => {}); }
+  }
+
+  async readTextFile(request: RemoteRequest & { encoding?: EditorEncoding }): Promise<EditableTextFile> {
+    if (request.elevated) {
+      const raw = await this.operation<{ data: string; truncated: boolean; revision: string; size: number }>(request, 'readBytes');
+      return decodeEditableText(Buffer.from(raw.data, 'base64'), { ...raw, encoding: request.encoding });
+    }
+    try {
+      const { sftp } = await this.control(this.session(request.sessionId));
+      const snapshot = await this.textSnapshot(sftp, validPath(request.path));
+      return decodeEditableText(snapshot.data, { encoding: request.encoding, truncated: snapshot.truncated, revision: snapshot.revision, size: snapshot.info.size });
+    } catch (error) { throw remoteError(error); }
+  }
+
+  async writeTextFile(request: RemoteRequest & { text: string; encoding: EditorEncoding; expectedRevision: string; bom?: boolean }): Promise<TextWriteResult> {
+    validateExpectedRevision(request.expectedRevision);
+    const data = encodeEditableText(request.text, request.encoding, request.bom);
+    const session = this.session(request.sessionId);
+    const target = validPath(request.path);
+    const key = `remote:${endpoint(session.profile)}:${session.profile.username}:${session.fingerprint}:${path.posix.normalize(target)}`;
+    return serializeTextWrite(key, async () => {
+      if (request.elevated) return this.operation<TextWriteResult>(request, 'writeBytes', { data: data.toString('base64'), expectedRevision: request.expectedRevision });
+      const { sftp } = await this.control(session);
+      const baseline = async () => {
+        const info = await remoteStat(sftp, target);
+        if (!info) {
+          if (request.expectedRevision === 'missing') return undefined;
+          throw textConflict();
+        }
+        const snapshot = await this.textSnapshot(sftp, target);
+        if (snapshot.revision !== request.expectedRevision) throw textConflict();
+        return snapshot;
+      };
+      const temporary = path.posix.join(path.posix.dirname(target), `.gooeshell-edit-${randomUUID()}`);
+      let handle: Buffer | undefined;
+      let created = false;
+      try {
+        const previous = await baseline();
+        handle = await sftpCall<Buffer>(cb => sftp.open(temporary, 'wx', { mode: 0o600 }, cb));
+        created = true;
+        for (let offset = 0; offset < data.length; offset += 64 * 1024) {
+          const length = Math.min(64 * 1024, data.length - offset);
+          await new Promise<void>((resolve, reject) => sftp.write(handle!, data, offset, length, offset, error => error ? reject(error) : resolve()));
+        }
+        if (previous) {
+          const attrs = await sftpCall<Stats>(cb => sftp.fstat(handle!, cb));
+          if (attrs.uid !== previous.info.uid || attrs.gid !== previous.info.gid) {
+            await new Promise<void>((resolve, reject) => sftp.fchown(handle!, previous.info.uid, previous.info.gid, error => error ? reject(error) : resolve()));
+          }
+          await new Promise<void>((resolve, reject) => sftp.fchmod(handle!, previous.info.mode & 0o7777, error => error ? reject(error) : resolve()));
+        }
+        const written = await sftpCall<Stats>(cb => sftp.fstat(handle!, cb));
+        await new Promise<void>((resolve, reject) => sftp.close(handle!, error => error ? reject(error) : resolve()));
+        handle = undefined;
+        await baseline();
+        if (previous) {
+          try { await new Promise<void>((resolve, reject) => sftp.ext_openssh_rename(temporary, target, error => error ? reject(error) : resolve())); }
+          catch (error) {
+            if ((error as { code?: number }).code === 8 || /not supported/i.test(message(error))) throw new Error('服务器不支持原子替换文件，未覆盖原文件。可保存本地副本或使用 sudo 编辑。');
+            throw error;
+          }
+        } else await new Promise<void>((resolve, reject) => sftp.rename(temporary, target, error => error ? reject(error) : resolve()));
+        created = false;
+        return { revision: textRevision(data, textMetadata(written)), size: data.length };
+      } catch (error) { throw remoteError(error); }
+      finally {
+        if (handle) await remoteClose(sftp, handle).catch(() => {});
+        if (created && !isSftpClosed(sftp)) await new Promise<void>(resolve => sftp.unlink(temporary, () => resolve()));
+      }
+    });
   }
 
   async chmod(request: RemoteRequest & { mode: number }): Promise<void> {

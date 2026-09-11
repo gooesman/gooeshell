@@ -40,6 +40,16 @@ export interface TransferInfo {
   error?: string;
 }
 export interface TextFile { text: string; truncated: boolean; }
+export type EditorEncoding = 'utf8' | 'utf8-bom' | 'utf16le' | 'utf16be' | 'gb18030' | 'big5';
+export type EditorLineEnding = 'lf' | 'crlf' | 'cr' | 'mixed' | 'none';
+export interface EditableTextFile extends TextFile {
+  encoding: EditorEncoding; lineEnding: EditorLineEnding; revision: string; size: number; bom: boolean;
+}
+export type TextReadRequest = RemoteRequest & { side: 'local' | 'remote'; encoding?: EditorEncoding };
+export type TextWriteRequest = RemoteRequest & {
+  side: 'local' | 'remote'; text: string; encoding: EditorEncoding; expectedRevision: string; bom?: boolean;
+};
+export interface TextWriteResult { revision: string; size: number; }
 export interface CommandResult { output: string; exitCode: number; }
 export type HostKeyDecision = 'once' | 'save' | 'reject';
 export type AppEvent =
@@ -68,6 +78,10 @@ export interface DesktopApi {
   cancelTransfer(id: string): Promise<void>;
   readFile(request: RemoteRequest & { side: 'local' | 'remote' }): Promise<TextFile>;
   writeFile(request: RemoteRequest & { side: 'local' | 'remote'; text: string }): Promise<void>;
+  readTextFile(request: TextReadRequest): Promise<EditableTextFile>;
+  writeTextFile(request: TextWriteRequest): Promise<TextWriteResult>;
+  saveTextCopy(request: { name: string; text: string; encoding: EditorEncoding; bom?: boolean }): Promise<string | null>;
+  editorState(state: { dirty: boolean; busy: boolean }): void;
   chmod(request: RemoteRequest & { mode: number }): Promise<void>;
   runFile(request: RemoteRequest & { makeExecutable: boolean }): Promise<CommandResult>;
   mkdir(request: RemoteRequest & { side: 'local' | 'remote' }): Promise<void>;

@@ -61,6 +61,12 @@ jobs:
         run: node scripts/ci-tests.mjs
       - name: Build native desktop packages
         run: npm run pack -- --${{ matrix.target }} --${{ matrix.arch }}
+      - name: Editor keyboard, drafts and native close regression
+        if: runner.os != 'Linux'
+        run: node scripts/ci-editor-tests.mjs
+      - name: Editor regression on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/ci-editor-tests.mjs
       - name: Launch packaged application
         if: runner.os != 'Linux'
         run: node scripts/ci-smoke.mjs ${{ matrix.target }} ${{ matrix.arch }}
@@ -90,5 +96,7 @@ jobs:
           path: |
             desktop/test-output/ci-*/fixture*.log
             desktop/test-output/smoke-*.json
+            desktop/test-output/editor-main-*/result.json
+            .build/editor-render-*/result.json*
           if-no-files-found: ignore
           retention-days: 14

@@ -7,10 +7,16 @@ import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {Store,cleanProfile} from './store';
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
-import {readLocalText,renameLocalPath} from './local-files';
+import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
 import {systemFontCatalog} from './font-catalog';
 import type {AppEvent,FileListing,RemoteRequest} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let shuttingDown=false;
+let editorState={dirty:false,busy:false};let discardEditorApproved=false;
+function confirmEditorClose():boolean{
+ if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
+ return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
+}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{void worker?.terminate();app.exit(0);},300);}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{const id=randomUUID();pending.set(id,{resolve,reject});worker.postMessage({id,method,args});});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
@@ -34,6 +40,8 @@ app.whenReady().then(async()=>{
  const windowIcon=app.isPackaged?path.join(process.resourcesPath,'icon.png'):path.join(app.getAppPath(),'assets','icon.png');
  const initialTheme=(await store.settings()).theme;
  win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'gooeshell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
+ win.on('close',event=>{discardEditorApproved=false;if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}});
+ win.webContents.on('will-prevent-unload',event=>{if(discardEditorApproved||confirmEditorClose()){discardEditorApproved=false;event.preventDefault();}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  win.webContents.on('will-navigate',(event,url)=>{if(url!==win.webContents.getURL())event.preventDefault();});
  session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
@@ -63,6 +71,19 @@ app.whenReady().then(async()=>{
    case 'chooseFiles':{const result=await dialog.showOpenDialog(win,{title:value?.title,properties:value?.directory?['openDirectory']:value?.multiple?['openFile','multiSelections']:['openFile']});return result.canceled?[]:result.filePaths;}
    case 'showInFolder':shell.showItemInFolder(localPath(value));return;
    case 'readFile':return value.side==='local'?readLocalText(value.path):remote('readFile',value);
+   case 'readTextFile':return value.side==='local'?readLocalTextFile(value):remote('readTextFile',value);
+   case 'writeTextFile':return value.side==='local'?writeLocalTextFile(value):remote('writeTextFile',value);
+   case 'saveTextCopy':{
+    if(!value||typeof value.name!=='string'||typeof value.text!=='string')throw new Error('文件内容无效');
+    const name=path.basename(value.name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_')||'未命名.txt';
+    const choice=await dialog.showSaveDialog(win,{title:'另存到本地',defaultPath:path.join(app.getPath('downloads'),name),properties:['showOverwriteConfirmation','createDirectory']});
+    if(choice.canceled||!choice.filePath)return null;
+    let expectedRevision='missing';
+    try{expectedRevision=await readLocalTextRevision(choice.filePath);}
+    catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    await writeLocalTextFile({path:choice.filePath,text:value.text,encoding:value.encoding,bom:value.bom,expectedRevision});
+    return choice.filePath;
+   }
    case 'writeFile':{if(typeof value.text!=='string'||Buffer.byteLength(value.text)>2*1024*1024)throw new Error('编辑文件限2MB');if(value.side==='remote')return remote('writeFile',value);const p=localPath(value.path);const s=await fs.lstat(p);if(!s.isFile())throw new Error('只编辑普通文件');await fs.writeFile(p,value.text,'utf8');return;}
    case 'mkdir':return value.side==='local'?fs.mkdir(localPath(value.path)):remote('mkdir',value);
    case 'rename':return value.side==='local'?renameLocalPath(value.path,value.destination):remote('rename',value);
@@ -77,9 +98,10 @@ app.whenReady().then(async()=>{
  });
  ipcMain.on('gooeshell:terminal',(event,method,args)=>{if(!trusted(event)||!['terminalInput','terminalBinaryInput','terminalResize','terminalAck'].includes(method)||!Array.isArray(args))return;worker.postMessage({method,args});});
  ipcMain.on('gooeshell:window',(event,action)=>{if(!trusted(event))return;if(action==='minimize')win.minimize();if(action==='maximize')win.isMaximized()?win.unmaximize():win.maximize();if(action==='close')win.close();});
+ ipcMain.on('gooeshell:editor-state',(event,state)=>{if(trusted(event)&&typeof state?.dirty==='boolean'&&typeof state?.busy==='boolean')editorState={dirty:state.dirty,busy:state.busy};});
  const dev=process.env.GOOESHELL_DEV_URL;
  if(dev){if(!/^http:\/\/127\.0\.0\.1:5173\/?$/.test(dev))throw new Error('Invalid development URL');await win.loadURL(dev);}else await win.loadFile(path.join(__dirname,'../../dist/index.html'));
  win.show();
 });
-app.on('window-all-closed',()=>app.quit());
-app.on('before-quit',event=>{if(shuttingDown)return;shuttingDown=true;event.preventDefault();if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{worker?.terminate();app.exit(0);},300);});
+app.on('window-all-closed',shutdown);
+app.on('before-quit',event=>{if(shuttingDown)return;event.preventDefault();if(win&&!win.isDestroyed())win.close();else shutdown();});
