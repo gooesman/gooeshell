@@ -65,7 +65,7 @@ export default function ConnectionSidebar(props: ConnectionSidebarProps) {
     return <button type="button" key={profile.id} className={`host${selected ? ' active' : ''}`} aria-current={selected ? 'page' : undefined}
       title={`${profile.name}\n${profile.username}@${profile.host}:${profile.port}\n${online ? '点击切换到终端' : '点击连接'} · 右键设置`}
       onClick={() => props.onConnect(profile)} onContextMenu={event => props.onContextMenu(event, profile)}>
-      <span className="host-icon"><ConnectionIcon name={profile.icon} /></span>
+      {collapsed && <span className="host-icon"><ConnectionIcon name={profile.icon} /></span>}
       <span className="host-copy"><span className="host-name">{profile.name}</span><span className="host-address">{profile.username}@{profile.host}</span></span>
       {online && <span className="host-dot" aria-label="已连接" />}
     </button>;

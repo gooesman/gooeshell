@@ -56,6 +56,9 @@ async function run() {
   await until(() => evaluate('Boolean(window.connectionFixture)'), 'fixture mount');
   phase = 'sidebar identity and collapsed groups';
   assert.equal(await evaluate(`document.querySelector('.host.active .host-name').textContent`), '开发服务器');
+  assert.equal(await evaluate(`document.querySelectorAll('.host-icon').length`), 0);
+  assert.equal(await evaluate(`document.querySelectorAll('.connection-group-toggle svg').length`), 2);
+  await picture('dark-expanded-sidebar');
   await evaluate(`document.querySelector('.host.active').click()`);
   assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).type`), 'activate');
   await evaluate(`document.querySelector('.connection-group-toggle').click()`);
@@ -65,8 +68,15 @@ async function run() {
   assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), false);
   assert.equal(await evaluate(`document.querySelector('.host-copy').getBoundingClientRect().width`), 0);
   assert.equal(await evaluate(`document.querySelector('.hosts').scrollWidth <= document.querySelector('.hosts').clientWidth`), true);
+  assert.equal(await evaluate(`document.querySelectorAll('.host-icon').length`), 2);
+  await evaluate(`document.querySelector('.host.active').click()`);
+  assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).type`), 'activate');
+  assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).value`), 'one');
+  await picture('dark-collapsed-sidebar');
   await click('展开侧边栏');
   assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), true);
+  assert.equal(await evaluate(`document.querySelectorAll('.host-icon').length`), 0);
+  assert.equal(await evaluate(`document.querySelectorAll('.connection-group-toggle svg').length`), 2);
   await click('开发环境分组菜单');
   await click('名称与图标…');
   assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).type`), 'editGroup');

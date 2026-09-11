@@ -32,6 +32,13 @@
 .connection-ungrouped-label > small { color: var(--text-subtle); }
 .connection-group-menu { width: 200px; z-index: 90; }
 .connection-sidebar .host-icon { display: grid; place-items: center; flex-shrink: 0; }
+.connection-sidebar:not(.collapsed) .host { min-height: 64px; margin-bottom: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface-raised) 45%, var(--surface)); }
+.connection-sidebar:not(.collapsed) .host:hover { background: var(--surface-raised); border-color: var(--border-strong); }
+.connection-sidebar:not(.collapsed) .host.active { background: var(--surface-selected); border-color: var(--border-strong); }
+.connection-sidebar:not(.collapsed) .host-name { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.connection-sidebar:not(.collapsed) .host-address { margin-top: 6px; font-size: 10px; line-height: 1.45; color: var(--text-muted); }
+.connection-sidebar:not(.collapsed) .host-dot { align-self: flex-start; margin-top: 5px; }
+.connection-sidebar:not(.collapsed) .connection-group { margin-bottom: 16px; }
 .connection-sidebar .sidebar-bottom button > svg { flex-shrink: 0; }
 .connection-sidebar .sidebar-bottom kbd { white-space: nowrap; font-size: 8px; }
 .connection-sidebar.collapsed .sidebar-actions .item-label, .connection-sidebar.collapsed .connection-group-heading, .connection-sidebar.collapsed .connection-ungrouped-label { display: none; }
