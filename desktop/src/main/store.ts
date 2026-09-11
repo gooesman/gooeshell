@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {defaultSettings,migrateDefaultShortcuts,normalizeShortcut} from '../shared/defaults';
 import {preferredChineseFont,systemFontCatalog} from './font-catalog';
 import {connectionIdentity} from '../shared/connections';
+import {cleanJumpProfile} from './jump-profile';
 import {normalizeTerminalPalette} from '../shared/terminal-palettes';
 import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,ConnectionGroup,ConnectionIcon} from '../shared/types';
 const connectionIcons=new Set<ConnectionIcon>(['server','cloud','database','router','code','folder']);
@@ -18,10 +19,11 @@ export function cleanProfile(input:HostProfile):HostProfile {
   if(!host||!username||!Number.isInteger(input.port)||input.port<1||input.port>65535)throw new Error('请填写主机、用户名和有效端口');
   if(input.icon!==undefined&&!connectionIcons.has(input.icon))throw new Error('连接图标无效');
   const groupId=input.groupId===undefined||input.groupId===''?undefined:identifier(input.groupId,'分组');
+  const jumpHost=input.jumpHost===undefined?undefined:cleanJumpProfile(input.jumpHost);
   return {id:text(input.id)||randomUUID(),name:text(input.name)||host,host,username,port:input.port,
     auth:input.auth==='key'||input.auth==='agent'?input.auth:'password',privateKeyPath:text(input.privateKeyPath,2048),
     rememberHost:input.rememberHost===true,encoding:['utf8','gb18030','big5'].includes(input.encoding)?input.encoding:'utf8',
-    ...(groupId?{groupId}:{}),...(input.icon?{icon:input.icon}:{})};
+    ...(groupId?{groupId}:{}),...(input.icon?{icon:input.icon}:{}),...(jumpHost?{jumpHost}:{})};
 }
 export function cleanGroup(input:ConnectionGroup):ConnectionGroup{
   if(!input||typeof input!=='object'||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||/[\0\r\n]/.test(input.name))throw new Error('请填写有效的分组名称');
@@ -54,7 +56,7 @@ interface ConnectionRecord {profile:HostProfile;favorite:boolean;}
 interface CatalogHistoryEntry {connectionId:string;connectedAt:number;}
 interface ConnectionCatalog {version:1;records:ConnectionRecord[];history:CatalogHistoryEntry[];groups:ConnectionGroup[];}
 const validTimestamp=(value:unknown):value is number=>Number.isSafeInteger(value)&&Number(value)>0&&Number(value)<=8.64e15;
-const historyEndpoint=(profile:HostProfile)=>JSON.stringify([profile.host.toLowerCase(),profile.port,profile.username]);
+const historyEndpoint=(profile:HostProfile)=>JSON.stringify([profile.host.toLowerCase(),profile.port,profile.username,...(profile.jumpHost?[connectionIdentity(profile)]:[])]);
 function cleanHistory(input:unknown):ConnectionHistoryEntry[]{
   if(!Array.isArray(input))return[];
   const entries=input.flatMap(value=>{

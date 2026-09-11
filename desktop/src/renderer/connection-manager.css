@@ -12,6 +12,22 @@
 .connection-icon-picker > button { display: grid; place-items: center; width: 43px; height: 39px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-muted); position: relative; }
 .connection-icon-picker > button:hover, .connection-icon-picker > button.selected { color: var(--text); background: var(--surface-selected); border-color: var(--border-strong); }
 .connection-icon-check { position: absolute; right: 3px; bottom: 3px; }
+.connection-advanced { margin-top: 24px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.connection-advanced-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 15px; padding: 14px 16px; color: var(--text); text-align: left; }
+.connection-advanced-toggle:hover { background: var(--surface-raised); }
+.connection-advanced-toggle > span { display: grid; gap: 5px; min-width: 0; }
+.connection-advanced-toggle strong { font-size: 12px; font-weight: 500; }
+.connection-advanced-toggle small { color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connection-advanced-toggle > svg { flex-shrink: 0; transition: transform .15s; }
+.connection-advanced-toggle[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.connection-advanced-body { display: grid; gap: 15px; padding: 16px; border-top: 1px solid var(--border); }
+.connection-advanced-body .credential-status .hint { width: 100%; }
+.connection-auth-section + .connection-auth-section { border-top: 1px solid var(--border); margin-top: 22px; padding-top: 18px; }
+.connection-auth-section > .connection-section-label { margin: 0 0 10px; padding: 0; border: 0; }
+.connection-auth-dialog .property-endpoint { margin-bottom: 15px; }
+.connection-auth-dialog .form-field + .form-field { margin-top: 16px; }
+.connection-auth-dialog > form { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.connection-auth-dialog .modal-footer { flex-shrink: 0; }
 .connection-sidebar .sidebar-actions .button { gap: 8px; }
 .connection-heading { padding-top: 6px; padding-bottom: 5px; }
 .connection-heading > span { display: flex; align-items: center; gap: 8px; }

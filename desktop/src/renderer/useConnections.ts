@@ -6,7 +6,9 @@ import type { ConnectionGroup, ConnectionHistoryEntry, CredentialUpdate, HostPro
 type AuthPrompt = { profile: HostProfile; mode: 'connect' | 'sudo'; tabId?: string; sessionId?: string };
 type Attempt = { id: string; cancelled: boolean; tabId?: string; profile: HostProfile };
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
-const authenticationError = (error: unknown) => /AUTH_REQUIRED|authentication|authenticate|encrypted.*key|passphrase|私钥口令/i.test(message(error));
+const authenticationError = (error: unknown) => /AUTH_REQUIRED|AUTH_FAILED|authentication|authenticate|encrypted.*key|passphrase|私钥口令/i.test(message(error));
+const canPromptAuthentication = (profile: HostProfile, error: unknown) => authenticationError(error)
+  && (/JUMP_AUTH_/i.test(message(error)) ? !!profile.jumpHost && profile.jumpHost.auth !== 'agent' : profile.auth !== 'agent');
 
 export default function useConnections({ sessions, setSessions, tabs, setTabs, activeId, setActiveId, closed, notify, sudoSubmit }: {
   sessions: SessionInfo[]; setSessions: Dispatch<SetStateAction<SessionInfo[]>>;
@@ -86,7 +88,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     for (const attempt of selected) attempt.cancelled = true;
     await Promise.all(selected.map(attempt => api.cancelConnect(attempt.id)));
   };
-  const showAuth = (prompt: AuthPrompt) => { setAuthError(''); setAuthPrompt(prompt); };
+  const showAuth = (prompt: AuthPrompt, error = '') => { setAuthError(error); setAuthPrompt(prompt); };
   const direct = async (supplied: HostProfile, newTab = false, targetTabId?: string) => {
     const profile = catalog.find(value => value.id === supplied.id) || supplied;
     const existing = !targetTabId && !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && !current.current.closed[session.id]);
@@ -99,7 +101,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     if (offline) setActiveId(offline.id);
     try { await establish(profile, undefined, tabId); }
     catch (error) {
-      if (authenticationError(error) && profile.auth !== 'agent') showAuth({ profile, mode: 'connect', tabId });
+      if (canPromptAuthentication(profile, error)) showAuth({ profile, mode: 'connect', tabId }, message(error));
       else notify(message(error), true);
     }
   };
@@ -113,7 +115,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     const tabId = session.tabId || session.id;
     try { await establish(latest, undefined, tabId); }
     catch (error) {
-      if (authenticationError(error) && latest.auth !== 'agent') showAuth({ profile: latest, mode: 'connect', tabId });
+      if (canPromptAuthentication(latest, error)) showAuth({ profile: latest, mode: 'connect', tabId }, message(error));
       else notify(message(error), true);
     }
   };

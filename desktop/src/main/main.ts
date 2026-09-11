@@ -8,11 +8,12 @@ import {execFile} from 'node:child_process';
 import {Store,cleanProfile} from './store';
 import {CredentialStore} from './credential-store';
 import {CommandStore} from './command-store';
+import {cleanJumpProfile,jumpCredentialProfile} from './jump-profile';
 import {connectionIdentity} from '../shared/connections';
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
 import {systemFontCatalog} from './font-catalog';
-import type {AppEvent,CredentialUpdate,FileListing,HostProfile} from '../shared/types';
+import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let commands:CommandStore;let shuttingDown=false;let workerAvailable=false;
 // Electron scopes this lock to userData. Different test/portable data directories
 // stay independent, while two copies using the same catalog cannot lose writes.
@@ -31,6 +32,26 @@ else app.on('second-instance',activateWindow);
 const sessionProfiles=new Map<string,HostProfile>();
 const closedSessions=new Set<string>();
 const connectAttempts=new Map<string,{cancelled:boolean;started:boolean;profileId:string}>();
+function jumpUpdate(profile:HostProfile,update?:CredentialUpdate):CredentialUpdate|undefined{
+ if(update?.jump===undefined)return;
+ if(!profile.jumpHost||!update.jump||typeof update.jump!=='object')throw new Error('跳板机密码设置无效');
+ const value=update.jump;
+ return{remember:value.remember,sudoUsesLogin:true,...(value.password!==undefined?{password:value.password}:{}),...(value.passphrase!==undefined?{passphrase:value.passphrase}:{})};
+}
+async function assertJumpIdentity(jump:JumpHostProfile){
+ const expected=connectionIdentity(jumpCredentialProfile(jump));
+ if((await store.connections()).some(profile=>profile.jumpHost?.id===jump.id&&connectionIdentity(jumpCredentialProfile(profile.jumpHost))!==expected))throw new Error('JUMP_PROFILE_CHANGED: 此跳板机的地址或账号与已保存设置不同，请新建一份跳板机设置后重试。');
+}
+async function connectionCredentialStatus(input:HostProfile):Promise<CredentialStatus>{
+ let profile:HostProfile|undefined;
+ try{profile=cleanProfile(input);}catch{}
+ const status=profile?await credentials.status(await store.resolveConnection(profile)):await credentials.emptyStatus();
+ if(input?.jumpHost){
+  let jump:JumpHostProfile|undefined;try{jump=cleanJumpProfile(input.jumpHost);}catch{}
+  status.jump=jump?await credentials.status(jumpCredentialProfile(jump)):await credentials.emptyStatus();
+ }
+ return status;
+}
 let editorState={dirty:false,busy:false};let discardEditorApproved=false;
 function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
@@ -119,9 +140,15 @@ if(primaryInstance)app.whenReady().then(async()=>{
    }
    case 'saveConnection':{
     const profile=await store.resolveConnection(cleanProfile(value.profile));
-    if(value.credentials&&value.credentials.remember!=='never')await credentials.prepare(profile,value.credentials);
+    const jump=profile.jumpHost&&jumpCredentialProfile(profile.jumpHost),jumpCredentials=jumpUpdate(profile,value.credentials);
+    if(profile.jumpHost)await assertJumpIdentity(profile.jumpHost);
+    if(value.credentials)await credentials.prepare(profile,value.credentials);
+    if(jump&&jumpCredentials)await credentials.prepare(jump,jumpCredentials);
     const saved=await store.saveConnection(profile,value.favorite===true);
-    try{if(value.credentials)await credentials.save(saved,value.credentials);else await credentials.invalidate(saved);}
+    try{
+     if(value.credentials)await credentials.save(saved,value.credentials);else await credentials.invalidate(saved);
+     if(jump&&jumpCredentials)await credentials.save(jump,jumpCredentials);
+    }
     catch(error){throw new Error('连接属性已保存，但密码设置未能保存：'+(error instanceof Error?error.message:'请检查系统加密存储后重试。'));}
     return saved;
    }
@@ -134,13 +161,20 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'deleteHistory':return store.deleteHistory(value);
    case 'saveGroup':return store.saveGroup(value);
    case 'deleteGroup':return store.deleteGroup(value);
-   case 'credentialStatus':{let profile:HostProfile;try{profile=cleanProfile(value);}catch{return credentials.emptyStatus();}return credentials.status(await store.resolveConnection(profile));}
+   case 'credentialStatus':return connectionCredentialStatus(value);
    case 'saveCredentials':{
     const profile=await store.resolveConnection(cleanProfile(value.profile));const saved=(await store.connections()).find(candidate=>candidate.id===profile.id);
     if(saved&&connectionIdentity(saved)!==connectionIdentity(profile))throw new Error('CONNECTION_IDENTITY_CHANGED: 此连接的地址或身份已变更，请重新打开连接属性后设置密码。');
-    await credentials.save(profile,value.credentials);return credentials.status(profile);
+    const jump=profile.jumpHost&&jumpCredentialProfile(profile.jumpHost),jumpCredentials=jumpUpdate(profile,value.credentials);
+    if(profile.jumpHost)await assertJumpIdentity(profile.jumpHost);
+    await credentials.prepare(profile,value.credentials);
+    if(jump&&jumpCredentials)await credentials.prepare(jump,jumpCredentials);
+    await credentials.save(profile,value.credentials);
+    if(jump&&jumpCredentials)await credentials.save(jump,jumpCredentials);
+    return connectionCredentialStatus(profile);
    }
    case 'forgetCredentials':return credentials.forget(value);
+   case 'forgetJumpCredentials':return credentials.forget(jumpCredentialProfile(cleanJumpProfile(value)).id);
    case 'sendSudoPassword':{
     if(!value||typeof value.sessionId!=='string'||typeof value.submit!=='boolean')throw new Error('密码输入请求无效');
     const profile=sessionProfiles.get(value.sessionId);if(!profile)throw new Error('此 SSH 会话已断开，请先连接服务器');
@@ -169,24 +203,42 @@ if(primaryInstance)app.whenReady().then(async()=>{
      if(savedProfile&&connectionIdentity(savedProfile)!==connectionIdentity(profile))profile=await store.resolveConnection({...profile,id:randomUUID(),groupId:undefined});
      attempt.profileId=profile.id;
      const profileWasKnown=catalog.some(candidate=>candidate.id===profile.id);
+     const jump=profile.jumpHost&&jumpCredentialProfile(profile.jumpHost),jumpCredentials=jumpUpdate(profile,value.credentials);
+     if(profile.jumpHost)await assertJumpIdentity(profile.jumpHost);
      if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
      if(value.credentials?.remember==='never')await credentials.save(profile,value.credentials);
+     if(jump&&jumpCredentials?.remember==='never')await credentials.save(jump,jumpCredentials);
      const preparedCredentials=await credentials.prepareConnect(profile,value.credentials);
+     const preparedJump=jump?await credentials.prepareConnect(jump,jumpCredentials):undefined;
      const prepared=preparedCredentials.secrets;
      if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
      const password=value.password??prepared.password;const passphrase=value.passphrase??prepared.passphrase;
-     for(const secret of [password,passphrase])if(secret!==undefined&&(typeof secret!=='string'||secret.length>16384||secret.includes('\0')))throw new Error('密码内容无效或过长');
+     const jumpPassword=preparedJump?.secrets.password,jumpPassphrase=preparedJump?.secrets.passphrase;
+     for(const secret of [password,passphrase,jumpPassword,jumpPassphrase])if(secret!==undefined&&(typeof secret!=='string'||secret.length>16384||secret.includes('\0')))throw new Error('密码内容无效或过长');
      if(profile.auth==='password'&&password===undefined)throw new Error('AUTH_REQUIRED: 请输入此连接的登录密码。');
-     const skipHostKeyVerification=(await store.hostKeyPreferences()).some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
-     const effectiveProfile=skipHostKeyVerification?{...profile,rememberHost:false}:profile;
+     if(profile.jumpHost?.auth==='password'&&jumpPassword===undefined)throw new Error('JUMP_AUTH_REQUIRED: 请输入跳板机的登录密码。');
+     const preferences=await store.hostKeyPreferences();
+     const skipHostKeyVerification=preferences.some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
+     const skipJumpHostKeyVerification=!!jump&&preferences.some(preference=>preference.host===jump.host.toLowerCase()&&preference.port===jump.port&&preference.skipVerification);
+     const effectiveProfile={...profile,...(skipHostKeyVerification?{rememberHost:false}:{}),...(profile.jumpHost&&skipJumpHostKeyVerification?{jumpHost:{...profile.jumpHost,rememberHost:false}}:{})};
      if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
      attempt.started=true;
-     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId});
+     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId,jumpPassword,jumpPassphrase,skipJumpHostKeyVerification});
      if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
      if(closedSessions.has(connected.id))throw new Error('服务器在连接完成前关闭了终端，请重新连接。');
      sessionProfiles.set(connected.id,profile);
      if(value.credentials){
-      try{const latest=(await store.connections()).find(candidate=>candidate.id===profile.id);if(!latest||connectionIdentity(latest)===connectionIdentity(profile))await credentials.saveIfUnchanged(profile,{...value.credentials,password,passphrase} as CredentialUpdate,preparedCredentials.revision,()=>!attempt.cancelled&&!shuttingDown&&!closedSessions.has(connected.id),startedAt);}
+      try{
+       const latest=(await store.connections()).find(candidate=>candidate.id===profile.id);
+       if(!latest||connectionIdentity(latest)===connectionIdentity(profile)){
+        const canCommit=()=>!attempt.cancelled&&!shuttingDown&&!closedSessions.has(connected.id);
+        await credentials.saveIfUnchanged(profile,{...value.credentials,password,passphrase} as CredentialUpdate,preparedCredentials.revision,canCommit,startedAt);
+        if(jump&&jumpCredentials&&preparedJump){
+         await assertJumpIdentity(profile.jumpHost!);
+         await credentials.saveIfUnchanged(jump,{...jumpCredentials,password:jumpPassword,passphrase:jumpPassphrase},preparedJump.revision,canCommit,startedAt);
+        }
+       }
+      }
       catch{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'服务器已连接，但密码保存失败。请在连接属性中检查密码保存设置。'});}
      }
      if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}

@@ -8,7 +8,8 @@ if (!url || new URL(url).hostname !== '127.0.0.1' || !report || !process.env.GOO
 app.setPath('userData', process.env.GOOESHELL_CONNECTION_UI_DATA);
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 const result = { checks: {}, errors: [] };
-let window, forgotten = false, phase = 'startup';
+let window, forgotten = false, jumpForgotten = false, phase = 'startup';
+const jumpPreset = { id: 'jump-existing', name: '公司网关', host: 'gateway.example.test', port: 2222, username: 'gateway-user', auth: 'password', rememberHost: true, reuseConnection: true };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = script => window.webContents.executeJavaScript(script);
 async function until(predicate, label) {
@@ -42,13 +43,17 @@ async function picture(label) {
 }
 async function run() {
   await app.whenReady();
+  ipcMain.handle('connection-ui:catalog', event => { assert.equal(event.sender, window.webContents); return { connections: [{ jumpHost: jumpPreset }, { jumpHost: { ...jumpPreset } }], profiles: [], groups: [], history: [] }; });
   ipcMain.handle('connection-ui:status', async (event, profile) => {
     assert.equal(event.sender, window.webContents);
     await delay(40);
     const existing = profile.id === 'one' && profile.host === 'dev.example.test' && profile.username === 'developer' && profile.auth === 'password' && !forgotten;
-    return { remember: existing ? 'persistent' : 'never', hasPassword: existing, hasPassphrase: false, hasSudoPassword: existing, sudoUsesLogin: true, secureStorageAvailable: true };
+    const jumpExisting = profile.jumpHost?.id === jumpPreset.id && profile.jumpHost?.host === jumpPreset.host && !jumpForgotten;
+    const jump = profile.jumpHost ? { remember: jumpExisting ? 'persistent' : 'never', hasPassword: jumpExisting, hasPassphrase: false, hasSudoPassword: false, sudoUsesLogin: false, secureStorageAvailable: true } : undefined;
+    return { remember: existing ? 'persistent' : 'never', hasPassword: existing, hasPassphrase: false, hasSudoPassword: existing, sudoUsesLogin: true, secureStorageAvailable: true, jump };
   });
   ipcMain.handle('connection-ui:forget', (event, id) => { assert.equal(event.sender, window.webContents); assert.equal(id, 'one'); forgotten = true; });
+  ipcMain.handle('connection-ui:forget-jump', (event, jump) => { assert.equal(event.sender, window.webContents); assert.equal(jump.id, jumpPreset.id); jumpForgotten = true; });
   window = new BrowserWindow({ show: false, width: 1150, height: 900, webPreferences: { preload: path.join(__dirname, 'connection-ui-render-preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
   window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) result.errors.push(message); });
   window.webContents.on('render-process-gone', (_event, detail) => result.errors.push(JSON.stringify(detail)));
@@ -125,6 +130,67 @@ async function run() {
   assert.equal(connected.profile.icon, 'cloud'); assert.equal(connected.profile.groupId, 'development');
   assert.equal(connected.favorite, false); assert.equal(connected.credentials.password, 'fixture-only-password'); assert.equal(connected.credentials.remember, 'persistent');
   result.checks.newConnectionOptions = true;
+
+  phase = 'advanced jump options reuse a snapshot and separate both passwords';
+  await click('New fixture'); await ready();
+  assert.equal(await evaluate(`document.querySelector('.connection-advanced-toggle').getAttribute('aria-expanded')`), 'false');
+  assert.equal(await evaluate(`Boolean(document.getElementById('jump-enabled'))`), false);
+  await fill('#host-address', 'internal.example.test'); await ready();
+  await fill('#host-password', 'target-fixture-password');
+  await evaluate(`document.querySelector('.connection-advanced-toggle').click()`); await delay(25);
+  await evaluate(`document.getElementById('jump-enabled').click()`); await ready();
+  assert.equal(await evaluate(`document.querySelectorAll('#jump-preset option').length`), 2, 'duplicate jump presets are consolidated');
+  await choose('#jump-preset', jumpPreset.id); await ready();
+  assert.equal(await evaluate(`document.getElementById('jump-address').value`), jumpPreset.host);
+  assert.equal(await evaluate(`document.getElementById('jump-remember').value`), 'persistent');
+  assert.equal(await evaluate(`document.getElementById('credential-remember').value`), 'session');
+  assert.equal(await evaluate(`document.getElementById('jump-password').value`), '');
+  assert.match(await evaluate(`document.getElementById('jump-password').placeholder`), /留空保留/);
+  await choose('#jump-remember', 'session');
+  await fill('#jump-name', '这台目标使用的网关');
+  await fill('#jump-password', 'jump-fixture-password');
+  await evaluate(`document.getElementById('jump-reuse').click()`);
+  await evaluate(`document.getElementById('jump-address').scrollIntoView({block:'start'})`);
+  await picture('light-jump-options');
+  await click('保存到侧边栏');
+  const jumpSaved = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
+  assert.equal(jumpSaved.profile.jumpHost.id, jumpPreset.id);
+  assert.equal(jumpSaved.profile.jumpHost.reuseConnection, false);
+  assert.equal(jumpSaved.credentials.password, 'target-fixture-password');
+  assert.equal(jumpSaved.credentials.jump.password, 'jump-fixture-password');
+  assert.equal(jumpSaved.credentials.jump.remember, 'session');
+  assert.equal('password' in jumpSaved.profile.jumpHost, false);
+  assert.equal('password' in jumpSaved.profile, false);
+  assert.equal(jumpPreset.name, '公司网关');
+  result.checks.jumpPresetAndSeparateSecrets = true;
+
+  phase = 'editing a jump identity detaches credentials and disabling returns to direct SSH';
+  await click('New fixture'); await ready();
+  await fill('#host-address', 'next.internal.test'); await ready();
+  await evaluate(`document.querySelector('.connection-advanced-toggle').click()`); await delay(25);
+  await evaluate(`document.getElementById('jump-enabled').click()`); await ready();
+  await choose('#jump-preset', jumpPreset.id); await ready();
+  await fill('#jump-address', 'replacement.gateway.test'); await ready();
+  assert.equal(await evaluate(`document.getElementById('jump-password').placeholder`), '输入跳板机密码');
+  await fill('#jump-password', 'replacement-fixture-secret');
+  await click('保存到侧边栏');
+  const replacement = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
+  assert.notEqual(replacement.profile.jumpHost.id, jumpPreset.id);
+  assert.equal(replacement.profile.jumpHost.host, 'replacement.gateway.test');
+  assert.equal(replacement.credentials.jump.password, 'replacement-fixture-secret');
+  await click('New fixture'); await ready();
+  await fill('#host-address', 'direct.example.test'); await ready();
+  await evaluate(`document.querySelector('.connection-advanced-toggle').click()`); await delay(25);
+  await evaluate(`document.getElementById('jump-enabled').click()`); await ready();
+  await choose('#jump-preset', jumpPreset.id); await ready();
+  await click('清除跳板机密码');
+  await until(() => evaluate(`document.getElementById('jump-password').placeholder === '输入跳板机密码'`), 'shared jump secret cleared');
+  assert.equal(jumpForgotten, true); assert.equal(forgotten, false);
+  await evaluate(`document.getElementById('jump-enabled').click()`); await ready();
+  await click('保存到侧边栏');
+  const direct = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
+  assert.equal(direct.profile.jumpHost, undefined); assert.equal(direct.credentials.jump, undefined);
+  result.checks.jumpIdentityIsolationAndDisable = true;
 
   phase = 'cancel a pending connection';
   await click('Edit fixture'); await ready();

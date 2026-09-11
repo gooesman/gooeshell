@@ -7,7 +7,7 @@ const api: DesktopApi = {
   saveGroup:g=>call('saveGroup',g),deleteGroup:id=>call('deleteGroup',id),
   commandLibrary:()=>call('commandLibrary'),saveCommandGroup:g=>call('saveCommandGroup',g),deleteCommandGroup:id=>call('deleteCommandGroup',id),
   saveCommand:c=>call('saveCommand',c),deleteCommand:id=>call('deleteCommand',id),sendCommand:r=>call('sendCommand',r),
-  credentialStatus:p=>call('credentialStatus',p),saveCredentials:r=>call('saveCredentials',r),forgetCredentials:id=>call('forgetCredentials',id),
+  credentialStatus:p=>call('credentialStatus',p),saveCredentials:r=>call('saveCredentials',r),forgetCredentials:id=>call('forgetCredentials',id),forgetJumpCredentials:p=>call('forgetJumpCredentials',p),
   sendSudoPassword:r=>call('sendSudoPassword',r),cancelConnect:id=>call('cancelConnect',id),
   connectionHistory:()=>call('connectionHistory'),clearConnectionHistory:()=>call('clearConnectionHistory'),
   setHostKeyPreference:p=>call('setHostKeyPreference',p),

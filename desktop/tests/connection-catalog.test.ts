@@ -5,6 +5,7 @@ import test from 'node:test';
 import {Store,cleanGroup,cleanProfile,cleanSettings} from '../src/main/store.ts';
 import {defaultSettings} from '../src/shared/defaults.ts';
 import type {ConnectionGroup,HostProfile} from '../src/shared/types.ts';
+import {cleanJumpProfile} from '../src/main/jump-profile.ts';
 
 async function fixture(run:(directory:string)=>Promise<void>){
   const base=path.resolve('test-output');await fs.mkdir(base,{recursive:true});
@@ -14,6 +15,48 @@ async function fixture(run:(directory:string)=>Promise<void>){
 }
 const profile=(id:string,overrides:Partial<HostProfile>={}):HostProfile=>({id,name:id,host:`${id}.example.test`,port:22,username:'alice',auth:'password',rememberHost:true,encoding:'utf8',...overrides});
 const group=(id:string,order=0):ConnectionGroup=>({id,name:id,icon:'folder',order});
+
+test('embedded jump snapshots round-trip without secrets and separate identical private destinations',async()=>fixture(async directory=>{
+  const store=new Store(directory);
+  const jumpHost=cleanJumpProfile({id:'shared-gateway',name:'Gateway',host:'gateway.example.test',port:22,username:'hop-user',auth:'password',rememberHost:true,reuseConnection:true,password:'never-persist-hop-secret'});
+  const first=profile('first-private',{host:'10.0.0.10',jumpHost});
+  const second=profile('second-private',{host:first.host,jumpHost:{...jumpHost,id:'other-gateway',host:'other.example.test'}});
+  const direct=profile('direct-private',{host:first.host});
+  for(const value of [first,second,direct]){await store.saveConnection(value,true);await store.recordConnection(value);}
+  const reopened=new Store(directory);
+  assert.deepEqual(await reopened.connections(),[first,second,direct].map(cleanProfile));
+  assert.equal((await reopened.history()).length,3);
+  assert.equal((await reopened.resolveConnection({...first,id:'temporary'})).id,first.id);
+  assert.equal((await reopened.resolveConnection({...second,id:'temporary'})).id,second.id);
+  assert.equal((await reopened.resolveConnection({...direct,id:'temporary'})).id,direct.id);
+  const persisted=await fs.readFile(path.join(directory,'connections.json'),'utf8');
+  assert.ok(!persisted.includes('never-persist-hop-secret'));
+  const invalid={...first,jumpHost:{...jumpHost,jumpHost}};
+  await assert.rejects(reopened.saveConnection(invalid as HostProfile,true),/跳板机/);
+  assert.equal(await fs.readFile(path.join(directory,'connections.json'),'utf8'),persisted);
+}));
+
+test('invalid persisted jumps are never loaded as direct connections and legacy routes are not merged',async()=>fixture(async directory=>{
+  const jumpHost=cleanJumpProfile({id:'gateway',name:'Gateway',host:'gateway.example.test',port:22,username:'hop-user',auth:'agent',rememberHost:true,reuseConnection:false});
+  const privateServer=profile('via-first',{host:'10.0.0.10',jumpHost});
+  const second=profile('via-second',{host:privateServer.host,jumpHost:{...jumpHost,id:'second',host:'second.example.test'}});
+  const direct=profile('direct',{host:privateServer.host});
+  const invalid={...privateServer,id:'invalid-hop',jumpHost:{...jumpHost,jumpHost}};
+  await fs.writeFile(path.join(directory,'profiles.json'),JSON.stringify([privateServer,second,direct,invalid]));
+  await fs.writeFile(path.join(directory,'connection-history.json'),JSON.stringify([privateServer,second,direct,invalid].map((value,index)=>({profile:value,connectedAt:400-index}))));
+  const store=new Store(directory);
+  assert.deepEqual((await store.connections()).map(value=>value.id),['via-first','via-second','direct']);
+  assert.deepEqual((await store.history()).map(value=>value.profile.id),['via-first','via-second','direct']);
+  const file=path.join(directory,'connections.json');
+  const catalog=JSON.parse(await fs.readFile(file,'utf8'));
+  catalog.records.push({profile:invalid,favorite:true});
+  catalog.history.push({connectionId:invalid.id,connectedAt:500});
+  const contents=JSON.stringify(catalog);await fs.writeFile(file,contents);
+  const restarted=new Store(directory);
+  assert.deepEqual((await restarted.connections()).map(value=>value.id),['via-first','via-second','direct']);
+  assert.equal((await restarted.history()).length,3);
+  assert.equal(await fs.readFile(file,'utf8'),contents,'reading must leave rejected records recoverable in the original file');
+}));
 
 test('legacy favorites and recent snapshots migrate once to stable records without losing their names or timestamps',async()=>fixture(async directory=>{
   const favorite=profile('favorite',{host:'SHARED.example.test',name:'自定义服务器',icon:'cloud'});

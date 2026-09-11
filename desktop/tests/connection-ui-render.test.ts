@@ -27,6 +27,6 @@ test('connection UI separates saving from connecting and preserves explicit cred
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error('No connection UI report: ' + stderr); }));
   t.diagnostic(`connection UI artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
-  for (const name of ['groupCollapseAndPhysicalSession', 'saveWithoutConnectingAndBlankSecretPreservation', 'statusRefreshPreservesUserChoice', 'newConnectionOptions', 'cancelPendingConnection', 'forgetCredentials']) assert.equal(result.checks[name], true, name);
+  for (const name of ['groupCollapseAndPhysicalSession', 'saveWithoutConnectingAndBlankSecretPreservation', 'statusRefreshPreservesUserChoice', 'newConnectionOptions', 'jumpPresetAndSeparateSecrets', 'jumpIdentityIsolationAndDisable', 'cancelPendingConnection', 'forgetCredentials']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []);
 });

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {randomBytes,createCipheriv,createDecipheriv} from 'node:crypto';
 import {CredentialStore,type CredentialCipher} from '../src/main/credential-store';
+import {jumpCredentialProfile} from '../src/main/jump-profile';
 import type {HostProfile} from '../src/shared/types';
 
 const profile:HostProfile={id:'fixture',name:'Fixture',host:'example.invalid',port:22,username:'tester',auth:'password',rememberHost:true,encoding:'utf8'};
@@ -22,6 +23,30 @@ async function fixture(t:{after:(callback:()=>Promise<void>)=>void}){
   t.after(async()=>{for(const name of await fs.readdir(root))await fs.unlink(path.join(root,name));await fs.rmdir(root);});
   const cipher=fixtureCipher();return{root,cipher,store:new CredentialStore(root,cipher),file:path.join(root,'credentials.encrypted.json')};
 }
+
+test('jump credentials stay separate from targets, shared hop presets and route identity changes',async t=>{
+  const {store,root,cipher,file}=await fixture(t);
+  const jumpHost={id:profile.id,name:'Gateway',host:'gateway.example.invalid',port:22,username:'hop-user',auth:'password' as const,rememberHost:true,reuseConnection:true};
+  const target={...profile,host:'10.0.0.8',jumpHost};
+  const hop=jumpCredentialProfile(jumpHost);
+  await store.save(target,{remember:'persistent',password:'target-only-secret',sudoUsesLogin:true});
+  await store.save(hop,{remember:'persistent',password:'jump-only-secret',sudoUsesLogin:true});
+  const restored=new CredentialStore(root,cipher);
+  assert.equal((await restored.get(target)).password,'target-only-secret');
+  assert.equal((await restored.get(hop)).password,'jump-only-secret');
+  assert.equal((await restored.get({...target,jumpHost:undefined})).password,undefined);
+  assert.equal((await restored.get({...target,jumpHost:{...jumpHost,host:'replacement.example.invalid'}})).password,undefined);
+  assert.equal((await restored.get({...target,jumpHost:{...jumpHost,username:'other-user'}})).password,undefined);
+  assert.equal((await restored.get({...target,jumpHost:{...jumpHost,name:'Renamed',id:'display-preset',reuseConnection:false}})).password,'target-only-secret');
+  assert.equal((await restored.get(jumpCredentialProfile({...jumpHost,name:'Renamed',reuseConnection:false}))).password,'jump-only-secret');
+  assert.equal((await restored.get(jumpCredentialProfile({...jumpHost,id:'different-preset'}))).password,undefined);
+  assert.equal((await restored.get(jumpCredentialProfile({...jumpHost,host:'replacement.example.invalid'}))).password,undefined);
+  await restored.forget(target.id);
+  assert.equal((await restored.get(target)).password,undefined);
+  assert.equal((await restored.get(hop)).password,'jump-only-secret');
+  const contents=await fs.readFile(file,'utf8');
+  assert.ok(!contents.includes('target-only-secret'));assert.ok(!contents.includes('jump-only-secret'));
+});
 test('persistent credentials survive a broker restart with ciphertext only on disk and status never returns secrets',async t=>{
   const {root,cipher,store,file}=await fixture(t);
   await store.save(profile,{remember:'persistent',password:'fixture-login-secret',passphrase:'fixture-key-secret',sudoPassword:'fixture-root-secret',sudoUsesLogin:false});

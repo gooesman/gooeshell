@@ -2,13 +2,20 @@ import type {FontFamilyInfo} from './font-types';
 export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
 export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
 export type CredentialRemember = 'never' | 'session' | 'persistent';
-export interface CredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; sudoPassword?: string; sudoUsesLogin: boolean; }
-export interface CredentialStatus { remember: CredentialRemember; hasPassword: boolean; hasPassphrase: boolean; hasSudoPassword: boolean; sudoUsesLogin: boolean; secureStorageAvailable: boolean; }
+export interface JumpCredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; }
+export interface CredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; sudoPassword?: string; sudoUsesLogin: boolean; jump?: JumpCredentialUpdate; }
+export interface CredentialStatus { remember: CredentialRemember; hasPassword: boolean; hasPassphrase: boolean; hasSudoPassword: boolean; sudoUsesLogin: boolean; secureStorageAvailable: boolean; jump?: CredentialStatus; }
+export interface JumpHostProfile {
+  id: string; name: string; host: string; port: number; username: string;
+  auth: 'password' | 'key' | 'agent'; privateKeyPath?: string;
+  rememberHost: boolean; reuseConnection: boolean;
+}
 export interface HostProfile {
   id: string; name: string; host: string; port: number; username: string;
   auth: 'password' | 'key' | 'agent'; privateKeyPath?: string;
   rememberHost: boolean; encoding: 'utf8' | 'gb18030' | 'big5';
   groupId?: string; icon?: ConnectionIcon;
+  jumpHost?: JumpHostProfile;
 }
 export interface AppSettings {
   theme: 'dark' | 'light';
@@ -31,7 +38,7 @@ export interface ConnectionsState { profiles: HostProfile[]; connections: HostPr
 export interface ConnectionHistoryEntry { profile: HostProfile; connectedAt: number; }
 export interface HostKeyPreference { host: string; port: number; skipVerification: boolean; }
 export interface SessionInfo { id: string; profile: HostProfile; tabId?: string; }
-export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; }
+export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; jumpPassword?: string; jumpPassphrase?: string; skipJumpHostKeyVerification?: boolean; }
 export interface FileEntry {
   name: string; path: string; type: 'directory' | 'file' | 'symlink';
   size: number; modified: number; mode?: number; owner?: string; group?: string;
@@ -68,7 +75,7 @@ export type HostKeyDecision = 'once' | 'save' | 'reject';
 export type AppEvent =
   | { type: 'terminal'; sessionId: string; data: string; bytes: number }
   | { type: 'sessionClosed'; sessionId: string; message: string }
-  | { type: 'hostKey'; requestId: string; host: string; port: number; fingerprint: string; previousFingerprint?: string; saveAllowed?: boolean }
+  | { type: 'hostKey'; requestId: string; host: string; port: number; fingerprint: string; previousFingerprint?: string; saveAllowed?: boolean; role?: 'jump' | 'target'; via?: string }
   | { type: 'hostKeyCancelled'; requestId: string }
   | { type: 'transfer'; transfer: TransferInfo }
   | { type: 'notice'; message: string };
@@ -92,6 +99,7 @@ export interface DesktopApi {
   credentialStatus(profile: HostProfile): Promise<CredentialStatus>;
   saveCredentials(request: { profile: HostProfile; credentials: CredentialUpdate }): Promise<void>;
   forgetCredentials(profileId: string): Promise<void>;
+  forgetJumpCredentials(jump: JumpHostProfile): Promise<void>;
   sendSudoPassword(request: { sessionId: string; submit: boolean }): Promise<void>;
   connectionHistory(): Promise<ConnectionHistoryEntry[]>;
   clearConnectionHistory(): Promise<void>;

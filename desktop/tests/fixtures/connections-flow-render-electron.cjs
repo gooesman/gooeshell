@@ -12,6 +12,7 @@ const other = { ...profile, id: 'two', name: '其他服务器', host: 'other.exa
 const first = { id: 'transport-one', tabId: 'stable-tab-one', profile };
 const second = { id: 'transport-two', tabId: 'stable-tab-two', profile: other };
 const secret = { remember: 'session', password: 'fixture-only', sudoUsesLogin: true };
+const jump = { id: 'gateway-one', name: '公司网关', host: 'gateway.example.test', port: 22, username: 'gateway-user', auth: 'password', rememberHost: true, reuseConnection: true };
 const backend = {
   connections: [profile, other], calls: [], plan: 'success', next: 0, pending: [], holdSave: false, pendingSave: null, sudoMissing: true,
 };
@@ -52,9 +53,13 @@ async function run() {
     backend.calls.push({ method, value });
     if (method === 'connections') return { connections: backend.connections, profiles: backend.connections, groups: [], history: backend.connections.map(profile => ({ profile, connectedAt: 100 })) };
     if (method === 'saveConnection') { backend.connections = backend.connections.map(profile => profile.id === value.profile.id ? value.profile : profile); return value.profile; }
-    if (method === 'credentialStatus') return { remember: 'session', hasPassword: false, hasPassphrase: false, hasSudoPassword: false, sudoUsesLogin: true, secureStorageAvailable: true };
+    if (method === 'credentialStatus') {
+      const status = { remember: 'session', hasPassword: false, hasPassphrase: false, hasSudoPassword: false, sudoUsesLogin: true, secureStorageAvailable: true };
+      return { ...status, ...(value.jumpHost ? { jump: { ...status, remember: 'persistent' } } : {}) };
+    }
     if (method === 'connect') {
       if (backend.plan === 'auth') throw new Error('AUTH_REQUIRED: 请填写登录密码');
+      if (backend.plan === 'jump-auth') throw new Error('JUMP_AUTH_FAILED: 跳板机身份验证失败');
       if (backend.plan === 'deferred') return new Promise(resolve => backend.pending.push({ request: value, resolve }));
       return { id: 'connected-' + (++backend.next), profile: value.profile };
     }
@@ -139,6 +144,51 @@ async function run() {
   const authCall = backend.calls.filter(call => call.method === 'connect').at(-1);
   assert.equal(authCall.value.profile.id, profile.id); assert.equal(authCall.value.credentials.password, 'fixture-only');
   result.checks.authenticationUsesCompactPrompt = true;
+
+  phase = 'jump authentication collects independent target and gateway credentials';
+  await reset({ empty: true, tabs: ['jump-home'], activeId: 'jump-home' }); backend.plan = 'jump-auth';
+  const routed = { ...profile, id: 'routed-target', jumpHost: jump };
+  await invoke('direct', [routed, false, 'jump-home']);
+  await until(() => evaluate(`Boolean(document.getElementById('connection-auth-jump-secret')) && !document.querySelector('button[type="submit"]').disabled`), 'both hop credentials rendered');
+  assert.equal(await evaluate(`document.querySelectorAll('.connection-auth-section input[type="password"]').length`), 2);
+  assert.equal(await evaluate(`document.getElementById('connection-auth-jump-remember').value`), 'persistent');
+  assert.match((await state()).authError, /跳板机身份验证失败/);
+  window.setSize(1000, 600); await delay(50);
+  assert.equal(await evaluate(`(() => { const modal = document.querySelector('.connection-auth-dialog'), body = modal.querySelector('.modal-body'); return body.scrollHeight > body.clientHeight && modal.querySelector('.modal-footer').getBoundingClientRect().bottom <= modal.getBoundingClientRect().bottom; })()`), true, 'both-hop prompt scrolls while its action buttons remain visible');
+  for (const [selector, value] of [['#connection-auth-secret', 'target-render-secret'], ['#connection-auth-jump-secret', 'jump-render-secret']]) {
+    await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`); await window.webContents.insertText(value); await delay(25);
+  }
+  backend.plan = 'success';
+  await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`);
+  await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'both hop credentials connect');
+  const routedCall = backend.calls.filter(call => call.method === 'connect').at(-1);
+  assert.equal(routedCall.value.credentials.password, 'target-render-secret');
+  assert.equal(routedCall.value.credentials.jump.password, 'jump-render-secret');
+  assert.equal(routedCall.value.credentials.remember, 'session');
+  assert.equal(routedCall.value.credentials.jump.remember, 'persistent');
+  assert.equal((await state()).sessions[0].tabId, 'jump-home');
+  window.setSize(1000, 800); await delay(30);
+  result.checks.jumpPromptSeparatesCredentials = true;
+
+  phase = 'an agent target can prompt and reconnect with a password jump host';
+  await reset({ empty: true }); backend.plan = 'jump-auth';
+  const agentRouted = { ...routed, id: 'agent-routed', auth: 'agent' };
+  await invoke('direct', [agentRouted]);
+  await until(() => evaluate(`Boolean(document.getElementById('connection-auth-jump-secret'))`), 'agent target gateway prompt');
+  assert.equal(await evaluate(`Boolean(document.getElementById('connection-auth-secret'))`), false);
+  backend.plan = 'success'; await invoke('submitAuth', [{ remember: 'session', sudoUsesLogin: true, jump: { remember: 'session', password: 'agent-gateway-secret' } }]);
+  await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'agent target connected');
+  const routedSession = (await state()).sessions[0];
+  await invoke('setClosed', [{ [routedSession.id]: '断开' }]);
+  await until(async () => !!(await state()).closed[routedSession.id], 'routed target offline');
+  backend.plan = 'jump-auth'; await invoke('reconnect', [routedSession.id]);
+  await until(async () => (await state()).prompt?.tabId === routedSession.tabId, 'routed reconnect prompt');
+  assert.equal(await evaluate(`Boolean(document.getElementById('connection-auth-secret'))`), false);
+  backend.plan = 'success'; await invoke('submitAuth', [{ remember: 'session', sudoUsesLogin: true, jump: { remember: 'session', password: 'reconnect-gateway-secret' } }]);
+  await until(async () => !(await state()).prompt && (await state()).sessions[0].id !== routedSession.id, 'routed reconnect completed');
+  assert.equal((await state()).sessions[0].tabId, routedSession.tabId);
+  assert.equal(backend.calls.filter(call => call.method === 'connect').at(-1).value.credentials.jump.password, 'reconnect-gateway-secret');
+  result.checks.agentTargetSupportsJumpAuthAndReconnect = true;
 
   phase = 'sudo prompt remains bound to its captured target';
   await reset();
