@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { SshService } from './ssh-service';
 const service = new SshService(event => parentPort!.postMessage({event}), workerData.knownHostsFile);
-const methods = new Set(['connect','disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','readFile','writeFile','readTextFile','writeTextFile','chmod','runFile','mkdir','rename','terminalInput','terminalBinaryInput','terminalResize','terminalAck','shutdown']);
+const methods = new Set(['connect','cancelConnect','disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','readFile','writeFile','readTextFile','writeTextFile','chmod','runFile','mkdir','rename','terminalInput','terminalSecretInput','terminalBinaryInput','terminalResize','terminalAck','shutdown']);
 parentPort!.on('message', async ({id,method,args}) => {
   try {
     if (!methods.has(method)) throw new Error('不支持的连接操作');

@@ -3,6 +3,10 @@ import type { DesktopApi, AppEvent } from '../shared/types';
 const call = (method:string,...args:unknown[]) => ipcRenderer.invoke('gooeshell:call',method,args);
 const api: DesktopApi = {
   initial:()=>call('initial'),saveProfile:p=>call('saveProfile',p),deleteProfile:id=>call('deleteProfile',id),
+  connections:()=>call('connections'),saveConnection:r=>call('saveConnection',r),deleteConnection:id=>call('deleteConnection',id),deleteHistory:id=>call('deleteHistory',id),
+  saveGroup:g=>call('saveGroup',g),deleteGroup:id=>call('deleteGroup',id),
+  credentialStatus:p=>call('credentialStatus',p),saveCredentials:r=>call('saveCredentials',r),forgetCredentials:id=>call('forgetCredentials',id),
+  sendSudoPassword:r=>call('sendSudoPassword',r),cancelConnect:id=>call('cancelConnect',id),
   connectionHistory:()=>call('connectionHistory'),clearConnectionHistory:()=>call('clearConnectionHistory'),
   setHostKeyPreference:p=>call('setHostKeyPreference',p),
   saveSettings:s=>call('saveSettings',s),connect:r=>call('connect',r),disconnect:id=>call('disconnect',id),

@@ -1,0 +1,42 @@
+.connection-manager-dialog { width: 610px; }
+.connection-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.connection-fields[disabled] { opacity: .75; }
+.connection-section-label { color: var(--text-muted); font-size: 11px; font-weight: 500; letter-spacing: .04em; margin: 25px 0 14px; padding-top: 20px; border-top: 1px solid var(--border); }
+.connection-section-label:first-child { margin-top: 0; padding-top: 0; border: 0; }
+.connection-form .form-grid { gap: 15px; }
+.connection-form .full { grid-column: 1 / -1; }
+.connection-inline-note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.7; }
+.credential-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; background: var(--surface-raised); border-radius: 9px; padding: 10px 12px; }
+.credential-status .text-button { margin-left: auto; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.connection-icon-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+.connection-icon-picker > button { display: grid; place-items: center; width: 43px; height: 39px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-muted); position: relative; }
+.connection-icon-picker > button:hover, .connection-icon-picker > button.selected { color: var(--text); background: var(--surface-selected); border-color: var(--border-strong); }
+.connection-icon-check { position: absolute; right: 3px; bottom: 3px; }
+.connection-sidebar .sidebar-actions .button { gap: 8px; }
+.connection-heading { padding-top: 6px; padding-bottom: 5px; }
+.connection-heading > span { display: flex; align-items: center; gap: 8px; }
+.connection-heading .connection-total { color: var(--text-muted); background: transparent; }
+.connection-heading .icon-button { width: 24px; height: 24px; }
+.connection-group { margin-bottom: 10px; }
+.connection-group-heading { display: flex; align-items: center; min-width: 0; padding-right: 4px; }
+.connection-group-toggle { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; padding: 8px 5px; color: var(--text-muted); border-radius: 7px; text-align: left; }
+.connection-group-toggle:hover { color: var(--text); background: var(--surface-selected); }
+.connection-group-toggle > svg { flex-shrink: 0; }
+.connection-group-toggle > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 11px; }
+.connection-group-toggle > small { font-size: 10px; color: var(--text-subtle); }
+.connection-group-more { width: 24px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--text-muted); opacity: 0; flex-shrink: 0; }
+.connection-group-heading:hover .connection-group-more, .connection-group-more:focus-visible { opacity: 1; }
+.connection-group-more:hover { color: var(--text); background: var(--surface-selected); }
+.connection-group-empty { padding: 5px 13px 10px; font-size: 10px; line-height: 1.7; color: var(--text-subtle); }
+.connection-ungrouped-label { display: flex; align-items: center; gap: 7px; color: var(--text-muted); padding: 8px 10px; font-size: 11px; }
+.connection-ungrouped-label > small { color: var(--text-subtle); }
+.connection-group-menu { width: 200px; z-index: 90; }
+.connection-sidebar .host-icon { display: grid; place-items: center; flex-shrink: 0; }
+.connection-sidebar .sidebar-bottom button > svg { flex-shrink: 0; }
+.connection-sidebar .sidebar-bottom kbd { white-space: nowrap; font-size: 8px; }
+.connection-sidebar.collapsed .sidebar-actions .item-label, .connection-sidebar.collapsed .connection-group-heading, .connection-sidebar.collapsed .connection-ungrouped-label { display: none; }
+.connection-sidebar.collapsed .connection-group { margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.connection-sidebar.collapsed .connection-group:last-child { border: 0; }
+.connection-sidebar.collapsed .hosts { overflow-x: hidden; }
+.connection-sidebar.collapsed .sidebar-actions .button { padding-left: 0; padding-right: 0; }
+@media (max-height: 750px) { .connection-manager-dialog .modal-body { padding-top: 17px; padding-bottom: 17px; } .connection-section-label { margin-top: 19px; padding-top: 16px; } }

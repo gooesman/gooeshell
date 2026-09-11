@@ -1,4 +1,4 @@
-import {app,BrowserWindow,dialog,ipcMain,shell,session,clipboard} from 'electron';
+import {app,BrowserWindow,dialog,ipcMain,shell,session,clipboard,safeStorage} from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import {promises as fs} from 'node:fs';
@@ -6,19 +6,24 @@ import {Worker} from 'node:worker_threads';
 import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {Store,cleanProfile} from './store';
+import {CredentialStore} from './credential-store';
+import {connectionIdentity} from '../shared/connections';
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
 import {systemFontCatalog} from './font-catalog';
-import type {AppEvent,FileListing,RemoteRequest} from '../shared/types';
-let win:BrowserWindow;let worker:Worker;let store:Store;let shuttingDown=false;
+import type {AppEvent,CredentialUpdate,FileListing,HostProfile} from '../shared/types';
+let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let shuttingDown=false;let workerAvailable=false;
+const sessionProfiles=new Map<string,HostProfile>();
+const closedSessions=new Set<string>();
+const connectAttempts=new Map<string,{cancelled:boolean;started:boolean;profileId:string}>();
 let editorState={dirty:false,busy:false};let discardEditorApproved=false;
 function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
  return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
 }
-function shutdown(){if(shuttingDown)return;shuttingDown=true;if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{void worker?.terminate();app.exit(0);},300);}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;credentials?.clearMemory();sessionProfiles.clear();if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{void worker?.terminate();app.exit(0);},300);}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
-function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{const id=randomUUID();pending.set(id,{resolve,reject});worker.postMessage({id,method,args});});}
+function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
 async function localList(directory:string):Promise<FileListing>{
  const actual=localPath(directory);const entries=await fs.readdir(actual,{withFileTypes:true});
@@ -34,9 +39,32 @@ const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','transfe
 app.whenReady().then(async()=>{
  void systemFontCatalog().catch(()=>{});
  app.setName('gooeshell');if(process.platform==='win32')app.setAppUserModelId('com.gooesman.gooeshell');store=new Store(app.getPath('userData'));
- worker=new Worker(path.join(__dirname,'worker.js'),{workerData:{knownHostsFile:path.join(app.getPath('userData'),'known-hosts.json')}});
- worker.on('message',message=>{if(message.event){if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',message.event as AppEvent);return;}const waiting=pending.get(message.id);if(waiting){pending.delete(message.id);message.error?waiting.reject(new Error(message.error)):waiting.resolve(message.value);}});
- worker.on('error',error=>{for(const value of pending.values())value.reject(error);pending.clear();if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'连接服务已停止：'+error.message});});
+ credentials=new CredentialStore(app.getPath('userData'),{
+  // Linux's synchronous API exposes the selected backend, so reject its plaintext fallback.
+  available:async()=>process.platform==='linux'?safeStorage.isEncryptionAvailable()&&['gnome_libsecret','kwallet','kwallet5','kwallet6'].includes(safeStorage.getSelectedStorageBackend()):safeStorage.isAsyncEncryptionAvailable(),
+  encrypt:async text=>process.platform==='linux'?safeStorage.encryptString(text):safeStorage.encryptStringAsync(text),
+  decrypt:async bytes=>process.platform==='linux'?safeStorage.decryptString(bytes):(await safeStorage.decryptStringAsync(bytes)).result,
+ });
+ const sendEvent=(event:AppEvent)=>{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',event);};
+ const trackClosed=(id:string)=>{sessionProfiles.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
+ const hostQuestions=new Set<string>();
+ let restarts:number[]=[];
+ const startWorker=()=>{
+  const current=new Worker(path.join(__dirname,'worker.js'),{workerData:{knownHostsFile:path.join(app.getPath('userData'),'known-hosts.json')}});
+  worker=current;workerAvailable=true;let failed=false;
+  const handleFailure=(error:Error)=>{
+   if(failed||shuttingDown||worker!==current)return;failed=true;workerAvailable=false;
+   for(const value of pending.values())value.reject(error);pending.clear();
+   for(const requestId of hostQuestions)sendEvent({type:'hostKeyCancelled',requestId});hostQuestions.clear();
+   for(const id of [...sessionProfiles.keys()]){trackClosed(id);sendEvent({type:'sessionClosed',sessionId:id,message:'连接服务意外停止，请重新连接。'});}
+   restarts=restarts.filter(time=>Date.now()-time<60000);
+   if(restarts.length<3){restarts.push(Date.now());try{startWorker();sendEvent({type:'notice',message:'连接服务已恢复，请在断开的终端中重新连接。'});}catch{sendEvent({type:'notice',message:'连接服务无法恢复，请重新启动应用。'});}}
+   else sendEvent({type:'notice',message:'连接服务多次意外停止，请重新启动应用。'});
+  };
+  current.on('message',message=>{if(worker!==current||failed)return;if(message.event){if(message.event.type==='sessionClosed')trackClosed(message.event.sessionId);if(message.event.type==='hostKey')hostQuestions.add(message.event.requestId);if(message.event.type==='hostKeyCancelled')hostQuestions.delete(message.event.requestId);sendEvent(message.event as AppEvent);return;}const waiting=pending.get(message.id);if(waiting){pending.delete(message.id);message.error?waiting.reject(new Error(message.error)):waiting.resolve(message.value);}});
+  current.on('error',handleFailure);current.on('exit',code=>handleFailure(new Error('连接服务已退出（'+code+'）')));
+ };
+ startWorker();
  const windowIcon=app.isPackaged?path.join(process.resourcesPath,'icon.png'):path.join(app.getAppPath(),'assets','icon.png');
  const initialTheme=(await store.settings()).theme;
  win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'gooeshell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
@@ -48,24 +76,90 @@ app.whenReady().then(async()=>{
  const trusted=(event:Electron.IpcMainEvent|Electron.IpcMainInvokeEvent)=>event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;
  ipcMain.handle('gooeshell:call',async(event,method,args:unknown[])=>{
   if(!trusted(event)||!Array.isArray(args))throw new Error('调用来源无效');
-  if(remoteMethods.has(method))return remote(method,...args);
+  if(remoteMethods.has(method)){const result=await remote(method,...args);if(method==='confirmHostKey')hostQuestions.delete(args[0] as string);return result;}
   const value:any=args[0];
   switch(method){
-   case 'initial':return{profiles:await store.profiles(),settings:await store.settings(),connectionHistory:await store.history(),hostKeyPreferences:await store.hostKeyPreferences(),localHome:os.homedir(),version:app.getVersion()};
-   case 'saveProfile':return store.saveProfile(value);
+   case 'initial':return{profiles:await store.profiles(),connections:await store.connections(),groups:await store.groups(),settings:await store.settings(),connectionHistory:await store.history(),hostKeyPreferences:await store.hostKeyPreferences(),localHome:os.homedir(),version:app.getVersion()};
+   case 'connections':return{profiles:await store.profiles(),connections:await store.connections(),history:await store.history(),groups:await store.groups()};
+   case 'saveConnection':{
+    const profile=await store.resolveConnection(cleanProfile(value.profile));
+    if(value.credentials&&value.credentials.remember!=='never')await credentials.prepare(profile,value.credentials);
+    const saved=await store.saveConnection(profile,value.favorite===true);
+    try{if(value.credentials)await credentials.save(saved,value.credentials);else await credentials.invalidate(saved);}
+    catch(error){throw new Error('连接属性已保存，但密码设置未能保存：'+(error instanceof Error?error.message:'请检查系统加密存储后重试。'));}
+    return saved;
+   }
+   case 'saveProfile':{await store.saveProfile(value);await credentials.invalidate(cleanProfile(value));return;}
    case 'deleteProfile':return store.deleteProfile(value);
+   case 'deleteConnection':{
+    for(const [id,attempt] of connectAttempts)if(attempt.profileId===value){attempt.cancelled=true;if(attempt.started)await remote('cancelConnect',id);}
+    await credentials.forget(value);return store.deleteConnection(value);
+   }
+   case 'deleteHistory':return store.deleteHistory(value);
+   case 'saveGroup':return store.saveGroup(value);
+   case 'deleteGroup':return store.deleteGroup(value);
+   case 'credentialStatus':{let profile:HostProfile;try{profile=cleanProfile(value);}catch{return credentials.emptyStatus();}return credentials.status(await store.resolveConnection(profile));}
+   case 'saveCredentials':{
+    const profile=await store.resolveConnection(cleanProfile(value.profile));const saved=(await store.connections()).find(candidate=>candidate.id===profile.id);
+    if(saved&&connectionIdentity(saved)!==connectionIdentity(profile))throw new Error('CONNECTION_IDENTITY_CHANGED: 此连接的地址或身份已变更，请重新打开连接属性后设置密码。');
+    await credentials.save(profile,value.credentials);return credentials.status(profile);
+   }
+   case 'forgetCredentials':return credentials.forget(value);
+   case 'sendSudoPassword':{
+    if(!value||typeof value.sessionId!=='string'||typeof value.submit!=='boolean')throw new Error('密码输入请求无效');
+    const profile=sessionProfiles.get(value.sessionId);if(!profile)throw new Error('此 SSH 会话已断开，请先连接服务器');
+    const saved=await credentials.get(profile);const password=saved.sudoUsesLogin?saved.password:saved.sudoPassword;
+    if(!password)throw new Error('SUDO_PASSWORD_REQUIRED: 此连接尚未记住 sudo 密码，请在连接属性中设置。');
+    if(/[\x00-\x1f\x7f]/.test(password))throw new Error('密码包含终端控制字符，无法使用快捷输入。');
+    if(sessionProfiles.get(value.sessionId)!==profile)throw new Error('此 SSH 会话已断开，请先连接服务器');
+    return remote('terminalSecretInput',value.sessionId,password+(value.submit?'\r':''));
+   }
+   case 'cancelConnect':{const attempt=connectAttempts.get(value);if(attempt){attempt.cancelled=true;if(attempt.started)await remote('cancelConnect',value);}return;}
    case 'connectionHistory':return store.history();
    case 'clearConnectionHistory':return store.clearHistory();
    case 'setHostKeyPreference':return store.setHostKeyPreference(value);
    case 'saveSettings':return store.saveSettings(value);
    case 'connect':{
-    const profile=cleanProfile(value.profile);
-    const skipHostKeyVerification=(await store.hostKeyPreferences()).some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
-    const effectiveProfile=skipHostKeyVerification?{...profile,rememberHost:false}:profile;
-    const connected=await remote('connect',{...value,profile:effectiveProfile,skipHostKeyVerification});
-    try{await store.recordConnection(profile);}
-    catch{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'服务器已连接，但连接历史未能保存。'});}
-    return{...connected,profile};
+    const startedAt=credentials.connectClock();
+    const suppliedProfile=cleanProfile(value?.profile);
+    const attemptId=value?.attemptId??randomUUID();
+    if(typeof attemptId!=='string'||!attemptId||attemptId.length>255)throw new Error('连接请求编号无效');
+    if(attemptId&&connectAttempts.has(attemptId))throw new Error('此连接正在建立，请稍候');
+    const attempt={cancelled:false,started:false,profileId:suppliedProfile.id};if(attemptId)connectAttempts.set(attemptId,attempt);
+    try{
+     let profile=await store.resolveConnection(suppliedProfile);
+     const catalog=await store.connections();const savedProfile=catalog.find(candidate=>candidate.id===profile.id);
+     // A still-open old tab must not reuse a saved ID that now points at another device.
+     if(savedProfile&&connectionIdentity(savedProfile)!==connectionIdentity(profile))profile=await store.resolveConnection({...profile,id:randomUUID(),groupId:undefined});
+     attempt.profileId=profile.id;
+     const profileWasKnown=catalog.some(candidate=>candidate.id===profile.id);
+     if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
+     if(value.credentials?.remember==='never')await credentials.save(profile,value.credentials);
+     const preparedCredentials=await credentials.prepareConnect(profile,value.credentials);
+     const prepared=preparedCredentials.secrets;
+     if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
+     const password=value.password??prepared.password;const passphrase=value.passphrase??prepared.passphrase;
+     for(const secret of [password,passphrase])if(secret!==undefined&&(typeof secret!=='string'||secret.length>16384||secret.includes('\0')))throw new Error('密码内容无效或过长');
+     if(profile.auth==='password'&&password===undefined)throw new Error('AUTH_REQUIRED: 请输入此连接的登录密码。');
+     const skipHostKeyVerification=(await store.hostKeyPreferences()).some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
+     const effectiveProfile=skipHostKeyVerification?{...profile,rememberHost:false}:profile;
+     if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
+     attempt.started=true;
+     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId});
+     if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
+     if(closedSessions.has(connected.id))throw new Error('服务器在连接完成前关闭了终端，请重新连接。');
+     sessionProfiles.set(connected.id,profile);
+     if(value.credentials){
+      try{const latest=(await store.connections()).find(candidate=>candidate.id===profile.id);if(!latest||connectionIdentity(latest)===connectionIdentity(profile))await credentials.saveIfUnchanged(profile,{...value.credentials,password,passphrase} as CredentialUpdate,preparedCredentials.revision,()=>!attempt.cancelled&&!shuttingDown&&!closedSessions.has(connected.id),startedAt);}
+      catch{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'服务器已连接，但密码保存失败。请在连接属性中检查密码保存设置。'});}
+     }
+     if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
+     try{await store.recordConnection(profile,true,profileWasKnown);}
+     catch{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',{type:'notice',message:'服务器已连接，但连接历史未能保存。'});}
+     if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
+     if(closedSessions.has(connected.id))throw new Error('服务器在连接完成前关闭了终端，请重新连接。');
+     return{...connected,profile};
+    }finally{if(attemptId&&connectAttempts.get(attemptId)===attempt)connectAttempts.delete(attemptId);}
    }
    case 'localList':return localList(value||os.homedir());
    case 'chooseFiles':{const result=await dialog.showOpenDialog(win,{title:value?.title,properties:value?.directory?['openDirectory']:value?.multiple?['openFile','multiSelections']:['openFile']});return result.canceled?[]:result.filePaths;}

@@ -5,8 +5,8 @@ export const defaultSettings: AppSettings = {
   shortcutSchemaVersion: 2,
   fontFamily: 'DejaVu Sans Mono', chineseFont: 'Microsoft YaHei', fontSize: 14,
   lineHeight: 1.1, cursorBlink: false, copyOnSelect: false, rightClickPaste: false,
-  backgroundImage: '', backgroundOpacity: 0.15,
-  shortcuts: {connect:'Ctrl+Shift+P',settings:'Ctrl+Shift+F1',sidebar:'Ctrl+Shift+[',terminalHeader:'Ctrl+Shift+]',previousTab:'Ctrl+Shift+ArrowLeft',nextTab:'Ctrl+Shift+ArrowRight',files:'Ctrl+Shift+E',fullscreen:'F11',zen:'Ctrl+Shift+F11',copy:'Ctrl+Shift+C',paste:'Ctrl+Shift+V',search:'Ctrl+Shift+F',fontUp:'Ctrl+=',fontDown:'Ctrl+-'}
+  backgroundImage: '', backgroundOpacity: 0.15, sudoPasswordSubmit: false,
+  shortcuts: {connect:'Ctrl+Shift+P',settings:'Ctrl+Shift+F1',sidebar:'Ctrl+Shift+[',terminalHeader:'Ctrl+Shift+]',previousTab:'Ctrl+Shift+ArrowLeft',nextTab:'Ctrl+Shift+ArrowRight',files:'Ctrl+Shift+E',fullscreen:'F11',zen:'Ctrl+Shift+F11',copy:'Ctrl+Shift+C',paste:'Ctrl+Shift+V',search:'Ctrl+Shift+F',fontUp:'Ctrl+=',fontDown:'Ctrl+-',reconnect:'Ctrl+Shift+R',sudoPassword:'Ctrl+Alt+P'}
 };
 
 export function normalizeShortcut(value: string): string {

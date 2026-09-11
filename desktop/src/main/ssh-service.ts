@@ -33,6 +33,7 @@ interface Session {
 }
 interface TransferJob { info: TransferInfo; abort: AbortController; client?: Client }
 interface HostQuestion { resolve: (decision: HostKeyDecision) => void; timer: NodeJS.Timeout; sessionId: string }
+interface ConnectAttempt { cancelled:boolean;session?:Session; }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function endpoint(profile: HostProfile): string { return `[${profile.host.toLowerCase()}]:${profile.port}`; }
@@ -56,6 +57,7 @@ export class SshService {
   private readonly sessions = new Map<string, Session>();
   private readonly jobs = new Map<string, TransferJob>();
   private readonly questions = new Map<string, HostQuestion>();
+  private readonly attempts = new Map<string, ConnectAttempt>();
   private trust?: Promise<TrustStore>;
   private saveQueue: Promise<void> = Promise.resolve();
   private stopped = false;
@@ -108,6 +110,7 @@ export class SshService {
     const previousFingerprint = session.profile.rememberHost
       ? (await this.trustStore()).hosts[endpoint(session.profile)]?.fingerprint
       : undefined;
+    if(session.closed||this.stopped)return false;
     if (previousFingerprint === fingerprint) { session.fingerprint = fingerprint; return true; }
     const requestId = randomUUID();
     const decision = await new Promise<HostKeyDecision>(resolve => {
@@ -168,6 +171,23 @@ export class SshService {
   }
 
   async connect(request: ConnectRequest): Promise<SessionInfo> {
+    const id=request.attemptId;
+    if(id!==undefined&&(typeof id!=='string'||!id||id.length>255))throw new Error('连接请求编号无效');
+    if(id&&this.attempts.has(id))throw new Error('此连接正在建立，请稍候');
+    const attempt:ConnectAttempt={cancelled:false};
+    if(id)this.attempts.set(id,attempt);
+    try{return await this.connectAttempt(request,attempt);}
+    catch(error){if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');throw error;}
+    finally{if(id&&this.attempts.get(id)===attempt)this.attempts.delete(id);}
+  }
+
+  cancelConnect(attemptId:string):void {
+    const attempt=this.attempts.get(attemptId);if(!attempt)return;
+    attempt.cancelled=true;
+    if(attempt.session)this.finishSession(attempt.session,'已取消连接');
+  }
+
+  private async connectAttempt(request:ConnectRequest,attempt:ConnectAttempt):Promise<SessionInfo>{
     if (this.stopped) throw new Error('应用正在退出');
     const profile = { ...request.profile };
     if (!profile.host?.trim() || !profile.username?.trim() || !Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) throw new Error('请填写服务器地址、用户名和有效端口');
@@ -183,11 +203,25 @@ export class SshService {
       credentials.agent = process.env.SSH_AUTH_SOCK || (process.platform === 'win32' ? '\\\\.\\pipe\\openssh-ssh-agent' : undefined);
       if (!credentials.agent) throw new Error('SSH Agent 未配置，请选择密码或私钥认证');
     } else throw new Error('不支持的认证方式');
+    if(attempt.cancelled||this.stopped){if(Buffer.isBuffer(credentials.privateKey))credentials.privateKey.fill(0);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
     const session: Session = { id: randomUUID(), profile, skipHostKeyVerification: request.skipHostKeyVerification === true, credentials, clients: new Set(), pendingBytes: 0, terminalReady: false, terminalCols: 100, terminalRows: 30, closed: false };
+    attempt.session=session;
     this.sessions.set(session.id, session);
     try {
       const client = await this.openClient(session);
-      const shell = await new Promise<ClientChannel>((resolve, reject) => client.shell({ term: 'xterm-256color', cols: 100, rows: 30 }, (error, stream) => error ? reject(error) : resolve(stream)));
+      const shell = await new Promise<ClientChannel>((resolve, reject) => {
+        let settled=false;
+        const cleanup=()=>{client.removeListener('close',closed);client.removeListener('error',failed);};
+        const failed=(error:Error)=>{if(!settled){settled=true;cleanup();reject(error);}};
+        const closed=()=>failed(new Error('SSH 连接在终端建立前关闭'));
+        client.once('close',closed);client.once('error',failed);
+        client.shell({term:'xterm-256color',cols:100,rows:30},(error,stream)=>{
+          if(settled){stream?.destroy();return;}
+          if(error){failed(error);return;}
+          settled=true;cleanup();resolve(stream);
+        });
+      });
+      if(session.closed||attempt.cancelled){shell.destroy();throw new Error('CONNECTION_CANCELLED: 已取消连接');}
       session.shell = shell;
       // The first resize is sent after the renderer subscribes, so its prompt is not lost.
       shell.pause();
@@ -511,6 +545,19 @@ export class SshService {
     session.shell.write(session.profile.encoding === 'utf8' ? Buffer.from(data, 'utf8') : iconv.encode(data, session.profile.encoding));
   }
 
+  async terminalSecretInput(id:string,data:string):Promise<void>{
+    const session=this.session(id);
+    if(!session.shell||session.shell.destroyed||!session.shell.writable)throw new Error('此 SSH 会话已断开，请先连接服务器');
+    if(typeof data!=='string'||!data||data.length>16385)throw new Error('密码输入内容无效');
+    const encoded=session.profile.encoding==='utf8'?Buffer.from(data,'utf8'):iconv.encode(data,session.profile.encoding);
+    const roundTrip=session.profile.encoding==='utf8'?encoded.toString('utf8'):iconv.decode(encoded,session.profile.encoding);
+    if(roundTrip!==data){encoded.fill(0);throw new Error('当前终端编码无法完整表示密码，请切换 UTF-8 后再输入。');}
+    await new Promise<void>((resolve,reject)=>{
+      try{session.shell!.write(encoded,(error?:Error|null)=>{encoded.fill(0);error?reject(new Error('密码输入失败，连接可能已断开。')):resolve();});}
+      catch{encoded.fill(0);reject(new Error('密码输入失败，连接可能已断开。'));}
+    });
+  }
+
   terminalBinaryInput(id: string, data: string): void {
     const session = this.sessions.get(id);
     if (!session?.shell || session.closed || typeof data !== 'string') return;
@@ -544,7 +591,7 @@ export class SshService {
     if (session.closed) return;
     session.closed = true;
     for (const [id, question] of this.questions) {
-      if (question.sessionId === session.id) this.confirmHostKey(id, 'reject');
+      if (question.sessionId === session.id) {this.confirmHostKey(id, 'reject');this.emit({type:'hostKeyCancelled',requestId:id});}
     }
     for (const [id, job] of this.jobs) if (job.info.sessionId === session.id) this.cancelTransfer(id);
     for (const client of session.clients) client.destroy();
@@ -563,6 +610,7 @@ export class SshService {
 
   shutdown(): void {
     this.stopped = true;
+    for(const id of this.attempts.keys())this.cancelConnect(id);
     for (const session of this.sessions.values()) this.finishSession(session, '应用正在退出');
   }
 }

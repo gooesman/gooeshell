@@ -1,4 +1,4 @@
-import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,EditableTextFile} from '../shared/types';
+import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,ConnectionGroup,HostKeyPreference,EditableTextFile} from '../shared/types';
 import {defaultSettings} from '../shared/defaults';
 import {bundledFontFamilies} from '../shared/fonts';
 import {previewFontCatalog} from './preview-font-catalog';
@@ -9,6 +9,9 @@ let previewSettings=structuredClone(defaultSettings);
 let previewProfiles:HostProfile[]=[{id:'preview',name:'开发服务器 · 演示',host:'dev.example.com',port:22,username:'developer',auth:'password',rememberHost:true,encoding:'utf8'}];
 let previewHostPreferences:HostKeyPreference[]=[];
 let previewHistory:ConnectionHistoryEntry[]=[{profile:previewProfiles[0],connectedAt:Date.now()-3600000}];
+let previewConnections=[...previewProfiles];
+let previewGroups:ConnectionGroup[]=[];
+const savePreview=(p:HostProfile,favorite:boolean)=>{previewConnections=[...previewConnections.filter(x=>x.id!==p.id),p];previewProfiles=[...previewProfiles.filter(x=>x.id!==p.id),...(favorite?[p]:[])];previewHistory=previewHistory.map(entry=>entry.profile.id===p.id?{...entry,profile:p}:entry);return p;};
 const previewListing=(p:string,local:boolean):FileListing=>({path:p,entries:(local?[
  ['项目文件','directory',0],['Downloads','directory',0],['deploy.sh','file',1248],['README.md','file',2870]
 ]:[['app','directory',0],['logs','directory',0],['backups','directory',0],['deploy.sh','file',1248],['nginx.conf','file',2910],['README.md','file',2870]]).map(([name,type,size])=>({name:String(name),path:p.replace(/[\\/]$/,'')+(local?'\\':'/')+name,type:type as 'directory'|'file',size:Number(size),modified:1789027200000,mode:type==='directory'?0o40755:0o100644,owner:'developer',group:'developer'}))});
@@ -16,7 +19,15 @@ const unavailable=async()=>{throw new Error('这是浏览器界面预览；请�
 const previewTexts=new Map<string,EditableTextFile>();
 let previewRevision=0;
 const preview:DesktopApi={
- initial:async()=>({profiles:previewProfiles,connectionHistory:previewHistory,hostKeyPreferences:previewHostPreferences,settings:previewSettings,localHome:'C:\\Users\\developer',version:'界面演示 · 不会连接服务器'}),
+ initial:async()=>({profiles:previewProfiles,connections:previewConnections,groups:previewGroups,connectionHistory:previewHistory,hostKeyPreferences:previewHostPreferences,settings:previewSettings,localHome:'C:\\Users\\developer',version:'界面演示 · 不会连接服务器'}),
+ connections:async()=>({profiles:previewProfiles,connections:previewConnections,history:previewHistory,groups:previewGroups}),
+ saveConnection:async r=>savePreview(r.profile,r.favorite),
+ deleteConnection:async id=>{previewConnections=previewConnections.filter(x=>x.id!==id);previewProfiles=previewProfiles.filter(x=>x.id!==id);previewHistory=previewHistory.filter(x=>x.profile.id!==id);},
+ deleteHistory:async id=>{previewHistory=previewHistory.filter(x=>x.profile.id!==id);},
+ saveGroup:async group=>{previewGroups=[...previewGroups.filter(x=>x.id!==group.id),group].sort((a,b)=>a.order-b.order);},
+ deleteGroup:async id=>{previewGroups=previewGroups.filter(x=>x.id!==id);for(const profile of [...previewConnections])if(profile.groupId===id)savePreview({...profile,groupId:undefined},previewProfiles.some(x=>x.id===profile.id));},
+ credentialStatus:async()=>({remember:'never',hasPassword:false,hasPassphrase:false,hasSudoPassword:false,sudoUsesLogin:true,secureStorageAvailable:false}),
+ saveCredentials:async()=>{},forgetCredentials:async()=>{},sendSudoPassword:unavailable,cancelConnect:async()=>{},
  setHostKeyPreference:async p=>{previewHostPreferences=[...previewHostPreferences.filter(entry=>entry.host.toLowerCase()!==p.host.toLowerCase()||entry.port!==p.port),...(p.skipVerification?[p]:[])];},
  connectionHistory:async()=>previewHistory,clearConnectionHistory:async()=>{previewHistory=[];},
  saveProfile:async p=>{previewProfiles=[...previewProfiles.filter(x=>x.id!==p.id),p];},deleteProfile:async id=>{previewProfiles=previewProfiles.filter(x=>x.id!==id);},saveSettings:async s=>{previewSettings=s;},

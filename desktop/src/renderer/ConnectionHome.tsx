@@ -1,5 +1,6 @@
 import type { MouseEvent } from 'react';
-import { Clock3, Server, ArrowUpRight } from 'lucide-react';
+import { Clock3, ArrowUpRight } from 'lucide-react';
+import { ConnectionIcon } from './ConnectionSidebar';
 import type { ConnectionHistoryEntry, HostProfile } from '../shared/types';
 
 export default function ConnectionHome({ history, showHistory, connectShortcut, onCreate, onSettings, onPick, onContextMenu }: {
@@ -16,8 +17,8 @@ export default function ConnectionHome({ history, showHistory, connectShortcut, 
     </div>
     {showHistory && history.length > 0 && <section className="recent-connections" aria-label="最近连接">
       <div className="recent-heading"><span><Clock3 size={15} />最近连接</span><span>点击重新连接</span></div>
-      <div className="recent-list">{history.map(({profile, connectedAt}) => <button className="recent-connection" key={`${profile.host}:${profile.port}:${profile.username}`} onClick={() => onPick(profile)} onContextMenu={event => onContextMenu(event,profile)}>
-        <Server size={18} strokeWidth={1.6} /><span className="recent-copy"><strong>{profile.name}</strong><span>{profile.username}@{profile.host}:{profile.port}</span></span>
+      <div className="recent-list">{history.map(({profile, connectedAt}) => <button className="recent-connection" key={profile.id} onClick={() => onPick(profile)} onContextMenu={event => onContextMenu(event,profile)}>
+        <ConnectionIcon name={profile.icon} size={18} /><span className="recent-copy"><strong>{profile.name}</strong><span>{profile.username}@{profile.host}:{profile.port}</span></span>
         <time dateTime={new Date(connectedAt).toISOString()}>{new Date(connectedAt).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}</time><ArrowUpRight size={15} />
       </button>)}</div>
     </section>}

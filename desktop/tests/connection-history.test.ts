@@ -28,7 +28,7 @@ test('history stores reconnect details without credentials and stays separate fr
   assert.equal(history.length,1);
   assert.deepEqual(history[0].profile,cleanProfile(transient));
   assert.ok(history[0].connectedAt>=before&&history[0].connectedAt<=Date.now());
-  const serialized=await fs.readFile(path.join(directory,'connection-history.json'),'utf8');
+  const serialized=await fs.readFile(path.join(directory,'connections.json'),'utf8');
   for(const secret of ['password-never-store','passphrase-never-store','key-contents-never-store'])assert.ok(!serialized.includes(secret));
   assert.deepEqual(await store.profiles(),[cleanProfile(saved)]);
   await store.clearHistory();
@@ -42,6 +42,7 @@ test('history sanitizes malformed persisted data and deduplicates by endpoint us
   for(const invalid of ['{broken',JSON.stringify({items:[]}),JSON.stringify(null)]){
     await fs.writeFile(file,invalid);
     assert.deepEqual(await store.history(),[]);
+    await fs.unlink(path.join(directory,'connections.json'));
   }
   const older=profile('older',{host:'HOST.example.test'});
   const newer={...profile('newer',{host:'host.example.test',encoding:'big5'}),password:'discard-me'};
@@ -56,7 +57,7 @@ test('history sanitizes malformed persisted data and deduplicates by endpoint us
     {profile:cleanProfile(profile('second')),connectedAt:200},
   ]);
   await store.recordConnection(profile('third'));
-  assert.ok(!(await fs.readFile(file,'utf8')).includes('discard-me'));
+  assert.ok(!(await fs.readFile(path.join(directory,'connections.json'),'utf8')).includes('discard-me'));
 }));
 
 test('concurrent successful connections retain the newest 30 endpoints and reconnection refreshes details',async()=>fixture(async directory=>{
@@ -66,7 +67,7 @@ test('concurrent successful connections retain the newest 30 endpoints and recon
   assert.equal(history.length,30);
   assert.deepEqual(history.map(entry=>entry.profile.id),Array.from({length:30},(_,index)=>`host-${39-index}`));
   assert.ok(history.every((entry,index)=>index===0||history[index-1].connectedAt>=entry.connectedAt));
-  const reconnected=profile('updated',{host:'HOST-20.example.test',auth:'password',encoding:'gb18030'});
+  const reconnected=profile('updated',{id:'host-20',host:'HOST-20.example.test',auth:'password',encoding:'gb18030'});
   await store.recordConnection(reconnected);
   history=await store.history();
   assert.equal(history.length,30);
@@ -75,7 +76,7 @@ test('concurrent successful connections retain the newest 30 endpoints and recon
   await store.recordConnection({...reconnected,id:'another-port',port:2222});
   await store.recordConnection({...reconnected,id:'another-user',username:'other'});
   history=await store.history();
-  assert.deepEqual(history.slice(0,3).map(entry=>entry.profile.id),['another-user','another-port','updated']);
+  assert.deepEqual(history.slice(0,3).map(entry=>entry.profile.id),['another-user','another-port','host-20']);
   assert.deepEqual((await fs.readdir(directory)).filter(name=>name.endsWith('.tmp')),[]);
 }));
 
@@ -94,10 +95,13 @@ test('history clear and subsequent reconnect serialize without restoring earlier
 test('a failed history write does not poison a later record or affect saved servers',async()=>fixture(async directory=>{
   const store=new Store(directory);
   await store.saveProfile(profile('saved'));
-  const blocker=path.join(directory,'connection-history.json');
+  const blocker=path.join(directory,'connections.json');
+  const backup=path.join(directory,'connections.backup');
+  await fs.rename(blocker,backup);
   await fs.mkdir(blocker);
   await assert.rejects(store.recordConnection(profile('failed')));
   await fs.rmdir(blocker);
+  await fs.rename(backup,blocker);
   await store.recordConnection(profile('recovered'));
   assert.deepEqual((await store.history()).map(entry=>entry.profile.id),['recovered']);
   assert.deepEqual((await store.profiles()).map(entry=>entry.id),['saved']);

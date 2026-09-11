@@ -67,6 +67,12 @@ jobs:
       - name: Editor regression on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/ci-editor-tests.mjs
+      - name: Connections, credentials and reconnect regression
+        if: runner.os != 'Linux'
+        run: node scripts/ci-connection-tests.mjs
+      - name: Connections regression on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/ci-connection-tests.mjs
       - name: Launch packaged application
         if: runner.os != 'Linux'
         run: node scripts/ci-smoke.mjs ${{ matrix.target }} ${{ matrix.arch }}
@@ -98,5 +104,10 @@ jobs:
             desktop/test-output/smoke-*.json
             desktop/test-output/editor-main-*/result.json
             .build/editor-render-*/result.json*
+            desktop/test-output/connection-main-*/result.json
+            .build/connection-ui-*/result.json*
+            .build/connections-flow-*/result.json*
+            .build/terminal-reconnect-*/result.json*
+            .build/app-connections-*/result.json*
           if-no-files-found: ignore
           retention-days: 14

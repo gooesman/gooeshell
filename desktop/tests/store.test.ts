@@ -10,12 +10,12 @@ test('profiles persist only intended fields and never credentials',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-store-test-'));
  const store=new Store(root);
  await store.saveProfile({...profile,password:'must-not-persist',passphrase:'must-not-persist',sudoPassword:'must-not-persist'} as any);
- const content=await fs.readFile(path.join(root,'profiles.json'),'utf8');
+ const content=await fs.readFile(path.join(root,'connections.json'),'utf8');
  assert.equal(content.includes('must-not-persist'),false);
  assert.deepEqual(await store.profiles(),[{...profile,privateKeyPath:''}]);
  await store.deleteProfile('test');assert.deepEqual(await store.profiles(),[]);
- // Delete only the two exact files and this freshly created empty test directory.
- await fs.unlink(path.join(root,'profiles.json'));await fs.rmdir(root);
+ // Delete only the exact catalog and this freshly created empty test directory.
+ await fs.unlink(path.join(root,'connections.json'));await fs.rmdir(root);
 });
 test('invalid SSH destinations and out-of-range settings fail predictably',()=>{
  assert.throws(()=>cleanProfile({...profile,host:'bad\0host'}));

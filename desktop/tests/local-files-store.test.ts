@@ -93,7 +93,7 @@ test('theme settings migrate older files and persist without resetting fonts or 
 
 test('concurrent profile save/delete operations preserve every unrelated host', async () => fixture(async directory => {
   const store = new Store(directory);
-  const profile = (id: string): HostProfile => ({ id, name: id, host: '127.0.0.1', port: 22, username: 'fixture', auth: 'agent', rememberHost: false, encoding: 'utf8' });
+  const profile = (id: string): HostProfile => ({ id, name: id, host: `${id}.example.test`, port: 22, username: 'fixture', auth: 'agent', rememberHost: false, encoding: 'utf8' });
   const saves = Array.from({ length: 10 }, (_, index) => store.saveProfile(profile(String(index))));
   const deletes = [store.deleteProfile('2'), store.deleteProfile('7')];
   await Promise.all([...saves, ...deletes]);

@@ -1,8 +1,14 @@
 import type {FontFamilyInfo} from './font-types';
+export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
+export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
+export type CredentialRemember = 'never' | 'session' | 'persistent';
+export interface CredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; sudoPassword?: string; sudoUsesLogin: boolean; }
+export interface CredentialStatus { remember: CredentialRemember; hasPassword: boolean; hasPassphrase: boolean; hasSudoPassword: boolean; sudoUsesLogin: boolean; secureStorageAvailable: boolean; }
 export interface HostProfile {
   id: string; name: string; host: string; port: number; username: string;
   auth: 'password' | 'key' | 'agent'; privateKeyPath?: string;
   rememberHost: boolean; encoding: 'utf8' | 'gb18030' | 'big5';
+  groupId?: string; icon?: ConnectionIcon;
 }
 export interface AppSettings {
   theme: 'dark' | 'light';
@@ -10,7 +16,7 @@ export interface AppSettings {
   fontWeight: number; chineseFontWeight: number;
   shortcutSchemaVersion: number;
   fontFamily: string; chineseFont: string; fontSize: number; lineHeight: number;
-  cursorBlink: boolean; copyOnSelect: boolean; rightClickPaste: boolean;
+  cursorBlink: boolean; copyOnSelect: boolean; rightClickPaste: boolean; sudoPasswordSubmit: boolean;
   backgroundImage: string; backgroundOpacity: number;
   shortcuts: Record<string, string>;
 }
@@ -18,11 +24,13 @@ export interface InitialState {
   profiles: HostProfile[]; settings: AppSettings; localHome: string; version: string;
   connectionHistory: ConnectionHistoryEntry[];
   hostKeyPreferences: HostKeyPreference[];
+  connections: HostProfile[]; groups: ConnectionGroup[];
 }
+export interface ConnectionsState { profiles: HostProfile[]; connections: HostProfile[]; history: ConnectionHistoryEntry[]; groups: ConnectionGroup[]; }
 export interface ConnectionHistoryEntry { profile: HostProfile; connectedAt: number; }
 export interface HostKeyPreference { host: string; port: number; skipVerification: boolean; }
-export interface SessionInfo { id: string; profile: HostProfile; }
-export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; }
+export interface SessionInfo { id: string; profile: HostProfile; tabId?: string; }
+export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; }
 export interface FileEntry {
   name: string; path: string; type: 'directory' | 'file' | 'symlink';
   size: number; modified: number; mode?: number; owner?: string; group?: string;
@@ -56,6 +64,7 @@ export type AppEvent =
   | { type: 'terminal'; sessionId: string; data: string; bytes: number }
   | { type: 'sessionClosed'; sessionId: string; message: string }
   | { type: 'hostKey'; requestId: string; host: string; port: number; fingerprint: string; previousFingerprint?: string; saveAllowed?: boolean }
+  | { type: 'hostKeyCancelled'; requestId: string }
   | { type: 'transfer'; transfer: TransferInfo }
   | { type: 'notice'; message: string };
 
@@ -63,11 +72,22 @@ export interface DesktopApi {
   initial(): Promise<InitialState>;
   saveProfile(profile: HostProfile): Promise<void>;
   deleteProfile(id: string): Promise<void>;
+  connections(): Promise<ConnectionsState>;
+  saveConnection(request: { profile: HostProfile; favorite: boolean; credentials?: CredentialUpdate }): Promise<HostProfile>;
+  deleteConnection(id: string): Promise<void>;
+  deleteHistory(id: string): Promise<void>;
+  saveGroup(group: ConnectionGroup): Promise<void>;
+  deleteGroup(id: string): Promise<void>;
+  credentialStatus(profile: HostProfile): Promise<CredentialStatus>;
+  saveCredentials(request: { profile: HostProfile; credentials: CredentialUpdate }): Promise<void>;
+  forgetCredentials(profileId: string): Promise<void>;
+  sendSudoPassword(request: { sessionId: string; submit: boolean }): Promise<void>;
   connectionHistory(): Promise<ConnectionHistoryEntry[]>;
   clearConnectionHistory(): Promise<void>;
   setHostKeyPreference(preference: HostKeyPreference): Promise<void>;
   saveSettings(settings: AppSettings): Promise<void>;
   connect(request: ConnectRequest): Promise<SessionInfo>;
+  cancelConnect(attemptId: string): Promise<void>;
   disconnect(sessionId: string): Promise<void>;
   confirmHostKey(requestId: string, decision: HostKeyDecision): Promise<void>;
   localList(path: string): Promise<FileListing>;
