@@ -1,6 +1,6 @@
 import type { AppSettings } from './types';
 export const defaultSettings: AppSettings = {
-  theme: 'dark', terminalPalette: 'follow-interface',
+  theme: 'dark', terminalPalette: 'follow-interface', terminalBold: false,
   showConnectionHistory: true, filesToggleIconOnly: true, fontWeight: 400, chineseFontWeight: 400,
   shortcutSchemaVersion: 2,
   fontFamily: 'DejaVu Sans Mono', chineseFont: 'Microsoft YaHei', fontSize: 14,

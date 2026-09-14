@@ -1,4 +1,4 @@
-export type TerminalPaletteId = 'follow-interface' | 'midnight' | 'daylight' | 'graphite' | 'classic' | 'warm';
+export type TerminalPaletteId = 'follow-interface' | 'midnight' | 'soft' | 'daylight' | 'graphite' | 'classic' | 'warm';
 
 export interface TerminalColors {
   background: string; foreground: string; cursor: string; cursorAccent: string;
@@ -16,10 +16,21 @@ export interface TerminalPalette {
   colors: Readonly<TerminalColors>;
 }
 
-// These palettes belong to Gooeshell. The first two preserve the original defaults.
+// ANSI color intensity is independent of the terminal's bold font weight.
 export const terminalPalettes: readonly TerminalPalette[] = [
   {
-    id: 'midnight', name: '纯黑', description: '纯黑背景，柔和的文字颜色',
+    id: 'midnight', name: '纯黑', description: '纯黑背景，鲜明的文字颜色',
+    colors: {
+      background: '#000000', foreground: '#dddddd', cursor: '#eeeeee', cursorAccent: '#000000',
+      selectionBackground: '#ffffff38', selectionInactiveBackground: '#ffffff22',
+      black: '#202020', red: '#f04452', green: '#20c05c', yellow: '#e5be32',
+      blue: '#3b82f6', magenta: '#bd58e5', cyan: '#18bfc5', white: '#dddddd',
+      brightBlack: '#888888', brightRed: '#ff5964', brightGreen: '#32e875', brightYellow: '#ffdb4d',
+      brightBlue: '#579bff', brightMagenta: '#d66bff', brightCyan: '#28e0e7', brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'soft', name: '柔和', description: '原版纯黑配色，较浅的蓝绿',
     colors: {
       background: '#000000', foreground: '#dddddd', cursor: '#eeeeee', cursorAccent: '#000000',
       selectionBackground: '#ffffff38', selectionInactiveBackground: '#ffffff22',

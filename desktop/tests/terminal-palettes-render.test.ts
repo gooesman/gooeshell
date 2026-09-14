@@ -31,7 +31,7 @@ for (const domFallback of [false, true]) test(`actual TerminalView palette chang
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error(`No palette renderer report: ${stderr}`); }));
   t.diagnostic(`terminal palette artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true, JSON.stringify(result, null, 2) + stderr);
-  for (const name of ['legacyFollow', 'independentPalette', 'sameTerminal', 'statePreserved', 'backgroundImage', 'inputResponsive']) assert.equal(result.checks[name], true, name);
+  for (const name of ['legacyFollow', 'boldGlyphs', 'explicitColors', 'independentPalette', 'sameTerminal', 'statePreserved', 'backgroundImage', 'inputResponsive']) assert.equal(result.checks[name], true, name);
   if (domFallback) assert.equal(result.final.canvas, 0);
   assert.deepEqual(result.rendererErrors, []);
 });

@@ -40,7 +40,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   if(Number.isInteger(input.chineseFontWeight)&&input.chineseFontWeight>=1&&input.chineseFontWeight<=1000)result.chineseFontWeight=input.chineseFontWeight;
   for(const field of ['fontFamily','chineseFont','backgroundImage'] as const)if(typeof input[field]==='string'&&input[field].length<2048&&!input[field].includes('\0'))result[field]=input[field];
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
-  for(const field of ['cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly','sudoPasswordSubmit'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
+  for(const field of ['terminalBold','cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly','sudoPasswordSubmit'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
   for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=normalizeShortcut(input.shortcuts[id]);
   for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword','commands']){
     if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)continue;

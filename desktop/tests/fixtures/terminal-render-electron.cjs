@@ -242,7 +242,7 @@ async function run() {
   assert.equal(metrics.boldFont.type, 'alternate');
   assert.equal(metrics.boldFont.fontWeight,400);
   assert.equal(metrics.boldFont.fontSelection.fontWeight,700);
-  assert.equal(metrics.boldFont.fontWeightBold, 700);
+  assert.equal(metrics.boldFont.fontWeightBold, 400, 'the selected physical font weight is independent of program-requested bold');
   const alias=metrics.boldFont.fontFamily.split(',')[0].replaceAll('"','');
   assert.ok(metrics.boldFont.fontFaces.some(face => face.family.replaceAll('"','')===alias && face.weight === '400' && face.status === 'loaded'), 'xterm must measure the loaded composite normal slot');
   assert.ok(Math.abs(metrics.boldFont.cols - metrics.before.cols) <= 3, 'the two fonts have similar monospaced cell widths; a much wider grid indicates fallback measurement');

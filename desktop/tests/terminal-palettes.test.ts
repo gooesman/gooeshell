@@ -3,7 +3,7 @@ import test from 'node:test';
 import { normalizeTerminalPalette, resolveTerminalPalette, terminalPalettes } from '../src/shared/terminal-palettes';
 import { terminalBackground, terminalTheme } from '../src/renderer/terminal-theme';
 
-test('legacy and invalid selections follow the interface with the original colors', () => {
+test('legacy and invalid selections follow the interface with vivid dark colors', () => {
   for (const value of [undefined, null, '', 'unknown', '#123456', 12, {}]) {
     assert.equal(normalizeTerminalPalette(value), 'follow-interface');
   }
@@ -11,7 +11,10 @@ test('legacy and invalid selections follow the interface with the original color
   assert.equal(terminalBackground('light'), '#ffffff');
   assert.equal(terminalTheme('dark').foreground, '#dddddd');
   assert.equal(terminalTheme('light').foreground, '#242424');
-  assert.equal(terminalTheme('dark').blue, '#8eb7e5');
+  assert.equal(terminalTheme('dark').blue, '#3b82f6');
+  assert.equal(terminalTheme('dark').green, '#20c05c');
+  assert.equal(terminalTheme('dark', 'soft').blue, '#8eb7e5');
+  assert.equal(terminalTheme('dark', 'soft').green, '#8dc9a0');
   assert.equal(terminalTheme('light').blue, '#245da0');
   for (const theme of ['dark', 'light'] as const) {
     assert.deepEqual(terminalTheme(theme), terminalTheme(theme, 'follow-interface'));

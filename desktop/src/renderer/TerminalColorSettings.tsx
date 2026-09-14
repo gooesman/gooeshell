@@ -18,6 +18,10 @@ export default function TerminalColorSettings({ settings, onChange }: {
   return <section className="terminal-colors-section" aria-labelledby="terminal-colors-heading">
     <h3 id="terminal-colors-heading">终端配色</h3>
     <p className="settings-description">可以与界面主题分开选择。保存后应用到所有已打开的终端。</p>
+    <div className="settings-row">
+      <div><div className="row-title">允许终端文字额外加粗</div><div className="row-description">关闭时保持你选择的中英文字重，颜色照常显示；开启后按程序的要求加粗。</div></div>
+      <button type="button" role="switch" aria-label="允许终端文字额外加粗" aria-checked={settings.terminalBold} className={`switch${settings.terminalBold ? ' checked' : ''}`} onClick={() => onChange({ terminalBold: !settings.terminalBold })} />
+    </div>
     <div className="terminal-palette-picker" role="group" aria-label="终端配色">
       {choices.map(palette => <button type="button" key={palette.id}
         className={`terminal-palette-choice${selected === palette.id ? ' selected' : ''}`}
@@ -31,8 +35,8 @@ export default function TerminalColorSettings({ settings, onChange }: {
       </button>)}
     </div>
     <div className="terminal-colors-preview" aria-label="终端颜色示例" style={{ backgroundColor: colors.background, color: colors.foreground }}>
-      <div className="terminal-colors-preview-prompt"><span style={{ color: colors.green }}>work@server</span><span>:~$ ls</span></div>
-      <div className="terminal-colors-preview-files"><span>README.md</span><span style={{ color: colors.blue }}>documents/</span><span style={{ color: colors.green }}>deploy.sh</span><span style={{ color: colors.cyan }}>current → releases/</span></div>
+      <div className="terminal-colors-preview-prompt"><span style={{ color: colors.green, fontWeight: settings.terminalBold ? 700 : 400 }}>work@server</span><span>:~$ ls</span></div>
+      <div className="terminal-colors-preview-files"><span>README.md</span><span style={{ color: colors.blue, fontWeight: settings.terminalBold ? 700 : 400 }}>documents/</span><span style={{ color: colors.green, fontWeight: settings.terminalBold ? 700 : 400 }}>deploy.sh</span><span style={{ color: colors.cyan }}>current → releases/</span></div>
       <div className="terminal-colors-preview-labels" aria-hidden="true"><span>普通文本</span><span style={{ color: colors.blue }}>蓝色</span><span style={{ color: colors.green }}>绿色</span><span style={{ color: colors.cyan }}>青色</span></div>
     </div>
     <p className="terminal-colors-note">上方是颜色示例。文件名是否带颜色由服务器上的命令决定；配色只调整它输出的 ANSI 颜色，不会自动识别文件类型，也不会改动服务器配置。程序指定的真彩色不受此配色影响。</p>

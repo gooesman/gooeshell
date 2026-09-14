@@ -6,14 +6,17 @@ import path from 'node:path';
 import {Store,cleanProfile,cleanSettings} from '../src/main/store';
 import {defaultSettings} from '../src/shared/defaults';
 const profile={id:'test',name:'test host',host:'example.com',port:22,username:'alice',auth:'password' as const,rememberHost:true,encoding:'utf8' as const};
-test('terminal palette migrates independently and command shortcut preserves an occupied binding',async()=>{
- const legacy={...defaultSettings,terminalPalette:undefined,shortcuts:{...defaultSettings.shortcuts,commands:undefined,search:'Ctrl+Shift+M'}} as unknown as typeof defaultSettings;
+test('terminal palette and bold preferences migrate independently and persist valid values',async()=>{
+ const legacy={...defaultSettings,terminalPalette:undefined,terminalBold:undefined,shortcuts:{...defaultSettings.shortcuts,commands:undefined,search:'Ctrl+Shift+M'}} as unknown as typeof defaultSettings;
  assert.equal(cleanSettings(legacy).terminalPalette,'follow-interface');
+ assert.equal(defaultSettings.terminalBold,false);
+ assert.equal(cleanSettings(legacy).terminalBold,false);
  assert.equal(cleanSettings(legacy).shortcuts.commands,'');
  assert.equal(cleanSettings(legacy).shortcuts.search,'Ctrl+Shift+M');
  assert.equal(cleanSettings({...defaultSettings,terminalPalette:'unknown'}).terminalPalette,'follow-interface');
+ for(const terminalBold of [null,'true','false',0,1,{},[]])assert.equal(cleanSettings({...defaultSettings,terminalBold} as any).terminalBold,false);
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-palette-store-'));
- try{const store=new Store(root);await store.saveSettings({...defaultSettings,theme:'light',terminalPalette:'midnight'});const restored=await new Store(root).settings();assert.equal(restored.theme,'light');assert.equal(restored.terminalPalette,'midnight');}
+ try{for(const terminalBold of [true,false]){const store=new Store(root);await store.saveSettings({...defaultSettings,theme:'light',terminalPalette:'soft',terminalBold});const restored=await new Store(root).settings();assert.equal(restored.theme,'light');assert.equal(restored.terminalPalette,'soft');assert.equal(restored.terminalBold,terminalBold);}}
  finally{await fs.unlink(path.join(root,'settings.json'));await fs.rmdir(root);}
 });
 test('profiles persist only intended fields and never credentials',async()=>{

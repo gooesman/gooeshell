@@ -20,6 +20,7 @@ export interface HostProfile {
 export interface AppSettings {
   theme: 'dark' | 'light';
   terminalPalette: string;
+  terminalBold: boolean;
   showConnectionHistory: boolean; filesToggleIconOnly: boolean;
   fontWeight: number; chineseFontWeight: number;
   shortcutSchemaVersion: number;

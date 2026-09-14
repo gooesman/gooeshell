@@ -36,7 +36,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  const visible=useRef(active);visible.current=active;
  current.current=settings;fontCallback.current=onFontSizeChange;
  useEffect(()=>{
-  const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:'monospace',fontSize:settings.fontSize,fontWeight:400,fontWeightBold:700,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme,settings.terminalPalette),macOptionIsMeta:false});
+  const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:'monospace',fontSize:settings.fontSize,fontWeight:400,fontWeightBold:settings.terminalBold?700:400,drawBoldTextInBrightColors:false,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme,settings.terminalPalette),macOptionIsMeta:false});
   const element=host.current!;
   term.current=terminal;const fitter=new FitAddon();const finder=new SearchAddon();search.current=finder;terminal.loadAddon(fitter);terminal.loadAddon(finder);terminal.open(element);
   try{const gpu=new WebglAddon();gpu.onContextLoss(()=>gpu.dispose());terminal.loadAddon(gpu);}catch{/* xterm's standard renderer remains usable when GPU is unavailable. */}
@@ -92,7 +92,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   void loadFontCatalog().then(catalog=>acquireTerminalFont(settings,catalog)).then(bundle=>{
    if(cancelled||term.current!==terminal){bundle.release();return;}
    const previous=activeFont.current;activeFont.current=bundle;
-   terminal.options.fontFamily=bundle.family;terminal.options.fontWeight=400;terminal.options.fontWeightBold=700;
+   terminal.options.fontFamily=bundle.family;terminal.options.fontWeight=400;
    setFontWarning(bundle.warnings.join(' '));refresh();previous?.release();
   }).catch(async error=>{
    if(cancelled||term.current!==terminal)return;
@@ -101,6 +101,8 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   });
   return()=>{cancelled=true;};
  },[tabId,settings.fontFamily,settings.chineseFont,settings.fontSize,settings.fontWeight,settings.chineseFontWeight,settings.lineHeight]);
+ // Keep ANSI emphasis in the buffer; only change its visual weight, including existing output.
+ useEffect(()=>{const terminal=term.current;if(!terminal)return;terminal.options.fontWeightBold=settings.terminalBold?700:400;terminal.clearTextureAtlas();terminal.refresh(0,terminal.rows-1);},[tabId,settings.terminalBold]);
  useEffect(()=>{if(term.current)term.current.options.cursorBlink=settings.cursorBlink;},[settings.cursorBlink]);
  useEffect(()=>{if(term.current)term.current.options.theme=terminalTheme(settings.theme,settings.terminalPalette);},[settings.theme,settings.terminalPalette]);
  useEffect(()=>{
