@@ -1172,9 +1172,13 @@ kbd {
   display:flex;
   gap:18px
 }
+.modal.settings-dialog {
+  height:720px
+}
 .settings-layout {
   display:flex;
-  min-height:360px;
+  flex:1;
+  min-height:0;
   overflow:hidden
 }
 .settings-tabs {
@@ -1182,7 +1186,8 @@ kbd {
   padding:14px 9px;
   border-right:1px solid var(--border);
   background:var(--surface);
-  flex-shrink:0
+  flex-shrink:0;
+  overflow-y:auto
 }
 .settings-tabs button {
   display:block;
@@ -1201,7 +1206,8 @@ kbd {
 .settings-content {
   flex:1;
   overflow:auto;
-  max-height:65vh;
+  scrollbar-gutter:stable;
+  min-height:0;
   padding:23px;
   min-width:0
 }
@@ -2009,10 +2015,6 @@ button,input,select,textarea,a,[role=tab],.tabbar,.window-controls {
   width:60px;
   height:60px
 }
-.settings-layout {
-  min-height:290px
-}
-
 }
 .theme-toggle {
   border-radius:9px
