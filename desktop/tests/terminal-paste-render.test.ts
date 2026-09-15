@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
-test('actual TerminalView multiline paste preserves bytes and waits for explicit line advance', {
+test('actual TerminalView multiline paste edits locally, preserves bytes and waits for explicit line advance', {
   skip: process.env.GOOESHELL_PASTE_RENDER_TEST === '1' ? false : 'Set GOOESHELL_PASTE_RENDER_TEST=1 for isolated Electron paste regression', timeout: 130_000,
 }, async t => {
   const root = process.cwd(), base = path.resolve('../.build'); await fs.mkdir(base, { recursive: true });
@@ -24,4 +24,5 @@ test('actual TerminalView multiline paste preserves bytes and waits for explicit
   t.diagnostic(`terminal paste artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true, JSON.stringify(result, null, 2));
   assert.ok(Object.keys(result.checks).length >= 12); assert.ok(Object.values(result.checks).every(value => value === true)); assert.deepEqual(result.rendererErrors, []);
+  for (const check of ['editedWhole', 'editorEnterIsLocal', 'emptyEditorBlocked', 'longEditorComplete', 'cancelEditedText', 'editedLines', 'chooserFocusIsolation', 'editorFocusCycle', 'disabledChoicesSkipped', 'editedDraftTabIsolation', 'chooserBlocksUnderlyingTerminal']) assert.equal(result.checks[check], true, 'Missing check: ' + check);
 });

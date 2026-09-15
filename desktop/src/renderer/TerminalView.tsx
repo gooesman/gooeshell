@@ -51,7 +51,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   const observer=new ResizeObserver(scheduleResize);observer.observe(element);scheduleResize();
   const paste=new TerminalPasteController(text=>{if(online.current)terminal.paste(text);},setPasteState);pasteController.current=paste;
   const offerClipboard=()=>{const target=transport.current;void api.readClipboard().then(text=>{if(!disposed&&online.current&&visible.current&&transport.current===target)paste.offer(text);}).catch(()=>{});};
-  const nativePaste=(event:ClipboardEvent)=>{event.preventDefault();event.stopImmediatePropagation();if(online.current)paste.offer(event.clipboardData?.getData('text/plain')||'');};
+  const nativePaste=(event:ClipboardEvent)=>{event.preventDefault();event.stopImmediatePropagation();if(online.current&&paste.state?.mode!=='choose')paste.offer(event.clipboardData?.getData('text/plain')||'');};
   element.addEventListener('paste',nativePaste,true);
   const input=terminal.onData(data=>{if(online.current){if(!isPreview)api.terminalInput(transport.current,data);paste.input(data);}});
   const binaryInput=terminal.onBinary(data=>{if(!isPreview&&online.current)api.terminalBinaryInput(transport.current,data);});
@@ -71,10 +71,13 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
    return false;
   };
   terminal.attachCustomKeyEventHandler(event=>{
-   if(paste.state?.mode==='choose')return false;
+   if(paste.state?.mode==='choose'){event.preventDefault();return false;}
    if(event.type!=='keydown'||event.isComposing)return true;
    const chord=keyChord(event);if(event.repeat&&((chord===current.current.shortcuts.reconnect&&!online.current)||(chord===current.current.shortcuts.sudoPassword&&online.current)))return false;
-   return !perform(chord);
+   // Returning false only stops xterm; cancel the browser action as well so a
+   // handled paste shortcut cannot paste again before the clipboard IPC returns.
+   if(perform(chord)){event.preventDefault();return false;}
+   return true;
   });
   const mouse=(event:MouseEvent)=>{const chord=mouseChord(event);if(chord&&perform(chord)){event.preventDefault();event.stopImmediatePropagation();terminal.focus();}};
   const context=(event:MouseEvent)=>{const chord=mouseChord(event);if(Object.values(current.current.shortcuts).includes(chord)){event.preventDefault();return;}if(current.current.rightClickPaste){event.preventDefault();offerClipboard();}};
@@ -129,7 +132,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  useEffect(()=>{if(active){requestFit.current?.();const frame=requestAnimationFrame(()=>{
   const terminal=term.current;if(!terminal)return;
   terminal.refresh(0,terminal.rows-1);
-  const chooser=host.current?.parentElement?.querySelector<HTMLButtonElement>('.terminal-paste-dialog [data-paste-choice="lines"]');
+  const chooser=host.current?.parentElement?.querySelector<HTMLTextAreaElement>('.terminal-paste-dialog [data-paste-editor]');
   if(chooser)chooser.focus();else terminal.focus();
  });return()=>cancelAnimationFrame(frame);}},[active]);
  return <div className="terminal-instance" style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:terminalBackground(settings.theme,settings.terminalPalette)}}>
