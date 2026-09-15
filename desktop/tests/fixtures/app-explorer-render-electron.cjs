@@ -43,6 +43,12 @@ async function blankClick(side, button = 'left') {
   else await delay(50);
 }
 async function blankContext(side) { await blankClick(side, 'right'); }
+async function createFromMenu(side, label) { await blankContext(side); await click(label, '.context-menu'); }
+const transferRow = id => `.transfer-row[data-transfer-id=${JSON.stringify(id)}]`;
+async function addTransfer(id, state = 'transferring') {
+  await evaluate(`(() => { const transfer = { ...${fixture}.transfers[0], id: ${JSON.stringify(id)}, name: ${JSON.stringify(id)}, state: ${JSON.stringify(state)}, mode: 'direct', done: 1024, total: 11264, bytesPerSecond: 1024 }; ${fixture}.transfers.push(transfer); ${fixture}.emit({ type: 'transfer', transfer: { ...transfer } }); })()`);
+  await until(() => evaluate(visible(transferRow(id))), 'transfer row ' + id);
+}
 const noDialog = () => until(() => evaluate('!document.querySelector("[role=dialog]")'), 'dialog closed');
 const activeSession = () => evaluate(`document.querySelector('[data-terminal-session][data-active="true"]')?.dataset.terminalSession || ''`);
 const mutationCalls = method => evaluate(`${fixture}.calls.filter(call => call.method === ${JSON.stringify(method)})`);
@@ -73,6 +79,10 @@ async function run() {
   await evaluate(`document.getElementById('file-manager').style.height = '550px'`);
   phase = 'column sorting and direction arrows';
   await until(() => evaluate(visible(row('/home/a/alpha.txt'))), 'initial files');
+  assert.equal(await evaluate(`Boolean(document.querySelector('.file-actions-toolbar, .file-selection-bar'))`), false);
+  assert.equal(await evaluate(`document.querySelectorAll(${JSON.stringify(pane('remote') + ' .file-pane-toolbar [aria-label="跟随终端目录"]')}).length`), 1);
+  assert.equal(await evaluate(`document.querySelectorAll(${JSON.stringify(pane('local') + ' [aria-label="跟随终端目录"]')}).length`), 0);
+  result.checks.minimalFileControlsKeepFollow = true;
   await mouse(row('/home/a/alpha.txt'));
   for (const label of ['名称', '大小', '权限', '修改时间']) {
     const ascending = label === '名称' ? ['alpha.txt', 'beta.txt'] : ['beta.txt', 'alpha.txt'];
@@ -101,7 +111,7 @@ async function run() {
   result.checks.paneSortingIsIndependentAndPersists = true;
   await mouse('[aria-label="远程按名称排序"]'); await mouse('[aria-label="本地按名称排序"]');
   phase = 'blank list clicks deselect without affecting rows or headers';
-  assert.equal(await evaluate(`Boolean(document.querySelector('.file-selection-bar'))`), false);
+  assert.equal(await evaluate(`Boolean(document.querySelector('.file-actions-toolbar, .file-selection-bar'))`), false);
   for (const side of ['local', 'remote']) {
     const base = side === 'local' ? 'C:\\Fixture\\' : '/home/a/', name = side === 'local' ? '本地' : '远程';
     const selectedRows = () => evaluate(`document.querySelectorAll(${JSON.stringify(pane(side) + ' [data-file-path][aria-selected="true"]')}).length`);
@@ -121,16 +131,16 @@ async function run() {
   }
   result.checks.blankListClickClearsSelection = true;
   await blankClick('remote'); await click('收起本地文件栏');
-  phase = 'remote toolbar create';
-  await click('远程新建文件'); await submitName('created.txt'); await until(() => evaluate(visible(row('/home/a/created.txt'))), 'created remote file');
-  await click('远程新建文件夹'); await submitName('created-dir'); await until(() => evaluate(visible(row('/home/a/created-dir'))), 'created remote folder');
+  phase = 'remote blank context creates files and folders';
+  await createFromMenu('remote', '新建文件'); await submitName('created.txt'); await until(() => evaluate(visible(row('/home/a/created.txt'))), 'created remote file');
+  await createFromMenu('remote', '新建文件夹'); await submitName('created-dir'); await until(() => evaluate(visible(row('/home/a/created-dir'))), 'created remote folder');
   const created = (await mutationCalls('createFile'))[0].request;
   assert.equal(created.sessionId, sessionA); assert.equal(created.path, '/home/a/created.txt'); assert.equal(created.side, 'remote');
-  result.checks.remoteToolbarCreatesFileAndFolder = true;
+  result.checks.remoteContextCreatesFileAndFolder = true;
 
   phase = 'existing file creation fails without replacement';
   const existing = await evaluate(`${fixture}.entry(${JSON.stringify(sessionA)}, '/home/a/created.txt')`);
-  await click('远程新建文件'); await fill('#file-new-name', 'created.txt'); await evaluate(`document.getElementById('file-name-form').requestSubmit()`);
+  await createFromMenu('remote', '新建文件'); await fill('#file-new-name', 'created.txt'); await evaluate(`document.getElementById('file-name-form').requestSubmit()`);
   await until(() => evaluate(`document.querySelector('.file-action-dialog [role=alert]')?.textContent.includes('文件已存在')`), 'existing file error');
   assert.deepEqual(await evaluate(`${fixture}.entry(${JSON.stringify(sessionA)}, '/home/a/created.txt')`), existing);
   await click('取消', '[role=dialog]'); await noDialog(); result.checks.existingFileIsPreserved = true;
@@ -166,14 +176,14 @@ async function run() {
   result.checks.multiDeleteIncludesFolderContents = true;
 
   phase = 'local parity';
-  await click('展开本地文件栏'); await click('本地新建文件'); await submitName('local.txt'); await until(() => evaluate(visible(row('C:\\Fixture\\local.txt', 'local'))), 'local file created');
-  await click('本地新建文件夹'); await submitName('local-dir'); await until(() => evaluate(visible(row('C:\\Fixture\\local-dir', 'local'))), 'local folder created');
+  await click('展开本地文件栏'); await createFromMenu('local', '新建文件'); await submitName('local.txt'); await until(() => evaluate(visible(row('C:\\Fixture\\local.txt', 'local'))), 'local file created');
+  await createFromMenu('local', '新建文件夹'); await submitName('local-dir'); await until(() => evaluate(visible(row('C:\\Fixture\\local-dir', 'local'))), 'local folder created');
   await context(row('C:\\Fixture\\local.txt', 'local')); await click('删除', '.context-menu'); await click('确认删除', '[role=dialog]'); await noDialog();
   assert.equal((await mutationCalls('removeFile')).at(-1).request.side, 'local');
   result.checks.localActionsMatchRemote = true;
 
   phase = 'sudo retry retains original server and directory';
-  await evaluate(`${fixture}.denyNext = 'mkdir'`); await click('远程新建文件夹'); await fill('#file-new-name', 'sudo-dir'); await evaluate(`document.getElementById('file-name-form').requestSubmit()`);
+  await evaluate(`${fixture}.denyNext = 'mkdir'`); await createFromMenu('remote', '新建文件夹'); await fill('#file-new-name', 'sudo-dir'); await evaluate(`document.getElementById('file-name-form').requestSubmit()`);
   await until(() => evaluate(`Boolean(document.getElementById('sudo-password'))`), 'sudo prompt');
   // Simulate a tab activation from outside the blocked file dialog; operation targets must remain immutable.
   await host('B'); const sessionB = await activeSession(); await pathIs('/home/b');
@@ -199,7 +209,7 @@ async function run() {
   assert.equal(partial.at(-1).request.elevated, true); result.checks.partialDeletionSudoSkipsCompleted = true;
 
   phase = 'transfer choice cancellation and ordinary download';
-  await mouse(row('C:\\Fixture\\alpha.txt', 'local')); await click('本地上传所选项');
+  await context(row('C:\\Fixture\\alpha.txt', 'local')); await click('上传到远程目录', '.context-menu');
   await until(() => evaluate(`Boolean(document.querySelector('.transfer-dialog'))`), 'transfer choice');
   assert.equal(await evaluate(`document.querySelector('input[name="transfer-mode"]:checked').value`), 'direct');
   await mouse('input[name="transfer-mode"][value="archive"]'); await click('取消', '.transfer-dialog'); await noDialog();
@@ -213,7 +223,7 @@ async function run() {
 
   phase = 'packed multi-selection retains its original server and destination';
   await mouse(row('C:\\Fixture\\docs', 'local')); await mouse(row('C:\\Fixture\\alpha.txt', 'local'), 'left', ['control']);
-  await click('本地上传所选项'); await mouse('input[name="transfer-mode"][value="archive"]');
+  await context(row('C:\\Fixture\\docs', 'local')); await click('上传到远程目录', '.context-menu'); await mouse('input[name="transfer-mode"][value="archive"]');
   await until(() => evaluate(`document.querySelector('input[name="transfer-mode"]:checked').value === 'archive'`), 'archive option selected');
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.transfer-source-list li')].map(item => item.textContent)`), ['C:\\Fixture\\docs', 'C:\\Fixture\\alpha.txt']);
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -278,6 +288,78 @@ async function run() {
   await click('取消传输', '.transfer-row:has(.transfer-status.extracting)');
   assert.equal((await mutationCalls('cancelTransfer')).at(-1).request.id, retryId);
   result.checks.packedStagesCanCancelAndRetry = true;
+
+  phase = 'transfer speed and remaining time update together';
+  const metricsId = 'fixture-metrics-transfer';
+  await addTransfer(metricsId);
+  const metricText = className => evaluate(`document.querySelector(${JSON.stringify(transferRow(metricsId) + ' .' + className)})?.textContent.trim() || ''`);
+  await until(async () => (await metricText('transfer-speed')) === '1.0 KB/s', 'initial live speed');
+  assert.match(await metricText('transfer-eta'), /10\s*秒/);
+  assert.equal(await evaluate(`(() => { const metrics = document.querySelector(${JSON.stringify(transferRow(metricsId) + ' .transfer-metrics')}); return !!metrics?.querySelector('.transfer-speed') && !!metrics?.querySelector('.transfer-eta'); })()`), true);
+  await evaluate(`(() => { const transfer = ${fixture}.transfers.find(item => item.id === ${JSON.stringify(metricsId)}); transfer.bytesPerSecond = 2 * 1024 * 1024; ${fixture}.transferState(transfer.id, 'transferring', 2 * 1024 * 1024, 12 * 1024 * 1024); })()`);
+  await until(async () => (await metricText('transfer-speed')) === '2.0 MB/s', 'updated live speed');
+  assert.match(await metricText('transfer-eta'), /5\s*秒/);
+  await evaluate(`document.querySelector(${JSON.stringify(transferRow(metricsId))}).scrollIntoView({ block: 'nearest' })`);
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const metricsImage = await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await fs.writeFile(report + '.transfer-metrics.png', metricsImage.toPNG());
+  for (const state of ['checking', 'packing', 'extracting', 'completed', 'failed', 'cancelled', 'queued']) {
+    // Keep the last rate in the event deliberately: stage changes must hide stale telemetry.
+    await evaluate(`${fixture}.transferState(${JSON.stringify(metricsId)}, ${JSON.stringify(state)}, 1024, 11264)`);
+    await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(metricsId) + ' .transfer-status.' + state)}))`), 'telemetry stage ' + state);
+    await until(async () => !(await metricText('transfer-speed')) && !(await metricText('transfer-eta')), 'no stale speed or remaining time in ' + state);
+  }
+  await evaluate(`${fixture}.transferState(${JSON.stringify(metricsId)}, 'completed', 11264, 11264)`);
+  result.checks.transferSpeedAndEtaStayCurrent = true;
+
+  phase = 'task context menu stops work and deletes only queue entries';
+  const removesBeforeTaskActions = (await mutationCalls('removeFile')).length;
+  await evaluate(`document.querySelectorAll('.toast-stack button').forEach(button => button.click())`);
+  const stoppedId = 'fixture-force-stop-transfer';
+  await addTransfer(stoppedId);
+  await context(transferRow(stoppedId)); await click('强制停止', '.context-menu');
+  await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(stoppedId) + ' .transfer-status.cancelled')}))`), 'force stop state');
+  assert.equal((await mutationCalls('cancelTransfer')).at(-1).request.id, stoppedId);
+  result.checks.transferTaskMenuStopsWork = true;
+
+  const deletedId = 'fixture-delete-active-transfer';
+  await addTransfer(deletedId);
+  await evaluate(`${fixture}.holdNext = 'cancelTransfer'`);
+  await context(transferRow(deletedId)); await click('删除任务', '.context-menu');
+  await until(() => evaluate(`${fixture}.held`), 'active task cancellation before deletion');
+  assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(deletedId))}))`), true, 'row remains until cancellation succeeds');
+  assert.equal((await mutationCalls('cancelTransfer')).at(-1).request.id, deletedId);
+  await evaluate(`${fixture}.release()`);
+  await until(() => evaluate(`!document.querySelector(${JSON.stringify(transferRow(deletedId))})`), 'active task deleted after cancellation');
+  await evaluate(`${fixture}.transferState(${JSON.stringify(deletedId)}, 'transferring', 2048, 11264)`);
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(deletedId))}))`), false, 'late progress cannot restore a deleted task');
+  result.checks.deletingActiveTaskWaitsForStop = true;
+
+  await evaluate(`${fixture}.transferState(${JSON.stringify(stoppedId)}, 'failed', 1024, 11264)`);
+  await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(stoppedId) + ' .transfer-status.failed')}))`), 'failed task');
+  await evaluate(`document.querySelectorAll('.toast-stack button').forEach(button => button.click())`);
+  const cancelsBeforeFailedDelete = (await mutationCalls('cancelTransfer')).length;
+  await context(transferRow(stoppedId)); await click('删除任务', '.context-menu');
+  await until(() => evaluate(`!document.querySelector(${JSON.stringify(transferRow(stoppedId))})`), 'failed task removed');
+  assert.equal((await mutationCalls('cancelTransfer')).length, cancelsBeforeFailedDelete);
+  assert.equal((await mutationCalls('removeFile')).length, removesBeforeTaskActions, 'task controls must not delete source or destination files');
+  result.checks.deletingFailedTaskOnlyRemovesQueueEntry = true;
+
+  phase = 'failed cancellation keeps a task visible and allows retry';
+  const rejectedId = 'fixture-delete-rejected-transfer';
+  await addTransfer(rejectedId);
+  await evaluate(`${fixture}.denyNext = 'cancelTransfer'`);
+  await context(transferRow(rejectedId)); await click('删除任务', '.context-menu');
+  await until(() => evaluate(`document.querySelector('.toast-stack .toast.error')?.textContent.includes('fixture cancel failed')`), 'cancellation failure is shown');
+  assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(rejectedId) + ' .transfer-status.transferring')}))`), true, 'failed cancellation must preserve the running row');
+  await evaluate(`${fixture}.transferState(${JSON.stringify(rejectedId)}, 'transferring', 4096, 11264)`);
+  await until(() => evaluate(`document.querySelector(${JSON.stringify(transferRow(rejectedId) + ' [role="progressbar"]')})?.getAttribute('aria-valuenow') === '36'`), 'failed deletion still accepts progress');
+  await evaluate(`document.querySelectorAll('.toast-stack button').forEach(button => button.click())`);
+  await context(transferRow(rejectedId)); await click('删除任务', '.context-menu');
+  await until(() => evaluate(`!document.querySelector(${JSON.stringify(transferRow(rejectedId))})`), 'retry deletion succeeds');
+  assert.equal((await mutationCalls('cancelTransfer')).filter(call => call.request.id === rejectedId).length, 2);
+  assert.equal((await mutationCalls('removeFile')).length, removesBeforeTaskActions);
+  result.checks.failedTaskCancellationKeepsRow = true;
   await click('收起传输队列');
 
   phase = 'per terminal directory tracking';
@@ -306,13 +388,13 @@ async function run() {
   const transfersBeforeDisconnect = (await mutationCalls('transfer')).length;
   await click('选择文件上传'); await until(() => evaluate(`Boolean(document.querySelector('.transfer-dialog'))`), 'pending transfer before disconnect');
   await evaluate(`${fixture}.emit({ type: 'sessionClosed', sessionId: ${JSON.stringify(sessionA)}, message: 'fixture disconnected' })`);
-  await until(() => evaluate(`document.querySelector('[aria-label="远程新建文件"]').disabled`), 'disabled remote actions');
+  await until(() => evaluate(`document.querySelector('[aria-label="跟随终端目录"]').disabled`), 'disabled remote actions');
   assert.equal(await evaluate(`document.querySelector('button[form="transfer-form"]').disabled`), true);
   assert.match(await evaluate(`document.querySelector('.transfer-dialog [role="alert"]').textContent`), /连接已关闭/);
   await click('取消', '.transfer-dialog'); await noDialog();
   assert.equal((await mutationCalls('transfer')).length, transfersBeforeDisconnect);
   result.checks.pendingTransferStopsWhenDisconnected = true;
-  for (const label of ['远程新建文件', '远程新建文件夹', '跟随终端目录']) assert.equal(await evaluate(`document.querySelector('[aria-label=${JSON.stringify(label)}]').disabled`), true);
+  for (const label of ['选择文件上传', '跟随终端目录']) assert.equal(await evaluate(`document.querySelector('[aria-label=${JSON.stringify(label)}]').disabled`), true);
   result.checks.closedSessionDisablesActions = true;
   await host('B'); await pathIs('/home/b/docs');
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');

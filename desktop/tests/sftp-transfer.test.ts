@@ -28,11 +28,18 @@ test('real SSH/SFTP transfers with verified resume and no overwrite', { skip: re
   const remote = path.join(values.root, 'remote', caseName);
   await fs.mkdir(local); await fs.mkdir(remote);
   const bytes = randomBytes(256 * 1024 + 321);
-  const transfer = async (direction: 'upload' | 'download', name: string, options: { resume?: boolean; abortAt?: number } = {}) => {
+  const transfer = async (direction: 'upload' | 'download', name: string, options: { resume?: boolean; abortAt?: number; onProgress?: (info: TransferInfo) => void } = {}) => {
     const request: TransferRequest = { sessionId: 'fixture', direction, source: direction === 'upload' ? path.join(local, name) : `/${caseName}/${name}`, destinationDir: direction === 'upload' ? `/${caseName}` : local, resume: options.resume ?? true };
     const info: TransferInfo = { id: randomUUID(), sessionId: 'fixture', direction, name, source: request.source, destination: request.destinationDir, state: 'queued', total: 0, done: 0 };
     const abort = new AbortController();
-    await performSftpTransfer(sftp, request, info, abort.signal, () => { if (options.abortAt !== undefined && info.done >= options.abortAt) abort.abort(); }, 'fixture');
+    try {
+      await performSftpTransfer(sftp, request, info, abort.signal, () => {
+        if (info.state !== 'transferring') assert.equal(info.bytesPerSecond, undefined);
+        else if (info.bytesPerSecond !== undefined) assert.ok(Number.isFinite(info.bytesPerSecond) && info.bytesPerSecond >= 0);
+        options.onProgress?.({ ...info });
+        if (options.abortAt !== undefined && info.done >= options.abortAt) abort.abort();
+      }, 'fixture');
+    } finally { assert.equal(info.bytesPerSecond, undefined); }
     return info;
   };
   await t.test('upload and download preserve exact contents', async () => {
@@ -53,6 +60,46 @@ test('real SSH/SFTP transfers with verified resume and no overwrite', { skip: re
     await fs.writeFile(path.join(local, 'resume-down.bin.gooeshell.part'), bytes.subarray(0, 131_123));
     await transfer('download', 'resume-down.bin');
     assert.deepEqual(await fs.readFile(path.join(local, 'resume-down.bin')), bytes);
+  });
+  await t.test('upload and download speed exclude a nearly complete resume prefix and verification reads', async () => {
+    const prefix = bytes.length - 256;
+    for (const direction of ['upload', 'download'] as const) {
+      const name = `speed-resume-${direction}.bin`;
+      const sourceRoot = direction === 'upload' ? local : remote;
+      const targetRoot = direction === 'upload' ? remote : local;
+      await fs.writeFile(path.join(sourceRoot, name), bytes);
+      await fs.writeFile(path.join(targetRoot, `${name}.gooeshell.part`), bytes.subarray(0, prefix));
+      const samples: TransferInfo[] = [];
+      await transfer(direction, name, { onProgress: info => samples.push(info) });
+      const moving = samples.filter(info => info.state === 'transferring');
+      assert.equal(moving[0].done, prefix);
+      assert.equal(moving[0].bytesPerSecond, 0);
+      assert.ok(moving.some(info => (info.bytesPerSecond ?? 0) > 0));
+      assert.ok(moving.every(info => (info.bytesPerSecond ?? 0) <= 2560));
+      assert.ok(samples.filter(info => info.state === 'checking').every(info => info.bytesPerSecond === undefined));
+    }
+  });
+  await t.test('an unanswered upload acknowledgement decays the live rate to zero until progress resumes', { timeout: 10_000 }, async () => {
+    const name = 'stalled-speed.bin';
+    await fs.writeFile(path.join(local, name), bytes);
+    const originalWrite = sftp.write;
+    let writes = 0, delay: ReturnType<typeof setTimeout> | undefined;
+    const samples: TransferInfo[] = [];
+    sftp.write = (handle, buffer, offset, length, position, callback) => {
+      const index = ++writes;
+      originalWrite.call(sftp, handle, buffer, offset, length, position, error => {
+        if (index === 2 && !error) delay = setTimeout(() => callback(error), 2300);
+        else callback(error);
+      });
+    };
+    try {
+      await transfer('upload', name, { onProgress: info => samples.push(info) });
+    } finally { clearTimeout(delay); sftp.write = originalWrite; }
+    const waiting = samples.filter(info => info.state === 'transferring' && info.done === 64 * 1024);
+    assert.ok(waiting.some(info => (info.bytesPerSecond ?? 0) > 0));
+    assert.ok(waiting.some(info => info.bytesPerSecond === 0));
+    assert.ok(samples.some(info => info.done > 64 * 1024 && (info.bytesPerSecond ?? 0) > 0));
+    assert.deepEqual(await fs.readFile(path.join(remote, name)), bytes);
   });
   await t.test('mismatch preserves partial contents and never publishes', async () => {
     for (const direction of ['upload', 'download'] as const) {

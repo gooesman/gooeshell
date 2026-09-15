@@ -10,21 +10,22 @@ import type {AppEvent,HostProfile} from '../src/shared/types';
 
 const key=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'});
 const waitFor=async(predicate:()=>boolean)=>{const deadline=Date.now()+4000;while(!predicate()){if(Date.now()>deadline)throw new Error('Fixture timed out');await new Promise(resolve=>setTimeout(resolve,10));}};
-async function fixture(t:{after:(callback:()=>Promise<void>)=>void},mode:'auth'|'shell'|'normal'){
-  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-connect-cancel-'));const clients=new Set<any>();const events:AppEvent[]=[];let auth=0,shellRequests=0;
+async function fixture(t:{after:(callback:()=>Promise<void>)=>void},mode:'auth'|'shell'|'normal'|'sftp-stall'){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-connect-cancel-'));const clients=new Set<any>();const events:AppEvent[]=[];let auth=0,shellRequests=0,sftpRequests=0;
   const server=new Server({hostKeys:[key]},client=>{
     clients.add(client);client.on('close',()=>clients.delete(client));client.on('error',()=>{});
     client.on('authentication',context=>{if(context.method==='none')return context.reject(['password']);auth++;if(mode!=='auth')context.accept();});
     client.on('ready',()=>client.on('session',accept=>{
       const channel=accept();channel.on('pty',accept=>accept?.());channel.on('window-change',accept=>accept?.());
       channel.on('shell',accept=>{shellRequests++;if(mode!=='shell'){const stream=accept();stream.write('READY>');stream.on('data',(bytes:Buffer)=>stream.write(bytes));}});
+      if(mode==='sftp-stall')channel.on('sftp',accept=>{const stream=accept();stream.on('REALPATH',()=>{sftpRequests++;});});
     }));
   });
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   const profile:HostProfile={id:'fixture',name:'Fixture',host:'127.0.0.1',port:(server.address() as {port:number}).port,username:'test-user',auth:'password',rememberHost:true,encoding:'utf8'};
   const service=new SshService(event=>events.push(event),path.join(root,'known.json'));
   t.after(async()=>{service.shutdown();for(const client of clients)client.end();await new Promise<void>(resolve=>server.close(()=>resolve()));for(const file of await fs.readdir(root))await fs.unlink(path.join(root,file));await fs.rmdir(root);});
-  return{root,service,profile,events,auth:()=>auth,shellRequests:()=>shellRequests};
+  return{root,service,profile,events,auth:()=>auth,shellRequests:()=>shellRequests,sftpRequests:()=>sftpRequests};
 }
 test('cancelled host-key confirmation dismisses its question and never sends credentials', {timeout:10000},async t=>{
   const f=await fixture(t,'normal');const connecting=f.service.connect({profile:f.profile,password:'fixture-password',attemptId:'trust-attempt'});
@@ -64,4 +65,21 @@ test('secret input is acknowledged, reaches only its live SSH session, and fails
   f.service.disconnect(connected.id);await assert.rejects(f.service.terminalSecretInput(connected.id,'fixture-sudo\r'),/已断开/);
   const legacy=await f.service.connect({profile:{...f.profile,encoding:'big5'},password:'fixture-password',skipHostKeyVerification:true});
   await assert.rejects(f.service.terminalSecretInput(legacy.id,'unrepresentable-🪿'),/无法完整表示密码/);f.service.disconnect(legacy.id);
+});
+
+test('repeated transfer cancellation stops a stalled dedicated connection and preserves its SSH terminal', {timeout:10000},async t=>{
+  const f=await fixture(t,'sftp-stall');
+  const session=await f.service.connect({profile:f.profile,password:'fixture-password',skipHostKeyVerification:true});
+  f.service.terminalResize(session.id,100,30);
+  const source=path.join(f.root,'transfer.bin');await fs.writeFile(source,'fixture transfer bytes');
+  const id=f.service.transfer({sessionId:session.id,direction:'upload',source,destinationDir:'/',resume:true});
+  await waitFor(()=>f.sftpRequests()>0);
+  f.service.cancelTransfer(id);f.service.cancelTransfer(id);
+  await waitFor(()=>f.events.some(event=>event.type==='transfer'&&event.transfer.id===id&&event.transfer.state==='cancelled'));
+  const final=f.events.filter((event):event is Extract<AppEvent,{type:'transfer'}>=>event.type==='transfer'&&event.transfer.id===id).at(-1)!;
+  assert.equal(final.transfer.state,'cancelled');assert.equal(final.transfer.bytesPerSecond,undefined);
+  const count=f.events.length;f.service.cancelTransfer(id);assert.equal(f.events.length,count);
+  await f.service.terminalSecretInput(session.id,'terminal still connected\r');
+  await waitFor(()=>f.events.some(event=>event.type==='terminal'&&Buffer.from(event.data,'base64').toString('utf8').includes('terminal still connected')));
+  assert.ok(!f.events.some(event=>event.type==='sessionClosed'));
 });

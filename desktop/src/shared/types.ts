@@ -53,6 +53,7 @@ export interface TransferRequest {
 export interface TransferInfo {
   id: string; sessionId: string; direction: 'upload' | 'download'; name: string;
   source: string; destination: string; total: number; done: number;
+  bytesPerSecond?: number;
   mode?: 'direct' | 'archive';
   state: 'queued' | 'packing' | 'checking' | 'transferring' | 'extracting' | 'completed' | 'cancelled' | 'failed';
   error?: string;

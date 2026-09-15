@@ -43,7 +43,7 @@ test('archive orchestration retains targets, waits for extraction and cleans can
       assert.equal(wire.destinationDir, remote.workDir);
       assert.equal(path.basename(wire.source), 'payload.tar.gz');
       assert.ok((await fs.stat(wire.source)).size > 0);
-      wireInfo.destination = '/private/payload.tar.gz'; wireInfo.state = 'transferring'; wireInfo.done = 40; wireInfo.total = 40; emit(true);
+      wireInfo.destination = '/private/payload.tar.gz'; wireInfo.state = 'transferring'; wireInfo.done = 40; wireInfo.total = 40; wireInfo.bytesPerSecond = 40000; emit(true);
     },
   };
   await t.test('packing, checked transfer and extraction keep original queue/retry identity', async () => {
@@ -52,10 +52,12 @@ test('archive orchestration retains targets, waits for extraction and cleans can
       states.push(info.state); assert.equal(info.name, 'source.txt'); assert.equal(info.source, request.source);
       assert.equal(info.destination, request.destinationDir); assert.equal(info.mode, 'archive');
       assert.notEqual(info.state, 'completed');
+      assert.equal(info.bytesPerSecond, info.state === 'transferring' ? 40000 : undefined);
     }, 'fixture', undefined, ops);
     assert.ok(extracted); assert.equal(cleaned, 1);
     assert.deepEqual([...new Set(states)], ['packing', 'checking', 'transferring', 'extracting']);
     assert.equal(info.destination, '/chosen/source.txt'); assert.equal(info.done, 15);
+    assert.equal(info.bytesPerSecond, undefined);
     await assert.rejects(fs.stat(path.dirname(scratch)), { code: 'ENOENT' });
   });
   await t.test('cancel during prepare still cleans returned context without starting packing', async () => {
@@ -205,14 +207,18 @@ test('compressed archives cross a real SFTP connection and automatically extract
     const request: TransferRequest = { sessionId: 'fixture', direction,
       source: direction === 'upload' ? path.join(local, name) : `${virtual}/${name}`,
       destinationDir: direction === 'upload' ? virtual : local, mode: 'archive', resume: true };
-    const info = infoFor(request), states: string[] = [], notices: string[] = [];
+    const info = infoFor(request), states: string[] = [], notices: string[] = [], rates: number[] = [];
     const sftp = await sftpCall<SFTPWrapper>(cb => client.sftp(cb)); sftp.on('error', () => {});
     try {
       await performArchiveTransfer(client, sftp, request, info, new AbortController().signal, () => {
         states.push(info.state); assert.equal(info.source, request.source); assert.equal(info.mode, 'archive');
+        if (info.state === 'transferring' && info.bytesPerSecond !== undefined) rates.push(info.bytesPerSecond);
+        else assert.equal(info.bytesPerSecond, undefined);
       }, values.fingerprint, value => notices.push(value), ops);
       assert.deepEqual(notices, []); assert.ok(states.includes('packing')); assert.ok(states.includes('extracting'));
       assert.ok(states.includes('transferring'));
+      assert.ok(rates.some(value => value > 0));
+      assert.equal(info.bytesPerSecond, undefined);
       return info;
     } finally { sftp.end(); }
   };

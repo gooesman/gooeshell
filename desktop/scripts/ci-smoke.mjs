@@ -116,11 +116,11 @@ try {
       document.querySelector('[aria-label="展开文件管理"]')?.click();
       await new Promise(resolve=>setTimeout(resolve,50));
       document.querySelector('[aria-label="展开本地文件栏"]')?.click();
-      return {rejected,text:text.text,toolbar:!!document.querySelector('[aria-label="本地新建文件"]'),remoteDisabled:document.querySelector('[aria-label="远程新建文件"]').disabled};
+      return {rejected,text:text.text,toolbar:!!document.querySelector('.file-actions-toolbar, .file-selection-bar'),followInPathBar:!!document.querySelector('[data-side="remote"] .file-pane-toolbar [aria-label="跟随终端目录"]'),remoteDisabled:document.querySelector('[aria-label="跟随终端目录"]').disabled};
     })()`, returnByValue: true, awaitPromise: true,
   });
   assert.equal(files.exceptionDetails, undefined, 'Packaged file mutation IPC failed');
-  assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:true,remoteDisabled:true});
+  assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:false,followInPathBar:true,remoteDisabled:true});
   assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
   assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
   const resources = target === 'mac' ? path.resolve(path.dirname(executable), '../Resources') : path.join(path.dirname(executable), 'resources');

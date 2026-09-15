@@ -87,7 +87,7 @@ export function FileActionDialog({ action, close, onPermission, refresh, done }:
   </div>;
 }
 
-export function FileContextMenu({ x, y, close, children }: { x: number; y: number; close: () => void; children: ReactNode }) {
+export function FileContextMenu({ x, y, close, children, label = '文件操作' }: { x: number; y: number; close: () => void; children: ReactNode; label?: string }) {
   const element = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const menu = element.current!, bounds = menu.getBoundingClientRect();
@@ -108,5 +108,5 @@ export function FileContextMenu({ x, y, close, children }: { x: number; y: numbe
     window.addEventListener('mousedown', outside); window.addEventListener('keydown', keyboard); window.addEventListener('blur', close); window.addEventListener('resize', close);
     return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('keydown', keyboard); window.removeEventListener('blur', close); window.removeEventListener('resize', close); };
   }, [close]);
-  return <div ref={element} className="context-menu file-context-menu" role="menu" aria-label="文件操作" style={{ left: x, top: y }} onClick={event => event.stopPropagation()}>{children}</div>;
+  return <div ref={element} className="context-menu file-context-menu" role="menu" aria-label={label} style={{ left: x, top: y }} onClick={event => event.stopPropagation()}>{children}</div>;
 }

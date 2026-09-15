@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper, type Stats } from 'ssh2';
 import iconv from 'iconv-lite';
 import type {
@@ -766,7 +767,8 @@ export class SshService {
     this.jobs.set(info.id, job);
     let last = 0;
     const emit = (force = false) => {
-      if (force || Date.now() - last > 100) { last = Date.now(); this.emit({ type: 'transfer', transfer: { ...info } }); }
+      const now = performance.now();
+      if (force || now - last > 100) { last = now; this.emit({ type: 'transfer', transfer: { ...info } }); }
     };
     emit(true);
     void (async () => {
@@ -787,6 +789,7 @@ export class SshService {
         info.state = job.abort.signal.aborted ? 'cancelled' : 'failed';
         info.error = job.abort.signal.aborted ? (request.mode === 'archive' ? '打包传输已取消，再次尝试会重新打包' : '传输已取消，可校验 .gooeshell.part 后续传') : remoteError(error).message;
       } finally {
+        info.bytesPerSecond = undefined;
         job.client?.destroy();
         this.jobs.delete(info.id);
         emit(true);
@@ -797,8 +800,10 @@ export class SshService {
 
   cancelTransfer(id: string): void {
     const job = this.jobs.get(id);
-    if (!job) return;
+    if (!job || job.abort.signal.aborted) return;
     job.abort.abort();
+    job.info.bytesPerSecond = undefined;
+    this.emit({ type: 'transfer', transfer: { ...job.info } });
     if (job.info.mode !== 'archive') job.client?.destroy();
   }
 

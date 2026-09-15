@@ -3,6 +3,7 @@ import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferInfo, TransferRequest } from '../shared/types';
+import { TransferProgress } from './transfer-speed';
 
 const CHUNK = 64 * 1024;
 const MAX_ENTRIES = 50_000;
@@ -63,7 +64,7 @@ export async function remoteClose(sftp: SFTPWrapper, handle: Buffer): Promise<vo
   });
 }
 
-async function remoteRead(sftp: SFTPWrapper, handle: Buffer, buffer: Buffer, position: number, length: number): Promise<number> {
+async function remoteRead(sftp: SFTPWrapper, handle: Buffer, buffer: Buffer, position: number, length: number, transferred?: (bytes: number) => void): Promise<number> {
   let received = 0;
   while (received < length) {
     const count = await new Promise<number>((resolve, reject) => {
@@ -72,6 +73,7 @@ async function remoteRead(sftp: SFTPWrapper, handle: Buffer, buffer: Buffer, pos
     });
     if (count === 0) break;
     received += count;
+    transferred?.(count);
   }
   return received;
 }
@@ -171,37 +173,40 @@ export async function performSftpTransfer(
   signal: AbortSignal, emit: (force?: boolean) => void, endpointKey: string,
 ): Promise<void> {
   trackSftp(sftp);
-  info.state = 'checking'; emit(true);
-  const items = await plan(sftp, request, signal);
-  info.total = validateSize(items.reduce((sum, item) => sum + item.size, 0));
-  if (items[0]) info.destination = items[0].destination;
-  emit(true);
-  for (const item of items) {
-    cancelled(signal);
-    if (item.directory) {
-      if (request.direction === 'upload') {
-        const existing = await remoteStat(sftp, item.destination);
-        if (existing && !existing.isDirectory()) throw new Error(`目标不是目录：${item.destination}`);
-        if (!existing) await new Promise<void>((resolve, reject) => sftp.mkdir(item.destination, { mode: 0o755 }, error => error ? reject(error) : resolve()));
-      } else {
-        if (await localExists(item.destination)) {
-          const existing = await fs.lstat(item.destination);
-          if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error(`本地目标不是普通目录：${item.destination}`);
-        } else await fs.mkdir(item.destination);
+  const progress = new TransferProgress(info, emit, signal);
+  try {
+    progress.phase('checking');
+    const items = await plan(sftp, request, signal);
+    info.total = validateSize(items.reduce((sum, item) => sum + item.size, 0));
+    if (items[0]) info.destination = items[0].destination;
+    emit(true);
+    for (const item of items) {
+      cancelled(signal);
+      if (item.directory) {
+        if (request.direction === 'upload') {
+          const existing = await remoteStat(sftp, item.destination);
+          if (existing && !existing.isDirectory()) throw new Error(`目标不是目录：${item.destination}`);
+          if (!existing) await new Promise<void>((resolve, reject) => sftp.mkdir(item.destination, { mode: 0o755 }, error => error ? reject(error) : resolve()));
+        } else {
+          if (await localExists(item.destination)) {
+            const existing = await fs.lstat(item.destination);
+            if (!existing.isDirectory() || existing.isSymbolicLink()) throw new Error(`本地目标不是普通目录：${item.destination}`);
+          } else await fs.mkdir(item.destination);
+        }
+        continue;
       }
-      continue;
+      const targetKey = `${endpointKey}:${request.direction}:${item.destination}`;
+      if (activeTargets.has(targetKey)) throw new Error('另一个任务正在写入同一目标，请等待该任务结束');
+      activeTargets.add(targetKey);
+      try {
+        if (request.direction === 'upload') await upload(sftp, item, request.resume, info, signal, emit, progress);
+        else await download(sftp, item, request.resume, info, signal, emit, progress);
+      } finally { activeTargets.delete(targetKey); }
     }
-    const targetKey = `${endpointKey}:${request.direction}:${item.destination}`;
-    if (activeTargets.has(targetKey)) throw new Error('另一个任务正在写入同一目标，请等待该任务结束');
-    activeTargets.add(targetKey);
-    try {
-      if (request.direction === 'upload') await upload(sftp, item, request.resume, info, signal, emit);
-      else await download(sftp, item, request.resume, info, signal, emit);
-    } finally { activeTargets.delete(targetKey); }
-  }
+  } finally { progress.dispose(); }
 }
 
-async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void): Promise<void> {
+async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void, progress: TransferProgress): Promise<void> {
   if (await remoteStat(sftp, item.destination)) throw new Error(`目标文件已存在，不会覆盖：${item.destination}`);
   const partial = `${item.destination}.gooeshell.part`;
   const existing = await remoteStat(sftp, partial);
@@ -216,20 +221,21 @@ async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tran
     if (!before.isFile() || before.size !== item.size) throw new Error('本地源文件在准备任务后发生变化');
     // SSH_FXF_READ | WRITE | CREAT | EXCL. No TRUNC, including when resuming.
     remote = await sftpCall<Buffer>(cb => sftp.open(partial, existing ? 'r+' : 0x2b, { mode: 0o600 }, cb));
-    info.state = 'checking'; emit(true);
+    progress.phase('checking');
     await compare(local, sftp, remote, offset, signal, emit);
     const completedBefore = info.done;
     info.done += offset;
-    info.state = 'transferring'; emit(true);
+    progress.phase('transferring');
     const buffer = Buffer.allocUnsafe(CHUNK);
     for (let position = offset; position < before.size;) {
       cancelled(signal);
       const count = Math.min(CHUNK, before.size - position);
       if (await localRead(local, buffer, position, count) !== count) throw new Error('本地源文件提前结束，保留 .part');
       await new Promise<void>((resolve, reject) => sftp.write(remote!, buffer, 0, count, position, error => error ? reject(error) : resolve()));
+      progress.transferred(count);
       position += count; info.done = completedBefore + position; emit();
     }
-    info.state = 'checking'; emit(true);
+    progress.phase('checking');
     await compare(local, sftp, remote, before.size, signal, emit);
     const after = await local.stat();
     const remoteAfter = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
@@ -245,7 +251,7 @@ async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tran
   }
 }
 
-async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void): Promise<void> {
+async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void, progress: TransferProgress): Promise<void> {
   if (await localExists(item.destination)) throw new Error(`目标文件已存在，不会覆盖：${item.destination}`);
   const partial = `${item.destination}.gooeshell.part`;
   const existing = await localExists(partial) ? await fs.lstat(partial) : undefined;
@@ -261,20 +267,20 @@ async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tr
     remote = await sftpCall<Buffer>(cb => sftp.open(item.source, 'r', cb));
     const before = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     if (!before.isFile() || before.size !== item.size) throw new Error('远程源文件在准备任务后发生变化');
-    info.state = 'checking'; emit(true);
+    progress.phase('checking');
     await compare(local, sftp, remote, offset, signal, emit);
     const completedBefore = info.done;
-    info.done += offset; info.state = 'transferring'; emit(true);
+    info.done += offset; progress.phase('transferring');
     const buffer = Buffer.allocUnsafe(CHUNK);
     for (let position = offset; position < before.size;) {
       cancelled(signal);
       const count = Math.min(CHUNK, before.size - position);
-      if (await remoteRead(sftp, remote, buffer, position, count) !== count) throw new Error('远程源文件提前结束，保留 .part');
+      if (await remoteRead(sftp, remote, buffer, position, count, bytes => progress.transferred(bytes)) !== count) throw new Error('远程源文件提前结束，保留 .part');
       await localWrite(local, buffer, position, count);
       position += count; info.done = completedBefore + position; emit();
     }
+    progress.phase('checking');
     await local.sync();
-    info.state = 'checking'; emit(true);
     await compare(local, sftp, remote, before.size, signal, emit);
     const after = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     const currentPath = await fs.lstat(partial);

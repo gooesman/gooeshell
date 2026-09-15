@@ -50,7 +50,7 @@ export async function performArchiveTransfer(
   let remote: RemoteArchiveContext | undefined;
   let local: { directory: string; parent: string; stat: Stats } | undefined;
   const phase = (state: TransferInfo['state'], total = 0) => {
-    info.state = state; info.done = 0; info.total = total; emit(true);
+    info.state = state; info.done = 0; info.total = total; info.bytesPerSecond = undefined; emit(true);
   };
   const progress = (done: number, total?: number) => {
     info.done = done;
@@ -108,7 +108,8 @@ export async function performArchiveTransfer(
     const wireInfo: TransferInfo = { ...info, name: 'payload.tar.gz', source: wireRequest.source,
       destination: wireRequest.destinationDir, mode: 'direct' };
     await ops.performSftpTransfer(sftp, wireRequest, wireInfo, signal, force => {
-      info.state = wireInfo.state; info.done = wireInfo.done; info.total = wireInfo.total; emit(force);
+      info.state = wireInfo.state; info.done = wireInfo.done; info.total = wireInfo.total;
+      info.bytesPerSecond = wireInfo.state === 'transferring' ? wireInfo.bytesPerSecond : undefined; emit(force);
     }, endpointKey);
     checkCancelled(signal);
     phase('extracting', originalBytes);
@@ -131,6 +132,7 @@ export async function performArchiveTransfer(
     if (connectionError && !userSignal.aborted) throw connectionError;
     throw error;
   } finally {
+    info.bytesPerSecond = undefined;
     signal.removeEventListener('abort', stopData);
     sftp.removeListener('end', dataClosed); sftp.removeListener('close', dataClosed);
     client.removeListener('end', connectionClosed); client.removeListener('close', connectionClosed); client.removeListener('error', connectionClosed);

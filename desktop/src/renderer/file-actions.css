@@ -1,7 +1,6 @@
-.file-actions-toolbar { display:flex; align-items:center; gap:4px; padding:5px 8px; border-bottom:1px solid var(--border); min-height:34px; flex-shrink:0; }
-.file-actions-toolbar button { display:flex; align-items:center; justify-content:center; gap:6px; padding:5px 7px; border-radius:6px; font-size:11px; white-space:nowrap; color:var(--text-muted); }
-.file-actions-toolbar button:hover,.file-actions-toolbar button.active { background:var(--surface-selected); color:var(--text); }
-.file-actions-toolbar button:disabled { opacity:.35; }
+.file-follow-button { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:6px; height:25px; padding:0 7px; border-radius:6px; font-size:11px; white-space:nowrap; color:var(--text-muted); }
+.file-follow-button:hover,.file-follow-button.active { background:var(--surface-selected); color:var(--text); }
+.file-follow-button:disabled { opacity:.35; }
 .file-pane-footer>span:last-child { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .file-context-menu { width:238px; max-width:calc(100vw - 10px); max-height:calc(100vh - 10px); overflow-y:auto; }
 .file-action-location { display:flex; flex-direction:column; gap:7px; margin-bottom:20px; }
@@ -11,7 +10,7 @@
 .file-delete-targets { max-height:200px; overflow:auto; padding:10px 12px; margin:12px 0 0; background:var(--surface); border:1px solid var(--border); border-radius:8px; list-style:none; }
 .file-delete-targets li { font:11px/1.8 var(--mono); overflow-wrap:anywhere; padding:3px 0; }
 .dialog-path { white-space:pre-wrap; }
-@container (max-width:440px) { .file-actions-toolbar button span { display:none; } }
+@container (max-width:500px) { .file-follow-button span { display:none; } }
 .file-pane { container-type:inline-size; }
 .toast-stack { pointer-events:none; }
 .toast-stack .toast { pointer-events:auto; }
@@ -37,6 +36,12 @@
 .transfer-mode-badge { margin-left:7px; padding:1px 5px; border:1px solid var(--border); border-radius:4px; color:var(--text-muted); font-size:9px; }
 .transfer-row .transfer-detail { width:172px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .transfer-row .transfer-status { width:70px; }
+.transfer-row:focus-visible { outline:1px solid var(--border-strong); outline-offset:-1px; }
+.transfer-metrics { flex:0 0 116px; display:flex; flex-direction:column; align-items:flex-end; gap:2px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.transfer-speed { font-size:11px; color:var(--text); }
+.transfer-eta { font-size:9px; color:var(--text-muted); }
+.transfer-area { container:transfer-queue / inline-size; }
+@container transfer-queue (max-width:700px) { .transfer-row .transfer-progress { display:none; } .transfer-row .transfer-detail { width:136px; min-width:100px; } .transfer-metrics { flex-basis:108px; } }
 .transfer-progress.indeterminate>span { animation:transfer-stage-progress 1.5s ease-in-out infinite; }
 @keyframes transfer-stage-progress { from { transform:translateX(-110%); } to { transform:translateX(260%); } }
 @media (prefers-reduced-motion:reduce) { .transfer-progress.indeterminate>span { animation:none; opacity:.6; } }

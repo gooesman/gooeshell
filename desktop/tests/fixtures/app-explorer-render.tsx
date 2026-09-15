@@ -73,7 +73,12 @@ api.transfer = async request => {
   const transfer: TransferInfo = { id: `fixture-transfer-${control.transfers.length + 1}`, sessionId: request.sessionId, direction: request.direction, mode: request.mode, source: request.source, destination: request.destinationDir + separator + name, name, state: 'queued', done: 0, total: 0 };
   control.transfers.push(transfer); control.emit({ type: 'transfer', transfer: { ...transfer } }); return transfer.id;
 };
-api.cancelTransfer = async id => { calls.push({ method: 'cancelTransfer', request: { id } }); control.transferState(id, 'cancelled'); };
+api.cancelTransfer = async id => {
+  calls.push({ method: 'cancelTransfer', request: { id } });
+  if (control.denyNext === 'cancelTransfer') { control.denyNext = ''; throw new Error('fixture cancel failed'); }
+  if (control.holdNext === 'cancelTransfer') { control.holdNext = ''; control.held = true; await new Promise<void>(resolve => { held = resolve; }); }
+  control.transferState(id, 'cancelled');
+};
 api.mkdir = request => create(request, 'directory');
 api.rename = async request => {
   await record('rename', request); const entries = volume(request.sessionId, request.side), entry = entries.get(request.path);
