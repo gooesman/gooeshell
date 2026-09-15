@@ -56,7 +56,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r ../gooeshell-files/tests-support/requirements.txt
       - name: Install Linux display and Chinese font dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 fonts-noto-cjk
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 fonts-noto-cjk tmux
       - name: SSH, SFTP, permissions and application tests
         run: node scripts/ci-tests.mjs
       - name: Build native desktop packages
@@ -79,6 +79,12 @@ jobs:
       - name: Commands and palettes regression on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/ci-command-tests.mjs
+      - name: Files and paste regression
+        if: runner.os != 'Linux'
+        run: node scripts/ci-workspace-tests.mjs
+      - name: Files and paste regression on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/ci-workspace-tests.mjs
       - name: Launch packaged application
         if: runner.os != 'Linux'
         run: node scripts/ci-smoke.mjs ${{ matrix.target }} ${{ matrix.arch }}
@@ -119,6 +125,9 @@ jobs:
             desktop/test-output/command-main-*/result.json
             .build/command-ui-*/result.json*
             .build/terminal-palettes-*/result.json*
+            .build/app-explorer-*/result.json*
+            .build/terminal-paste-*/result.json*
+            .build/terminal-tabs-*/result.json*
             desktop/test-output/single-instance-*/*.json
           if-no-files-found: ignore
           retention-days: 14

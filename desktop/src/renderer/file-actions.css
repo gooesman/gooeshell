@@ -1,0 +1,19 @@
+.file-actions-toolbar { display:flex; align-items:center; gap:4px; padding:5px 8px; border-bottom:1px solid var(--border); min-height:34px; flex-shrink:0; }
+.file-actions-toolbar button { display:flex; align-items:center; justify-content:center; gap:6px; padding:5px 7px; border-radius:6px; font-size:11px; white-space:nowrap; color:var(--text-muted); }
+.file-actions-toolbar button:hover,.file-actions-toolbar button.active { background:var(--surface-selected); color:var(--text); }
+.file-actions-toolbar button:disabled { opacity:.35; }
+.file-pane-footer>span:last-child { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.file-context-menu { width:238px; max-width:calc(100vw - 10px); max-height:calc(100vh - 10px); overflow-y:auto; }
+.file-action-location { display:flex; flex-direction:column; gap:7px; margin-bottom:20px; }
+.file-action-location strong { font-size:12px; font-weight:500; color:var(--text); }
+.file-action-location>span { font:11px var(--mono); color:var(--text-muted); overflow-wrap:anywhere; }
+.file-action-dialog p { font-size:12px; line-height:1.8; }
+.file-delete-targets { max-height:200px; overflow:auto; padding:10px 12px; margin:12px 0 0; background:var(--surface); border:1px solid var(--border); border-radius:8px; list-style:none; }
+.file-delete-targets li { font:11px/1.8 var(--mono); overflow-wrap:anywhere; padding:3px 0; }
+.dialog-path { white-space:pre-wrap; }
+@container (max-width:440px) { .file-actions-toolbar button span { display:none; } }
+.file-pane { container-type:inline-size; }
+.toast-stack { pointer-events:none; }
+.toast-stack .toast { pointer-events:auto; }
+.app-shell .files-area { min-height:260px; }
+.app-shell .files-area:has(.transfer-area:not(.queue-collapsed)) { min-height:340px; }

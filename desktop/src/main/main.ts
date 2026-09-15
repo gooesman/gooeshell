@@ -12,6 +12,7 @@ import {cleanJumpProfile,jumpCredentialProfile} from './jump-profile';
 import {connectionIdentity} from '../shared/connections';
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
+import {createLocalFile,createLocalDirectory,removeLocalFile} from './file-mutations';
 import {systemFontCatalog} from './font-catalog';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let commands:CommandStore;let shuttingDown=false;let workerAvailable=false;
@@ -71,7 +72,7 @@ async function fonts():Promise<string[]>{
  if(process.platform!=='win32')return availableFontFamilies((await systemFontCatalog()).map(font=>font.family));
  return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve(availableFontFamilies(Array.isArray(data)?data:typeof data==='string'?[data]:[]));}catch{resolve(known);}}));
 }
-const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','transfer','cancelTransfer','chmod','runFile']);
+const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','terminalCwd','transfer','cancelTransfer','chmod','runFile']);
 if(primaryInstance)app.whenReady().then(async()=>{
  void systemFontCatalog().catch(()=>{});
  app.setName('gooeshell');if(process.platform==='win32')app.setAppUserModelId('com.gooesman.gooeshell');store=new Store(app.getPath('userData'));
@@ -267,7 +268,9 @@ if(primaryInstance)app.whenReady().then(async()=>{
     return choice.filePath;
    }
    case 'writeFile':{if(typeof value.text!=='string'||Buffer.byteLength(value.text)>2*1024*1024)throw new Error('编辑文件限2MB');if(value.side==='remote')return remote('writeFile',value);const p=localPath(value.path);const s=await fs.lstat(p);if(!s.isFile())throw new Error('只编辑普通文件');await fs.writeFile(p,value.text,'utf8');return;}
-   case 'mkdir':return value.side==='local'?fs.mkdir(localPath(value.path)):remote('mkdir',value);
+   case 'mkdir':return value.side==='local'?createLocalDirectory(value.path):remote('mkdir',value);
+   case 'createFile':return value.side==='local'?createLocalFile(value.path):remote('createFile',value);
+   case 'removeFile':return value.side==='local'?removeLocalFile(value.path,value.recursive):remote('removeFile',value);
    case 'rename':return value.side==='local'?renameLocalPath(value.path,value.destination):remote('rename',value);
    case 'fonts':return fonts();
    case 'fontCatalog':return systemFontCatalog();

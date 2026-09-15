@@ -112,6 +112,7 @@ export interface DesktopApi {
   confirmHostKey(requestId: string, decision: HostKeyDecision): Promise<void>;
   localList(path: string): Promise<FileListing>;
   remoteList(request: RemoteRequest): Promise<FileListing>;
+  terminalCwd(request: { sessionId: string }): Promise<{ path: string; source: 'shell' | 'tmux' }>;
   chooseFiles(options: { directory?: boolean; multiple?: boolean; title?: string }): Promise<string[]>;
   showInFolder(path: string): Promise<void>;
   transfer(request: TransferRequest): Promise<string>;
@@ -125,6 +126,8 @@ export interface DesktopApi {
   chmod(request: RemoteRequest & { mode: number }): Promise<void>;
   runFile(request: RemoteRequest & { makeExecutable: boolean }): Promise<CommandResult>;
   mkdir(request: RemoteRequest & { side: 'local' | 'remote' }): Promise<void>;
+  createFile(request: RemoteRequest & { side: 'local' | 'remote' }): Promise<void>;
+  removeFile(request: RemoteRequest & { side: 'local' | 'remote'; recursive: boolean }): Promise<void>;
   rename(request: RemoteRequest & { side: 'local' | 'remote'; destination: string }): Promise<void>;
   fonts(): Promise<string[]>;
   fontCatalog(): Promise<FontFamilyInfo[]>;

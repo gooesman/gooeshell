@@ -130,7 +130,22 @@ test('invalid permissions, NUL paths and oversized writes are rejected before ex
   await assert.rejects(runRemoteOperation(connection.client, 'read', { path: '/tmp/a\0b' }), /NUL/);
   await assert.rejects(runRemoteOperation(connection.client, 'write', { path: '/tmp/a', text: 'x'.repeat(2 * 1024 * 1024 + 1) }), /2 MiB/);
   await assert.rejects(runRemoteOperation(connection.client, 'writeBytes', { path: '/tmp/a', data: 'not-base64', expectedRevision: 'missing' }), /原始版本无效/);
+  await assert.rejects(runRemoteOperation(connection.client, 'remove', { path: '/', recursive: true }), /根目录/);
+  await assert.rejects(runRemoteOperation(connection.client, 'remove', { path: '/tmp/..', recursive: true }), /路径/);
+  await assert.rejects(runRemoteOperation(connection.client, 'remove', { path: '/tmp/target' }), /明确/);
   assert.equal(connection.command, '');
+});
+
+test('recursive deletion stays in the framed request, and helper permission errors allow sudo retry', async () => {
+  const connection = mockConnection();
+  const operation = runRemoteOperation(connection.client, 'remove', { path: '/tmp/selected', recursive: true, sudoPassword: 'must-not-leak' });
+  const rejected = assert.rejects(operation, /PERMISSION_DENIED/);
+  await connection.ready;
+  assert.ok(!connection.command.includes('/tmp/selected'));
+  connection.sendReady();
+  assert.deepEqual(JSON.parse(connection.channel.ended[0]).payload, { path: '/tmp/selected', recursive: true });
+  connection.channel.emit('data', Buffer.from(connection.frame + ':RESULT:' + Buffer.from(JSON.stringify({ ok: false, code: 'PermissionError', error: 'Permission denied' })).toString('base64') + '\n'));
+  await rejected;
 });
 
 const wslDistribution = process.env.GOOESHELL_TEST_WSL;
@@ -140,6 +155,66 @@ function python(code: string, args: string[] = [], input = ''): string {
   const commandArgs = wslDistribution ? ['-d', wslDistribution, '--', 'python3', '-I', '-c', code, ...args] : ['-I', '-c', code, ...args];
   return execFileSync(command, commandArgs, { input, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, timeout: 20_000 });
 }
+
+test('real Linux create/remove refuses overwrites and follows no links, including directory replacement races', { skip: !supportsLinux }, () => {
+  const directory = python('import tempfile; print(tempfile.mkdtemp(prefix="gooeshell-mutations-test-"))').trim();
+  assert.match(directory, /^\/tmp\/gooeshell-mutations-test-[A-Za-z0-9_-]+$/);
+  function fixture(code: string, values: unknown[] = []) {
+    return python('import os, pathlib, json, sys; root=sys.argv[1]; values=json.loads(sys.stdin.read()); ' + code, [directory], JSON.stringify(values));
+  }
+  function operation(op: string, payload: Record<string, unknown>, elevated = false, before = ''): any {
+    const program = before ? REMOTE_HELPER_PYTHON.replace("sys.stdout.write(FRAME + ':READY\\n')", before + "\nsys.stdout.write(FRAME + ':READY\\n')") : REMOTE_HELPER_PYTHON;
+    const stdout = python(program, ['TEST_FRAME'], JSON.stringify({ op, payload, elevated, timeoutMs: 5000 }) + '\n');
+    const response = stdout.split('\n').find(line => line.startsWith('TEST_FRAME:RESULT:'))!;
+    return JSON.parse(Buffer.from(response.slice('TEST_FRAME:RESULT:'.length), 'base64').toString('utf8'));
+  }
+  try {
+    const file = directory + '/中文 empty.txt';
+    assert.equal(operation('create', { path: file }).ok, true);
+    assert.equal(fixture('print(os.stat(values[0]).st_size)', [file]).trim(), '0');
+    fixture('pathlib.Path(values[0]).write_text("keep", encoding="utf8")', [file]);
+    assert.equal(operation('create', { path: file }, true).code, 'FileExistsError');
+    assert.equal(fixture('print(pathlib.Path(values[0]).read_text())', [file]).trim(), 'keep');
+    const selected = directory + '/selected', outside = directory + '/outside';
+    fixture('os.mkdir(values[0]); os.mkdir(values[1]); pathlib.Path(values[1]+"/keep").write_text("outside"); os.symlink(values[1], values[0]+"/linked")', [selected, outside]);
+    assert.equal(operation('remove', { path: selected, recursive: false }).ok, false);
+    assert.equal(operation('remove', { path: selected, recursive: true }, true).ok, true);
+    assert.equal(fixture('print(pathlib.Path(values[0]+"/keep").read_text())', [outside]).trim(), 'outside');
+    assert.equal(operation('remove', { path: selected, recursive: true }).code, 'FileNotFoundError');
+    const link = directory + '/linked-parent';
+    fixture('os.symlink(values[0], values[1])', [outside, link]);
+    assert.equal(operation('create', { path: link + '/new' }, true).ok, false);
+    assert.equal(operation('remove', { path: link + '/keep', recursive: false }, true).ok, false);
+    assert.equal(operation('remove', { path: link, recursive: true }, true).ok, true);
+    assert.equal(fixture('print(pathlib.Path(values[0]+"/keep").read_text())', [outside]).trim(), 'outside');
+    for (const invalid of ['/', '//', '/tmp/..', '/tmp/.', '.']) assert.equal(operation('remove', { path: invalid, recursive: true }, true).ok, false);
+    fixture('os.mkdir(values[0]); os.mkdir(values[0]+"/nested"); pathlib.Path(values[0]+"/nested/inside").write_text("inside")', [selected]);
+    // Swap a descendant into a symlink immediately before O_DIRECTORY open.
+    // The helper must fail before reading the linked outside directory.
+    const race = `
+real_open = os.open
+swapped = False
+def race_open(name, flags, *args, **kwargs):
+    global swapped
+    if name == 'nested' and flags & os.O_DIRECTORY and not swapped:
+        swapped = True
+        parent = kwargs['dir_fd']
+        os.rename('nested', 'moved', src_dir_fd=parent, dst_dir_fd=parent)
+        os.symlink(${JSON.stringify(outside)}, 'nested', dir_fd=parent)
+    return real_open(name, flags, *args, **kwargs)
+os.open = race_open
+os.supports_dir_fd.add(race_open)
+`;
+    const swapped = operation('remove', { path: selected, recursive: true }, true, race);
+    assert.equal(swapped.ok, false);
+    assert.equal(fixture('print(pathlib.Path(values[0]+"/keep").read_text())', [outside]).trim(), 'outside');
+    assert.equal(fixture('print(pathlib.Path(values[0]+"/moved/inside").read_text())', [selected]).trim(), 'inside');
+    assert.equal(operation('remove', { path: selected, recursive: true }, true).ok, true);
+    assert.equal(operation('remove', { path: file, recursive: false }).ok, true);
+  } finally {
+    python('import os, shutil, sys; root=os.path.realpath(sys.argv[1]); assert os.path.dirname(root)=="/tmp" and os.path.basename(root).startswith("gooeshell-mutations-test-"); shutil.rmtree(root)', [directory]);
+  }
+});
 
 test('real Linux helper validates edits, no-follow mutations, permissions, shebang and run limits', { skip: !supportsLinux }, () => {
   const directory = python('import tempfile; print(tempfile.mkdtemp(prefix="gooeshell-helper-test-"))').trim();

@@ -11,6 +11,8 @@ import { runRemoteOperation } from './remote-helper';
 import { isSftpClosed, performSftpTransfer, remoteClose, remoteStat, sftpCall, trackSftp } from './sftp-transfer';
 import { decodeEditableText, encodeEditableText, serializeTextWrite, textConflict, textRevision, validateExpectedRevision } from './text-files';
 import {cleanCommandText} from './command-store';
+import {readTerminalDirectory, type TerminalDirectory} from './terminal-cwd';
+import { remoteMutationPath } from './file-mutations';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -32,6 +34,8 @@ interface Session {
   clients: Set<Client>;
   forwards: Set<ClientChannel>;
   shell?: ClientChannel;
+  terminalClient?: Client;
+  directoryProbe?: Promise<TerminalDirectory>;
   control?: Promise<{ client: Client; sftp: SFTPWrapper }>;
   pendingBytes: number;
   terminalReady: boolean;
@@ -429,6 +433,7 @@ export class SshService {
     this.sessions.set(session.id, session);
     try {
       const client = await this.openClient(session);
+      session.terminalClient = client;
       const shell = await new Promise<ClientChannel>((resolve, reject) => {
         let settled=false;
         const cleanup=()=>{client.removeListener('close',closed);client.removeListener('error',failed);};
@@ -703,10 +708,39 @@ export class SshService {
   }
 
   async mkdir(request: RemoteRequest): Promise<void> {
+    request = { ...request, path: remoteMutationPath(request.path) };
     if (request.elevated) return this.operation(request, 'mkdir');
     try {
       const { sftp } = await this.control(this.session(request.sessionId));
       await new Promise<void>((resolve, reject) => sftp.mkdir(validPath(request.path), { mode: 0o755 }, error => error ? reject(error) : resolve()));
+    } catch (error) { throw remoteError(error); }
+  }
+
+  async createFile(request: RemoteRequest): Promise<void> {
+    request = { ...request, path: remoteMutationPath(request.path) };
+    if (request.elevated) return this.operation(request, 'create');
+    try {
+      const { sftp } = await this.control(this.session(request.sessionId));
+      // SSH_FXF_EXCL is enforced by the server, including when the target is a link.
+      const handle = await sftpCall<Buffer>(cb => sftp.open(request.path, 'wx', { mode: 0o644 }, cb));
+      await remoteClose(sftp, handle);
+    } catch (error) { throw remoteError(error); }
+  }
+
+  async removeFile(request: RemoteRequest & { recursive: boolean }): Promise<void> {
+    request = { ...request, path: remoteMutationPath(request.path) };
+    if (typeof request.recursive !== 'boolean') throw new Error('必须明确是否删除目录及其中的全部内容');
+    if (request.elevated) return this.operation(request, 'remove', { recursive: request.recursive });
+    try {
+      const { sftp } = await this.control(this.session(request.sessionId));
+      const info = await remoteStat(sftp, request.path);
+      if (!info) throw new Error('目标已不存在，请刷新目录');
+      if (info.isDirectory()) {
+        // SFTP v3 cannot pin directory handles for no-follow recursion. Use the
+        // fixed helper for recursive trees rather than risk walking a swapped link.
+        if (request.recursive) return this.operation(request, 'remove', { recursive: true });
+        await new Promise<void>((resolve, reject) => sftp.rmdir(request.path, error => error ? reject(error) : resolve()));
+      } else await new Promise<void>((resolve, reject) => sftp.unlink(request.path, error => error ? reject(error) : resolve()));
     } catch (error) { throw remoteError(error); }
   }
 
@@ -757,6 +791,19 @@ export class SshService {
     if (!job) return;
     job.abort.abort();
     job.client?.destroy();
+  }
+
+  terminalCwd(request: {sessionId: string}): Promise<TerminalDirectory> {
+    const session = this.session(request.sessionId);
+    if (!session.terminalClient || !session.shell) throw new Error('当前终端尚未就绪');
+    // Query this transport's own PTY; a separate SFTP connection cannot identify
+    // which terminal to follow. Coalesce requests without touching input/output.
+    if (!session.directoryProbe) {
+      const probe = readTerminalDirectory(session.terminalClient, session.abort.signal);
+      session.directoryProbe = probe;
+      void probe.finally(() => { if (session.directoryProbe === probe) session.directoryProbe = undefined; }).catch(() => {});
+    }
+    return session.directoryProbe;
   }
 
   terminalInput(id: string, data: string): void {
@@ -839,6 +886,7 @@ export class SshService {
     this.releaseJump(session);
     eraseCredentials(session.credentials); eraseCredentials(session.jumpCredentials);
     session.shell = undefined;
+    session.terminalClient = undefined;
     this.sessions.delete(session.id);
     this.emit({ type: 'sessionClosed', sessionId: session.id, message: reason });
   }

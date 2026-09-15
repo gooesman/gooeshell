@@ -1,0 +1,11 @@
+.terminal-paste-backdrop { position:absolute; inset:0; z-index:15; display:flex; align-items:center; justify-content:center; padding:20px; background:#0006; }
+.terminal-paste-dialog { width:min(540px,100%); max-height:100%; overflow:auto; padding:22px; display:flex; flex-direction:column; gap:12px; background:var(--surface); border:1px solid var(--border-strong); border-radius:14px; color:var(--text); box-shadow:0 12px 40px #0004; }
+.terminal-paste-dialog>strong { font-size:15px; font-weight:550; }
+.terminal-paste-target { font-size:11px; color:var(--text-muted); }
+.terminal-paste-dialog pre { margin:0; padding:12px; max-height:200px; overflow:auto; border:1px solid var(--border); border-radius:8px; background:var(--surface-deep); font:12px/1.65 var(--mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.terminal-paste-dialog p { font-size:12px; color:var(--text-muted); line-height:1.8; margin:0; }
+.terminal-paste-buttons { display:flex; justify-content:flex-end; gap:8px; }
+.terminal-paste-queue { position:absolute; inset:auto 12px 10px; z-index:8; display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+.terminal-paste-queue>div { display:flex; flex-direction:column; gap:5px; flex:1; min-width:0; }
+.terminal-paste-queue strong { font-size:12px; font-weight:500; }
+.terminal-paste-queue span { font-size:11px; color:var(--text-muted); }

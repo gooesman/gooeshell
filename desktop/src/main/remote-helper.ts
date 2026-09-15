@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import type { Client, ClientChannel } from 'ssh2';
+import { remoteMutationPath } from './file-mutations';
 
 const MAX_TEXT = 2 * 1024 * 1024;
 const MAX_WIRE = MAX_TEXT * 8 + 128 * 1024;
-const operations = new Set(['list', 'read', 'write', 'readBytes', 'writeBytes', 'chmod', 'run', 'mkdir', 'rename']);
+const operations = new Set(['list', 'read', 'write', 'readBytes', 'writeBytes', 'chmod', 'run', 'mkdir', 'create', 'remove', 'rename']);
 
 /** Fixed program: paths and contents arrive only over stdin, never in shell source. */
 export const REMOTE_HELPER_PYTHON = String.raw`
@@ -233,6 +234,69 @@ def chmod_target(path, mode, elevated):
     finally:
         os.close(fd)
 
+def mutation_path(value):
+    if not isinstance(value, str) or not value.startswith('/') or any(part in ('.', '..') for part in value.split('/')):
+        raise ValueError('操作必须使用不含 . 或 .. 的完整绝对路径')
+    absolute = path_value(value)
+    if absolute == '/':
+        raise ValueError('此操作不能以文件系统根目录作为目标')
+    return absolute
+
+def create_file(path, elevated):
+    parent, name, _ = parent_handle(mutation_path(path), elevated)
+    try:
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=parent)
+        os.close(fd)
+    finally:
+        os.close(parent)
+
+def remove_path(path, recursive):
+    if not isinstance(recursive, bool):
+        raise ValueError('必须明确是否删除目录及其中的全部内容')
+    # Pin all ancestors even without sudo: no part of recursive removal should
+    # ever traverse a symbolic link supplied or swapped by another process.
+    parent, name, _ = parent_handle(mutation_path(path), True)
+    remaining = [100000]
+    def same_entry(a, b):
+        return (a.st_dev, a.st_ino, stat.S_IFMT(a.st_mode)) == (b.st_dev, b.st_ino, stat.S_IFMT(b.st_mode))
+    def remove_entry(directory, entry, root_device, depth, top=False):
+        remaining[0] -= 1
+        if remaining[0] < 0 or depth > 256:
+            raise RuntimeError('目录内容或层级过多，删除已停止；请刷新后分批删除剩余内容')
+        try:
+            before = os.stat(entry, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            if top:
+                raise
+            return
+        if not stat.S_ISDIR(before.st_mode):
+            # unlink cannot follow a link, including a link to an outside tree.
+            os.unlink(entry, dir_fd=directory)
+            return
+        if not recursive:
+            os.rmdir(entry, dir_fd=directory)
+            return
+        if before.st_dev != root_device:
+            raise ValueError('目录中包含其他文件系统的挂载点，已停止删除；请先单独处理挂载点')
+        handle = os.open(entry, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+        try:
+            opened = os.fstat(handle)
+            if not same_entry(before, opened):
+                raise RuntimeError('删除期间目录被替换，操作已停止，请刷新后重试')
+            with os.scandir(handle) as children:
+                for child in children:
+                    remove_entry(handle, child.name, root_device, depth + 1)
+            current = os.stat(entry, dir_fd=directory, follow_symlinks=False)
+            if not same_entry(opened, current):
+                raise RuntimeError('删除期间目录被替换，操作已停止，请刷新后重试')
+            os.rmdir(entry, dir_fd=directory)
+        finally:
+            os.close(handle)
+    try:
+        remove_entry(parent, name, os.fstat(parent).st_dev, 0, True)
+    finally:
+        os.close(parent)
+
 def limit_text(data):
     text = data.decode('utf-8', errors='replace')
     return text.encode('utf-8')[:MAX_TEXT].decode('utf-8', errors='ignore')
@@ -316,6 +380,8 @@ def run_file(path, make_executable, elevated, timeout_ms):
 def operate(request):
     op, payload = request['op'], request['payload']
     elevated = request.get('elevated', False)
+    if op in ('create', 'remove', 'mkdir'):
+        mutation_path(payload.get('path'))
     path = path_value(payload.get('path'))
     if op == 'list':
         return listing(path)
@@ -331,6 +397,10 @@ def operate(request):
         return chmod_target(path, payload.get('mode'), elevated)
     if op == 'run':
         return run_file(path, payload.get('makeExecutable') is True, elevated, request['timeoutMs'])
+    if op == 'create':
+        return create_file(path, elevated)
+    if op == 'remove':
+        return remove_path(path, payload.get('recursive'))
     if op == 'mkdir':
         parent, name, _ = parent_handle(path, elevated)
         try:
@@ -407,6 +477,8 @@ export async function runRemoteOperation(
   if (op === 'chmod' && (!Number.isInteger(payload.mode) || (payload.mode as number) < 0 || (payload.mode as number) > 0o777)) {
     throw new Error('权限必须在 000 至 777 之间，不能添加特殊权限位');
   }
+  if (op === 'create' || op === 'remove' || op === 'mkdir') remoteMutationPath(payload.path);
+  if (op === 'remove' && typeof payload.recursive !== 'boolean') throw new Error('必须明确是否删除目录及其中的全部内容');
   if (options.sudoPassword?.includes('\n') || options.sudoPassword?.includes('\r') || options.sudoPassword?.includes('\0')) {
     throw new Error('sudo 密码不能包含换行或 NUL 字符');
   }
@@ -414,7 +486,7 @@ export async function runRemoteOperation(
   const timeoutMs = Math.max(1000, Math.min(120_000, options.timeoutMs ?? (op === 'run' ? 60_000 : 30_000)));
   // Keep credentials out even if a caller accidentally passes an entire UI request.
   const cleanPayload: Record<string, unknown> = { path: payload.path };
-  const extraFields: Record<string, string> = { write: 'text', chmod: 'mode', run: 'makeExecutable', rename: 'destination' };
+  const extraFields: Record<string, string> = { write: 'text', chmod: 'mode', run: 'makeExecutable', rename: 'destination', remove: 'recursive' };
   const extraField = extraFields[op];
   if (extraField) cleanPayload[extraField] = payload[extraField];
   if (op === 'writeBytes') { cleanPayload.data = payload.data; cleanPayload.expectedRevision = payload.expectedRevision; }
@@ -514,7 +586,7 @@ export async function runRemoteOperation(
           if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new Error('无效响应编码');
           const result = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
           if (result.ok === true) finish(undefined, result.value);
-          else if (result.ok === false && typeof result.error === 'string') finish(new Error(result.error));
+          else if (result.ok === false && typeof result.error === 'string') finish(new Error(result.code === 'PermissionError' ? 'PERMISSION_DENIED：权限不足，可使用 sudo 重试。' : result.error));
           else finish(new Error('服务器返回了无效的文件操作结果'));
         } catch { finish(new Error('服务器返回的文件操作结果无法解析')); }
       });

@@ -101,7 +101,29 @@ try {
   assert.equal(state.profiles, 0, 'Smoke launch must use its isolated settings directory');
   assert.equal(state.theme, 'dark');
   assert.ok(state.fonts > 0, 'Font catalog must provide usable font choices');
-  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state }, null, 2) + '\n');
+  const fileRoot = await fs.mkdtemp(path.join(output, 'smoke-files-'));
+  const selected = path.join(fileRoot, 'selected'), leaf = path.join(selected, 'new.txt');
+  const keep = path.join(fileRoot, 'keep.txt'); await fs.writeFile(keep, 'outside selected tree');
+  const files = await call('Runtime.evaluate', {
+    expression: `(async()=>{
+      const api=window.gooeshell, request={side:'local',sessionId:''};
+      await api.mkdir({...request,path:${JSON.stringify(selected)}});
+      await api.createFile({...request,path:${JSON.stringify(leaf)}});
+      await api.writeFile({...request,path:${JSON.stringify(leaf)},text:'preserve original'});
+      let rejected=false;try{await api.createFile({...request,path:${JSON.stringify(leaf)}});}catch{rejected=true;}
+      const text=await api.readFile({...request,path:${JSON.stringify(leaf)}});
+      await api.removeFile({...request,path:${JSON.stringify(selected)},recursive:true});
+      document.querySelector('[aria-label="展开文件管理"]')?.click();
+      await new Promise(resolve=>setTimeout(resolve,50));
+      document.querySelector('[aria-label="展开本地文件栏"]')?.click();
+      return {rejected,text:text.text,toolbar:!!document.querySelector('[aria-label="本地新建文件"]'),remoteDisabled:document.querySelector('[aria-label="远程新建文件"]').disabled};
+    })()`, returnByValue: true, awaitPromise: true,
+  });
+  assert.equal(files.exceptionDetails, undefined, 'Packaged file mutation IPC failed');
+  assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:true,remoteDisabled:true});
+  assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
+  assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
+  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value }, null, 2) + '\n');
   console.log(`Packaged application smoke passed: ${target}-${arch} ${version}`);
 } catch (error) {
   await fs.writeFile(reportFile, JSON.stringify({ success: false, target, arch, error: String(error), logs }, null, 2) + '\n');

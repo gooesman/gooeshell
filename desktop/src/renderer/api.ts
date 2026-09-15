@@ -42,7 +42,7 @@ const preview:DesktopApi={
  disconnect:async id=>emit({type:'sessionClosed',sessionId:id,message:'已关闭演示会话'}),confirmHostKey:async()=>{},
  localList:async p=>previewListing(p||'C:\\Users\\developer',true),remoteList:async r=>previewListing(r.path==='.'?'/home/developer':r.path,false),
  chooseFiles:async()=>[],showInFolder:unavailable,transfer:unavailable,cancelTransfer:async()=>{},
- readFile:async()=>({text:'# 界面预览\n这里显示文件内容。桌面程序支持真实文件读取和保存。\n',truncated:false}),writeFile:unavailable,chmod:unavailable,runFile:unavailable,mkdir:unavailable,rename:unavailable,
+ readFile:async()=>({text:'# 界面预览\n这里显示文件内容。桌面程序支持真实文件读取和保存。\n',truncated:false}),writeFile:unavailable,chmod:unavailable,runFile:unavailable,mkdir:unavailable,rename:unavailable,createFile:unavailable,removeFile:unavailable,terminalCwd:unavailable,
  readTextFile:async r=>{
   const key=r.side+':'+r.path;let file=previewTexts.get(key);
   if(!file){const text=r.path.endsWith('.sh')?'#!/usr/bin/env bash\nset -euo pipefail\n\n# 部署服务 · 编辑器界面演示\nAPP_DIR="/srv/app"\n\ncd "$APP_DIR"\nprintf "Starting deployment...\\n"\n\nfor service in web worker; do\n  echo "Restarting $service"\n  systemctl restart "$service"\ndone\n':'# gooeshell 文本编辑器\n\n这是浏览器演示文档，不会修改真实文件。\n\n支持查找替换、行号、撤销与重做。\n按 Ctrl+S 保存到本次演示会话。\n';file={text,truncated:false,encoding:'utf8',bom:false,lineEnding:'lf',revision:`demo:${++previewRevision}`,size:new TextEncoder().encode(text).length};previewTexts.set(key,file);}
