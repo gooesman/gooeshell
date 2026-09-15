@@ -70,8 +70,12 @@ async function run() {
   await delay(25);
   assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), true);
   await click('折叠侧边栏');
+  assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), true);
+  assert.ok(await evaluate(`document.querySelector('.connection-group-toggle').getBoundingClientRect().width > 0`));
+  await evaluate(`document.querySelector('.connection-group-toggle').click()`); await delay(25);
   assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), false);
-  assert.equal(await evaluate(`document.querySelector('.host-copy').getBoundingClientRect().width`), 0);
+  assert.ok(await evaluate(`document.querySelector('.host-copy').getBoundingClientRect().width > 0`));
+  assert.equal(await evaluate(`document.querySelector('.host-address').getBoundingClientRect().width`), 0);
   assert.equal(await evaluate(`document.querySelector('.hosts').scrollWidth <= document.querySelector('.hosts').clientWidth`), true);
   assert.equal(await evaluate(`document.querySelectorAll('.host-icon').length`), 2);
   await evaluate(`document.querySelector('.host.active').click()`);
@@ -79,7 +83,7 @@ async function run() {
   assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).value`), 'one');
   await picture('dark-collapsed-sidebar');
   await click('展开侧边栏');
-  assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), true);
+  assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), false);
   assert.equal(await evaluate(`document.querySelectorAll('.host-icon').length`), 0);
   assert.equal(await evaluate(`document.querySelectorAll('.connection-group-toggle svg').length`), 2);
   await click('开发环境分组菜单');

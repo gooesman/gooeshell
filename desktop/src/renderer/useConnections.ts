@@ -91,9 +91,10 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
   const showAuth = (prompt: AuthPrompt, error = '') => { setAuthError(error); setAuthPrompt(prompt); };
   const direct = async (supplied: HostProfile, newTab = false, targetTabId?: string) => {
     const profile = catalog.find(value => value.id === supplied.id) || supplied;
-    const existing = !targetTabId && !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && !current.current.closed[session.id]);
+    const matches = current.current.sessions.filter(session => sameConnection(session.profile, profile));
+    const existing = !targetTabId && !newTab && (matches.find(session => session.id === current.current.activeId && !current.current.closed[session.id]) || matches.find(session => !current.current.closed[session.id]));
     if (existing) { setActiveId(existing.id); return; }
-    const offline = !targetTabId && !newTab && current.current.sessions.find(session => sameConnection(session.profile, profile) && current.current.closed[session.id]);
+    const offline = !targetTabId && !newTab && (matches.find(session => session.id === current.current.activeId && current.current.closed[session.id]) || matches.find(session => current.current.closed[session.id]));
     const activeHome = !newTab && current.current.tabs?.includes(current.current.activeId)
       && !current.current.sessions.some(session => (session.tabId || session.id) === current.current.activeId)
       ? current.current.activeId : undefined;
@@ -105,13 +106,20 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
       else notify(message(error), true);
     }
   };
-  const reconnect = async (session: SessionInfo) => {
-    if (!current.current.closed[session.id]) return;
+  const sessionProfile = (session: SessionInfo) => {
     // A changed endpoint is a new connection; the old terminal keeps its original identity.
-    const configured = catalog.find(profile => profile.id === session.profile.id);
-    const latest = configured && !sameConnection(configured, session.profile)
+    const configured = current.current.catalog.find(profile => profile.id === session.profile.id);
+    return configured && !sameConnection(configured, session.profile)
       ? { ...session.profile, id: crypto.randomUUID(), groupId: undefined }
       : configured || session.profile;
+  };
+  const duplicate = async (session: SessionInfo) => {
+    if (!current.current.sessions.some(item => item.id === session.id)) return;
+    await direct(sessionProfile(session), true);
+  };
+  const reconnect = async (session: SessionInfo) => {
+    if (!current.current.closed[session.id]) return;
+    const latest = sessionProfile(session);
     const tabId = session.tabId || session.id;
     try { await establish(latest, undefined, tabId); }
     catch (error) {
@@ -166,5 +174,5 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     finally { setAuthBusy(false); }
   };
   const hasUntargetedPending = [...attempts.current.values()].some(attempt => !attempt.tabId && !attempt.cancelled);
-  return { profiles, setProfiles, catalog, setCatalog, history, setHistory, groups, setGroups, refresh, save, establish, direct, reconnect, close, cancel, cancelProfile, pending, hasUntargetedPending, reconnectErrors, sudo, authPrompt, setAuthPrompt, authBusy, authError, submitAuth };
+  return { profiles, setProfiles, catalog, setCatalog, history, setHistory, groups, setGroups, refresh, save, establish, direct, duplicate, reconnect, close, cancel, cancelProfile, pending, hasUntargetedPending, reconnectErrors, sudo, authPrompt, setAuthPrompt, authBusy, authError, submitAuth };
 }

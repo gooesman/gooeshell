@@ -26,9 +26,24 @@ async function fill(selector, text) {
 async function choose(selector, value) {
   await evaluate(`(() => { const select = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, ${JSON.stringify(value)}); select.dispatchEvent(new Event('change', { bubbles: true })); })()`); await delay(30);
 }
-async function context(selector) {
-  await evaluate(`document.querySelector(${JSON.stringify(selector)}).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 340, clientY: 240 }))`);
-  await until(() => evaluate('Boolean(document.querySelector(".connection-context-menu"))'), 'connection menu');
+async function mouse(selector, button = 'left') {
+  await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({ block: 'nearest' })`);
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const point = await evaluate(`(() => { const target = document.querySelector(${JSON.stringify(selector)}), bounds = target.getBoundingClientRect(); const x = Math.round(bounds.x + bounds.width / 2), y = Math.round(bounds.y + bounds.height / 2), hit = document.elementFromPoint(x, y); return { x, y, visible: bounds.width > 0 && bounds.height > 0 && (target === hit || target.contains(hit)), hit: hit?.outerHTML?.slice(0, 300) }; })()`);
+  assert.equal(point.visible, true, 'mouse target must be visible and unobstructed: ' + selector + ' ' + JSON.stringify(point));
+  window.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+  window.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button, clickCount: 1 });
+  window.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button, clickCount: 1 });
+  await delay(35);
+}
+async function context(selector, menu = '.connection-context-menu') {
+  await mouse(selector, 'right');
+  await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(menu)}))`), 'native context menu');
+}
+async function menuClick(label, menu = '.connection-context-menu') {
+  const selector = `${menu} button[data-native-click]`;
+  await evaluate(`(() => { for (const button of document.querySelectorAll(${JSON.stringify(menu + ' button')})) { delete button.dataset.nativeClick; if (button.textContent.trim() === ${JSON.stringify(label)}) button.dataset.nativeClick = 'true'; } })()`);
+  await mouse(selector);
 }
 const connectCount = () => evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'connect').length`);
 const historySelector = '[aria-label="最近连接"] .recent-connection';
@@ -90,6 +105,29 @@ async function run() {
   await until(() => evaluate(`document.querySelector('.connection-group').getAttribute('aria-label') === '实验设备'`), 'group reordered');
   assert.equal(await connectCount(), 0);
   result.checks.groupCreateMoveAndSort = true;
+
+  phase = 'compact sidebar preserves groups, folding and native group actions';
+  const groupToggle = '[aria-controls="connection-group-' + newGroupId + '"]';
+  await mouse(groupToggle);
+  assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), true);
+  await click('折叠侧边栏');
+  await until(() => evaluate(`document.querySelector('#server-sidebar').classList.contains('collapsed')`), 'sidebar folded');
+  assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), true, 'collapsing sidebar must retain the group folding state');
+  await mouse(groupToggle);
+  assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), false);
+  await context(groupToggle, '.connection-group-menu');
+  await menuClick('名称与图标…', '.connection-group-menu');
+  await until(() => evaluate(`document.getElementById('connection-group-name')?.value === '实验设备'`), 'compact group settings');
+  await click('取消'); await noDialog();
+  await mouse('[aria-label="新建连接分组"]'); await fill('#connection-group-name', '收起态分组'); await click('保存分组'); await noDialog();
+  await context('.connection-group[aria-label="收起态分组"] .connection-group-toggle', '.connection-group-menu');
+  await menuClick('删除分组（保留连接）', '.connection-group-menu'); await click('确认删除'); await noDialog();
+  await until(() => evaluate(`!document.querySelector('.connection-group[aria-label="收起态分组"]')`), 'compact group deleted');
+  await picture('dark-compact-groups');
+  await click('展开侧边栏');
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(groupToggle)}).getAttribute('aria-expanded')`), 'true', 'expanding sidebar must retain the compact group expansion');
+  assert.equal(await connectCount(), 0);
+  result.checks.compactSidebarPreservesGroupActions = true;
   await picture('dark-home');
   await click('切换为白色主题'); await until(() => evaluate(`document.documentElement.dataset.theme === 'light'`), 'light theme'); await picture('light-home');
 
@@ -136,6 +174,42 @@ async function run() {
   assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 1);
   result.checks.reconnectShortcutPreservesRenderer = true;
+
+  phase = 'native sidebar and tab menus preserve each same-name terminal identity';
+  const sourceSession = await activeSession(), duplicateCount = await connectCount();
+  await evaluate(`window.fixtureSourceTab = document.querySelector('.terminal-tab.active'); window.fixtureSourceTab.dataset.fixtureTab = 'source'`);
+  await context('.host');
+  await menuClick('新建同名终端');
+  await until(async () => await activeSession() !== sourceSession && (await evaluate(`document.querySelectorAll('.terminal-tab').length`)) === 2, 'expanded sidebar creates another terminal');
+  const duplicateSession = await activeSession();
+  await evaluate(`window.fixtureDuplicateTab = document.querySelector('.terminal-tab.active'); window.fixtureDuplicateTab.dataset.fixtureTab = 'duplicate'`);
+  assert.equal(await connectCount(), duplicateCount + 1);
+  assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  assert.equal(await evaluate(`window.fixtureSourceTab.children[1].textContent`), '开发工作站');
+  assert.equal(await evaluate(`window.fixtureDuplicateTab.children[1].textContent`), '开发工作站');
+  await mouse('.host');
+  assert.equal(await activeSession(), duplicateSession, 'ordinary sidebar click keeps the selected same-name terminal');
+  await context('[data-fixture-tab="source"]'); await menuClick('切换到此终端');
+  await until(async () => await activeSession() === sourceSession, 'tab menu switches to the original terminal');
+  await context('[data-fixture-tab="duplicate"]'); await menuClick('切换到此终端');
+  await until(async () => await activeSession() === duplicateSession, 'tab menu targets the clicked duplicate instead of the first match');
+  await evaluate(`window.appConnectionsFixture.disconnect(${JSON.stringify(duplicateSession)})`);
+  await until(() => evaluate(`Boolean(document.querySelector('.terminal-reconnect'))`), 'duplicate disconnected');
+  await mouse('[data-fixture-tab="source"]');
+  await context('[data-fixture-tab="duplicate"]'); await menuClick('重新连接此终端');
+  await until(async () => ![sourceSession, duplicateSession, ''].includes(await activeSession()), 'clicked duplicate reconnected');
+  assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixtureDuplicateTab && document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
+  assert.equal(await connectCount(), duplicateCount + 2);
+  assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 2);
+  await click('折叠侧边栏'); await context('.host'); await picture('dark-compact-connection-menu');
+  await menuClick('新建同名终端');
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 3`), 'compact sidebar creates another terminal');
+  assert.equal(await connectCount(), duplicateCount + 3);
+  await evaluate(`window.fixtureSourceTab.click(); [...document.querySelectorAll('.terminal-tab')].filter(tab => tab !== window.fixtureSourceTab).forEach(tab => tab.querySelector('.tab-close').click())`);
+  await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 1`), 'only duplicate test terminals closed');
+  assert.equal(await activeSession(), sourceSession);
+  await click('展开侧边栏');
+  result.checks.nativeMenusTargetSameNameTerminals = true;
 
   phase = 'plus opens independent home tabs and quick connect remains separate';
   const reconnectedId = await activeSession(), connectsBeforeHomes = await connectCount();
@@ -260,6 +334,26 @@ async function run() {
   await picture('light-command-dock-small'); await click('切换为黑色主题'); await picture('dark-command-dock-small');
   window.setSize(1280, 860); await delay(60); await click('收起命令库');
   result.checks.independentTerminalPaletteAndDockLayout = true;
+
+  phase = 'sidebar status follows the saved endpoint rather than only its profile id';
+  const savedAddress = await evaluate(`window.appConnectionsFixture.state().then(state => state.profiles[0].host)`);
+  const statusConnects = await connectCount(), statusSession = await activeSession();
+  await context('.host'); await menuClick('编辑连接设置…');
+  await fill('#host-address', 'replacement.example.test'); await click('保存'); await noDialog();
+  await until(() => evaluate(`document.querySelector('.host-address').textContent.includes('replacement.example.test')`), 'replacement address saved');
+  assert.equal(await evaluate(`Boolean(document.querySelector('.host.active, .host .host-dot'))`), false, 'an old running transport must not mark its replacement endpoint active or online');
+  await context('.terminal-tab.active'); await menuClick('此地址的指纹设置…');
+  await until(() => evaluate(`Boolean(document.querySelector('.connection-properties .property-endpoint'))`), 'original tab fingerprint properties opened');
+  assert.equal(await evaluate(`document.querySelector('.connection-properties .property-endpoint > span').textContent`), savedAddress + ':22', 'tab fingerprint properties must remain bound to the running endpoint');
+  await click('取消'); await noDialog();
+  await click('折叠侧边栏');
+  assert.equal(await evaluate(`Boolean(document.querySelector('.host.active, .host .host-dot'))`), false);
+  await context('.host'); await menuClick('编辑连接设置…');
+  await fill('#host-address', savedAddress); await click('保存'); await noDialog();
+  await until(() => evaluate(`Boolean(document.querySelector('.host.active .host-dot'))`), 'restored matching address shows live status');
+  assert.equal(await connectCount(), statusConnects); assert.equal(await activeSession(), statusSession);
+  await click('展开侧边栏');
+  result.checks.sidebarStatusUsesConnectionIdentity = true;
 
   phase = 'cancel reconnect is wired to the current attempt';
   const activeId = await evaluate(`document.querySelector('[data-terminal-session][data-active="true"]').dataset.terminalSession`);

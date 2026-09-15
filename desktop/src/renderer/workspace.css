@@ -38,7 +38,9 @@
 .property-choice > span { display: flex; flex-direction: column; gap: 6px; }
 .property-choice strong { color: var(--text); font-size: 13px; font-weight: 500; }
 .property-choice span > span { color: var(--text-muted); font-size: 12px; }
-.connection-context-menu { width: 230px; }
+.connection-context-menu { width: 230px; max-width: calc(100vw - 10px); max-height: calc(100vh - 10px); overflow-y: auto; }
+.connection-menu-endpoint { padding: 0 10px 8px; color: var(--text-subtle); font: 10px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connection-menu-note { padding: 0 10px 8px; color: var(--text-muted); font-size: 10px; line-height: 1.6; }
 @media (max-width: 1150px) {
   .files-toggle .files-toggle-label { display: none; }
   .files-toggle { width: 32px; padding: 0; justify-content: center; position: relative; }

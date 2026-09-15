@@ -88,6 +88,27 @@ async function run() {
   assert.equal((await state()).sessions.length, 2);
   result.checks.onlineDirectFocusesExisting = true;
 
+  phase = 'same-name duplicate opens independently and direct keeps the active match';
+  await reset({ tabs: [first.tabId, second.tabId] });
+  const originalSession = (await state()).sessions.find(session => session.id === first.id);
+  await invoke('duplicate', [first.id]);
+  await until(async () => (await state()).sessions.length === 3, 'same-name duplicate connected');
+  const duplicateState = await state(), sameName = duplicateState.sessions.find(session => session.id === duplicateState.activeId);
+  assert.ok(sameName); assert.notEqual(sameName.id, first.id); assert.notEqual(sameName.tabId, first.tabId);
+  assert.equal(sameName.profile.name, first.profile.name);
+  assert.deepEqual(duplicateState.sessions.find(session => session.id === first.id), originalSession);
+  assert.deepEqual(duplicateState.tabs.slice(0, 2), [first.tabId, second.tabId]);
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, 1);
+  await invoke('direct', [profile]);
+  assert.equal((await state()).activeId, sameName.id, 'direct click must not jump back to the first matching tab');
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, 1);
+  await invoke('setClosed', [{ [sameName.id]: '断开' }]);
+  await until(async () => !!(await state()).closed[sameName.id], 'duplicate offline');
+  await invoke('direct', [profile]);
+  await until(async () => (await state()).activeId === first.id, 'direct prefers a live matching transport');
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, 1);
+  result.checks.sameNameDuplicatesPreserveActiveMatch = true;
+
   phase = 'offline reconnect retains tab identity and suppresses duplicate attempts';
   await reset({ offline: true }); backend.plan = 'deferred';
   await invoke('reconnect', [first.id], false);
@@ -220,6 +241,22 @@ async function run() {
   await until(async () => (await state()).catalog[0].host === 'replacement.example.test', 'new endpoint saved');
   assert.equal((await state()).sessions[0].profile.host, profile.host);
   result.checks.endpointEditDoesNotRetargetOpenSession = true;
+
+  phase = 'duplicating an old tab preserves its endpoint without replacing saved credentials';
+  backend.calls = [];
+  await invoke('duplicate', [first.id]);
+  const duplicateCall = backend.calls.find(call => call.method === 'connect');
+  assert.ok(duplicateCall); assert.equal(duplicateCall.value.profile.host, profile.host);
+  assert.notEqual(duplicateCall.value.profile.id, profile.id);
+  assert.equal(duplicateCall.value.credentials, undefined);
+  await until(async () => (await state()).sessions.length === 3, 'old endpoint duplicate added');
+  const oldDuplicate = (await state()).sessions.find(session => session.profile.id === duplicateCall.value.profile.id);
+  assert.ok(oldDuplicate); assert.notEqual(oldDuplicate.tabId, first.tabId);
+  assert.equal((await state()).sessions.find(session => session.id === first.id).profile.host, profile.host);
+  assert.equal((await state()).catalog.find(value => value.id === profile.id).host, 'replacement.example.test');
+  await invoke('close', [oldDuplicate.id]); await invoke('setActiveId', [first.id]);
+  await until(async () => (await state()).sessions.length === 2 && (await state()).activeId === first.id, 'old endpoint duplicate closed independently');
+  result.checks.oldTargetDuplicateUsesSeparateProfile = true;
 
   phase = 'old live target cannot overwrite replacement target credentials';
   backend.calls = []; backend.sudoMissing = true;

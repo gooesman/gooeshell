@@ -22,6 +22,7 @@ function Fixture() {
       direct: (profile: HostProfile, newTab?: boolean, targetTabId?: string) => connection.direct(profile, newTab, targetTabId),
       establish: connection.establish,
       reconnect: (id: string) => connection.reconnect(sessions.find(session => session.id === id)!),
+      duplicate: (id: string) => connection.duplicate(sessions.find(session => session.id === id)!),
       close: connection.close,
       cancel: connection.cancel,
       sudo: (id: string) => connection.sudo(sessions.find(session => session.id === id)!),

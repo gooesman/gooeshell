@@ -46,7 +46,7 @@
 .connection-group-empty { padding: 5px 13px 10px; font-size: 10px; line-height: 1.7; color: var(--text-subtle); }
 .connection-ungrouped-label { display: flex; align-items: center; gap: 7px; color: var(--text-muted); padding: 8px 10px; font-size: 11px; }
 .connection-ungrouped-label > small { color: var(--text-subtle); }
-.connection-group-menu { width: 200px; z-index: 90; }
+.connection-group-menu { width: 200px; min-width: 0; max-width: calc(100vw - 10px); max-height: calc(100vh - 10px); overflow: auto; z-index: 90; }
 .connection-sidebar .host-icon { display: grid; place-items: center; flex-shrink: 0; }
 .connection-sidebar:not(.collapsed) .host { min-height: 64px; margin-bottom: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface-raised) 45%, var(--surface)); }
 .connection-sidebar:not(.collapsed) .host:hover { background: var(--surface-raised); border-color: var(--border-strong); }
@@ -57,9 +57,33 @@
 .connection-sidebar:not(.collapsed) .connection-group { margin-bottom: 16px; }
 .connection-sidebar .sidebar-bottom button > svg { flex-shrink: 0; }
 .connection-sidebar .sidebar-bottom kbd { white-space: nowrap; font-size: 8px; }
-.connection-sidebar.collapsed .sidebar-actions .item-label, .connection-sidebar.collapsed .connection-group-heading, .connection-sidebar.collapsed .connection-ungrouped-label { display: none; }
+.connection-sidebar.collapsed .sidebar-actions .item-label { display: none; }
+.sidebar.connection-sidebar.collapsed .connection-heading { display: flex; justify-content: center; padding: 0 7px 9px; }
+.sidebar.connection-sidebar.collapsed .connection-heading > span { display: none; }
+.sidebar.connection-sidebar.collapsed .connection-heading .icon-button { width: 30px; height: 26px; }
 .connection-sidebar.collapsed .connection-group { margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
 .connection-sidebar.collapsed .connection-group:last-child { border: 0; }
 .connection-sidebar.collapsed .hosts { overflow-x: hidden; }
 .connection-sidebar.collapsed .sidebar-actions .button { padding-left: 0; padding-right: 0; }
+.connection-sidebar.collapsed .connection-group-heading { display: flex; position: relative; padding: 0; margin-bottom: 3px; }
+.connection-sidebar.collapsed .connection-group-toggle { display: grid; grid-template-columns: 10px minmax(0, 1fr) 10px; grid-template-rows: 16px 14px; width: 100%; gap: 3px 0; padding: 6px 0; text-align: center; }
+.connection-sidebar.collapsed .connection-group-toggle > svg:not(.connection-group-chevron) { grid-column: 2; grid-row: 1; justify-self: center; }
+.connection-sidebar.collapsed .connection-group-chevron { grid-column: 1; grid-row: 1; width: 10px; align-self: center; }
+.connection-sidebar.collapsed .connection-group-toggle > span { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; font-size: 10px; line-height: 14px; }
+.connection-sidebar.collapsed .connection-group-toggle > small { grid-column: 3; grid-row: 1; align-self: center; justify-self: center; font-size: 8px; line-height: 14px; }
+.connection-sidebar.collapsed .connection-group-more { position: absolute; right: -2px; top: 4px; width: 16px; height: 18px; background: var(--surface); }
+.connection-sidebar.collapsed .connection-group-heading:hover .connection-group-toggle > small, .connection-sidebar.collapsed .connection-group-heading:focus-within .connection-group-toggle > small { opacity: 0; }
+.connection-sidebar.collapsed .connection-group-heading:focus-within .connection-group-more { opacity: 1; }
+.connection-sidebar.collapsed .connection-group-more:hover { background: var(--surface-selected); }
+.connection-sidebar.collapsed .connection-ungrouped-label { display: grid; grid-template-columns: 1fr 10px; gap: 3px 0; padding: 6px 0; margin-bottom: 3px; text-align: center; }
+.connection-sidebar.collapsed .connection-ungrouped-label > svg { grid-column: 1 / -1; grid-row: 1; justify-self: center; }
+.connection-sidebar.collapsed .connection-ungrouped-label > span { grid-column: 1 / -1; grid-row: 2; font-size: 10px; line-height: 14px; }
+.connection-sidebar.collapsed .connection-ungrouped-label > small { grid-column: 2; grid-row: 1; align-self: center; font-size: 8px; }
+.sidebar.connection-sidebar.collapsed .host { flex-direction: column; gap: 4px; padding: 8px 2px; border: 1px solid transparent; }
+.sidebar.connection-sidebar.collapsed .host.active { border-color: var(--border-strong); }
+.sidebar.connection-sidebar.collapsed .host-copy { display: block; width: 100%; }
+.sidebar.connection-sidebar.collapsed .host-name { font-size: 9px; font-weight: 500; line-height: 12px; text-align: center; }
+.sidebar.connection-sidebar.collapsed .host-address { display: none; }
+.sidebar.connection-sidebar.collapsed .host-dot { display: block; position: absolute; top: 5px; right: 4px; width: 4px; height: 4px; }
+.sidebar.connection-sidebar.collapsed .sidebar-empty { display: block; padding: 8px 0; font-size: 10px; text-align: center; overflow-wrap: anywhere; }
 @media (max-height: 750px) { .connection-manager-dialog .modal-body { padding-top: 17px; padding-bottom: 17px; } .connection-section-label { margin-top: 19px; padding-top: 16px; } }
