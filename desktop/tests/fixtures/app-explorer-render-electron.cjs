@@ -47,6 +47,18 @@ const mutationCalls = method => evaluate(`${fixture}.calls.filter(call => call.m
 async function submitName(value) { await fill('#file-new-name', value); await evaluate(`document.getElementById('file-name-form').requestSubmit()`); await noDialog(); }
 async function host(letter) { await evaluate(`(() => { const button = [...document.querySelectorAll('.host')].find(value => value.textContent.includes(${JSON.stringify('测试服务器 ' + letter)})); button.click(); })()`); await until(() => evaluate(`document.querySelector('[data-terminal-session][data-active="true"]')?.dataset.terminalSession.includes(${JSON.stringify('fixture-' + letter.toLowerCase())})`), 'active server ' + letter); }
 async function pathIs(path) { await until(() => evaluate(`document.querySelector('[aria-label="远程目录路径"]').value === ${JSON.stringify(path)}`), 'remote path ' + path); }
+async function assertSort(side, label, direction, files) {
+  const name = side === 'remote' ? '远程' : '本地';
+  const state = await evaluate(`(() => { const pane = document.querySelector(${JSON.stringify(pane(side))}); return { names: [...pane.querySelectorAll('tbody .file-name')].map(cell => cell.title), headers: [...pane.querySelectorAll('th')].map(header => ({ label: header.querySelector('button').getAttribute('aria-label'), sort: header.getAttribute('aria-sort'), up: !!header.querySelector('.lucide-arrow-up'), down: !!header.querySelector('.lucide-arrow-down') })) }; })()`);
+  assert.deepEqual([...state.names.slice(0, 2)].sort(), ['docs', 'locked'], 'folders stay above files: ' + label + ' ' + direction);
+  assert.deepEqual(state.names.slice(2), files, side + ' ' + label + ' ' + direction);
+  for (const header of state.headers) {
+    const active = header.label === name + '按' + label + '排序';
+    assert.equal(header.sort, active ? direction : 'none', header.label + ' aria-sort');
+    assert.equal(header.up, active && direction === 'ascending', header.label + ' up arrow');
+    assert.equal(header.down, active && direction === 'descending', header.label + ' down arrow');
+  }
+}
 async function run() {
   await app.whenReady();
   window = new BrowserWindow({ show: false, width: 1510, height: 1050, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
@@ -57,6 +69,36 @@ async function run() {
   await host('A'); const sessionA = await activeSession(); await click('展开文件管理'); await pathIs('/home/a');
   // More vertical room makes the blank-area native pointer test independent of platform font metrics.
   await evaluate(`document.getElementById('file-manager').style.height = '550px'`);
+  phase = 'column sorting and direction arrows';
+  await until(() => evaluate(visible(row('/home/a/alpha.txt'))), 'initial files');
+  await mouse(row('/home/a/alpha.txt'));
+  for (const label of ['名称', '大小', '权限', '修改时间']) {
+    const ascending = label === '名称' ? ['alpha.txt', 'beta.txt'] : ['beta.txt', 'alpha.txt'];
+    if (label !== '名称') await mouse(`[aria-label="远程按${label}排序"]`);
+    await assertSort('remote', label, 'ascending', ascending);
+    await mouse(`[aria-label="远程按${label}排序"]`);
+    await assertSort('remote', label, 'descending', [...ascending].reverse());
+    assert.deepEqual(await evaluate(`[...document.querySelectorAll(${JSON.stringify(pane('remote') + ' [aria-selected="true"]')})].map(value => value.dataset.filePath)`), ['/home/a/alpha.txt']);
+  }
+  result.checks.remoteColumnsSortWithArrows = true;
+  phase = 'pane sort independence and persistence';
+  await click('展开本地文件栏');
+  await until(() => evaluate(visible(row('C:\\Fixture\\alpha.txt', 'local'))), 'initial local files');
+  await assertSort('local', '名称', 'ascending', ['alpha.txt', 'beta.txt']);
+  await mouse('[aria-label="本地按大小排序"]');
+  await assertSort('local', '大小', 'ascending', ['beta.txt', 'alpha.txt']);
+  await assertSort('remote', '修改时间', 'descending', ['alpha.txt', 'beta.txt']);
+  await click('刷新目录', pane('remote'));
+  await assertSort('remote', '修改时间', 'descending', ['alpha.txt', 'beta.txt']);
+  await mouse(row('/home/a/alpha.txt'));
+  await click('收起远程文件栏'); await click('展开远程文件栏');
+  await assertSort('remote', '修改时间', 'descending', ['alpha.txt', 'beta.txt']);
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(row('/home/a/alpha.txt'))}).getAttribute('aria-selected')`), 'true');
+  await assertSort('local', '大小', 'ascending', ['beta.txt', 'alpha.txt']);
+  const sortingImage = await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }); await fs.writeFile(report + '.sorting.png', sortingImage.toPNG());
+  result.checks.paneSortingIsIndependentAndPersists = true;
+  await mouse('[aria-label="远程按名称排序"]'); await mouse('[aria-label="本地按名称排序"]');
+  await click('取消', pane('remote')); await click('收起本地文件栏');
   phase = 'remote toolbar create';
   await click('远程新建文件'); await submitName('created.txt'); await until(() => evaluate(visible(row('/home/a/created.txt'))), 'created remote file');
   await click('远程新建文件夹'); await submitName('created-dir'); await until(() => evaluate(visible(row('/home/a/created-dir'))), 'created remote folder');

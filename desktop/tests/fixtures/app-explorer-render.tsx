@@ -26,7 +26,7 @@ function volume(sessionId: string, side = 'remote') {
     const base = side === 'local' ? 'C:\\Fixture' : rootFor(sessionId), separator = side === 'local' ? '\\' : '/';
     for (const [name, type] of [['docs', 'directory'], ['locked', 'directory'], ['alpha.txt', 'file'], ['beta.txt', 'file']] as const) {
       const path = base + separator + name;
-      entries.set(path, { name, path, type, size: type === 'file' ? 7 : 0, modified: 1_789_027_200_000, mode: type === 'file' ? 0o100644 : 0o40755 });
+      entries.set(path, { name, path, type, size: type === 'file' ? (name === 'alpha.txt' ? 2048 : 12) : 0, modified: name === 'beta.txt' ? 1_788_940_800_000 : 1_789_027_200_000, mode: type === 'file' ? (name === 'alpha.txt' ? 0o100644 : 0o100600) : 0o40755 });
     }
     const nested = base + separator + 'docs' + separator + 'nested.txt';
     entries.set(nested, { name: 'nested.txt', path: nested, type: 'file', size: 5, modified: 1_789_027_200_000, mode: 0o100644 });

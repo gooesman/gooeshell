@@ -17,3 +17,8 @@
 .toast-stack .toast { pointer-events:auto; }
 .app-shell .files-area { min-height:260px; }
 .app-shell .files-area:has(.transfer-area:not(.queue-collapsed)) { min-height:340px; }
+.file-sort-button { display:flex; align-items:center; gap:5px; width:100%; min-height:24px; padding:2px 0; text-align:left; font:inherit; color:var(--text-muted); border-radius:4px; white-space:nowrap; }
+.file-sort-button:hover,.file-sort-button.active { color:var(--text); }
+.file-sort-button:focus-visible { outline:1px solid var(--border-strong); outline-offset:2px; }
+.file-sort-arrow { display:inline-flex; align-items:center; justify-content:center; flex:0 0 12px; width:12px; }
+.file-table .size-col .file-sort-button { justify-content:flex-end; }
