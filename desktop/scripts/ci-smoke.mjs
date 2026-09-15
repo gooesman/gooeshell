@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -123,7 +123,30 @@ try {
   assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:true,remoteDisabled:true});
   assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
   assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
-  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value }, null, 2) + '\n');
+  const resources = target === 'mac' ? path.resolve(path.dirname(executable), '../Resources') : path.join(path.dirname(executable), 'resources');
+  // Load the library from the packaged ASAR with the packaged Node runtime.
+  // This catches production dependencies accidentally left in devDependencies.
+  const archiveSmoke = String.raw`
+    const fs=require('node:fs/promises'),path=require('node:path');
+    const {packLocalArchive,extractLocalArchive}=require(process.argv[2]);
+    (async()=>{
+      const root=process.argv[1],source=path.join(root,'archive-source'),target=path.join(root,'archive-target');
+      await fs.mkdir(path.join(source,'空目录'),{recursive:true});await fs.mkdir(target);
+      const text='gooeshell 压缩传输';await fs.writeFile(path.join(source,'中文.txt'),text);
+      const archive=path.join(root,'smoke.tar.gz'),signal=new AbortController().signal;
+      const packed=await packLocalArchive(source,archive,signal);
+      const extracted=await extractLocalArchive(archive,target,'archive-source',signal,()=>{},packed.originalBytes);
+      if(await fs.readFile(path.join(target,'archive-source','中文.txt'),'utf8')!==text)throw new Error('Archive contents changed');
+      if(!(await fs.stat(path.join(target,'archive-source','空目录'))).isDirectory())throw new Error('Missing empty directory');
+      if(extracted.entries!==3)throw new Error('Unexpected archive entries');
+      console.log(JSON.stringify({entries:extracted.entries,bytes:extracted.originalBytes}));
+    })().catch(error=>{console.error(error);process.exitCode=1;});
+  `;
+  const archiveResult = await new Promise((resolve, reject) => execFile(executable,
+    ['-e', archiveSmoke, fileRoot, path.join(resources, 'app.asar/dist-main/main/local-archive.js')],
+    { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 },
+    (error, stdout, stderr) => error ? reject(new Error(`Packaged archive smoke failed: ${stderr || error.message}`)) : resolve(JSON.parse(stdout.trim()))));
+  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value, archive:archiveResult }, null, 2) + '\n');
   console.log(`Packaged application smoke passed: ${target}-${arch} ${version}`);
 } catch (error) {
   await fs.writeFile(reportFile, JSON.stringify({ success: false, target, arch, error: String(error), logs }, null, 2) + '\n');

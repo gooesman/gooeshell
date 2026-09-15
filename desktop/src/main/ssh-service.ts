@@ -13,6 +13,7 @@ import { decodeEditableText, encodeEditableText, serializeTextWrite, textConflic
 import {cleanCommandText} from './command-store';
 import {readTerminalDirectory, type TerminalDirectory} from './terminal-cwd';
 import { remoteMutationPath } from './file-mutations';
+import { performArchiveTransfer } from './archive-transfer';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -757,8 +758,10 @@ export class SshService {
     const session = this.session(request.sessionId);
     if (request.elevated) throw new Error('本版暂不支持 sudo 大文件传输。请先传入自己有权限的目录；没有执行任何上传或下载。');
     if (request.direction !== 'upload' && request.direction !== 'download') throw new Error('无效的传输方向');
+    if (request.mode !== undefined && request.mode !== 'direct' && request.mode !== 'archive') throw new Error('无效的传输方式');
     validPath(request.source); validPath(request.destinationDir);
-    const info: TransferInfo = { id: randomUUID(), sessionId: session.id, direction: request.direction, name: request.direction === 'upload' ? path.basename(request.source) : path.posix.basename(request.source), source: request.source, destination: request.destinationDir, total: 0, done: 0, state: 'queued' };
+    request = { ...request, mode: request.mode ?? 'direct' };
+    const info: TransferInfo = { id: randomUUID(), sessionId: session.id, direction: request.direction, mode: request.mode, name: request.direction === 'upload' ? path.basename(request.source) : path.posix.basename(request.source), source: request.source, destination: request.destinationDir, total: 0, done: 0, state: 'queued' };
     const job: TransferJob = { info, abort: new AbortController() };
     this.jobs.set(info.id, job);
     let last = 0;
@@ -770,13 +773,19 @@ export class SshService {
       try {
         job.client = await this.openClient(session, job.abort.signal);
         if (job.abort.signal.aborted) throw new Error('已取消');
-        const sftp = await sftpCall<SFTPWrapper>(cb => job.client!.sftp(cb));
+        const sftp = await abortable(sftpCall<SFTPWrapper>(cb => job.client!.sftp((error, channel) => {
+          if (channel) { trackSftp(channel); channel.on('error', () => {}); }
+          cb(error, channel);
+        })), job.abort.signal);
         sftp.on('error', () => {});
-        await performSftpTransfer(sftp, request, info, job.abort.signal, emit, targetEndpoint(session));
+        if (request.mode === 'archive') {
+          await performArchiveTransfer(job.client, sftp, request, info, job.abort.signal, emit,
+            targetEndpoint(session), message => this.emit({ type: 'notice', message }));
+        } else await performSftpTransfer(sftp, request, info, job.abort.signal, emit, targetEndpoint(session));
         info.state = 'completed';
       } catch (error) {
         info.state = job.abort.signal.aborted ? 'cancelled' : 'failed';
-        info.error = job.abort.signal.aborted ? '传输已取消，可校验 .gooeshell.part 后续传' : remoteError(error).message;
+        info.error = job.abort.signal.aborted ? (request.mode === 'archive' ? '打包传输已取消，再次尝试会重新打包' : '传输已取消，可校验 .gooeshell.part 后续传') : remoteError(error).message;
       } finally {
         job.client?.destroy();
         this.jobs.delete(info.id);
@@ -790,7 +799,7 @@ export class SshService {
     const job = this.jobs.get(id);
     if (!job) return;
     job.abort.abort();
-    job.client?.destroy();
+    if (job.info.mode !== 'archive') job.client?.destroy();
   }
 
   terminalCwd(request: {sessionId: string}): Promise<TerminalDirectory> {

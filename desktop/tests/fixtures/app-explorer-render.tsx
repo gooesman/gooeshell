@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '../../src/renderer/App';
 import { api, isPreview } from '../../src/renderer/api';
-import type { AppEvent, FileEntry, FileListing, HostProfile, RemoteRequest } from '../../src/shared/types';
+import type { AppEvent, FileEntry, FileListing, HostProfile, RemoteRequest, TransferInfo } from '../../src/shared/types';
 import '../../src/renderer/styles.css';
 import '../../src/renderer/terminal-fonts.css';
 
@@ -36,8 +36,10 @@ function volume(sessionId: string, side = 'remote') {
 let held: (() => void) | undefined;
 const control = {
   calls, denyNext: '', denyPath: '', holdNext: '', held: false, cwd: {} as Record<string, string>,
+  chosenFiles: [] as string[], transfers: [] as TransferInfo[],
   release: () => { held?.(); held = undefined; control.held = false; },
   emit: (event: AppEvent) => listeners.forEach(listener => listener(event)),
+  transferState: (id: string, state: TransferInfo['state'], done = 0, total = 0) => { const transfer = control.transfers.find(item => item.id === id)!; Object.assign(transfer, { state, done, total }); control.emit({ type: 'transfer', transfer: { ...transfer } }); },
   entries: (sessionId: string, side = 'remote') => [...volume(sessionId, side).keys()],
   entry: (sessionId: string, path: string, side = 'remote') => volume(sessionId, side).get(path),
 };
@@ -64,6 +66,14 @@ api.onEvent = listener => { listeners.add(listener); return () => { listeners.de
 api.disconnect = async sessionId => control.emit({ type: 'sessionClosed', sessionId, message: 'fixture disconnected' });
 api.localList = path => list({ sessionId: '', path, side: 'local' });
 api.remoteList = request => list({ ...request, side: 'remote' });
+api.chooseFiles = async () => { await record('chooseFiles', { sessionId: '', path: '' }); return [...control.chosenFiles]; };
+api.transfer = async request => {
+  calls.push({ method: 'transfer', request: { ...request } });
+  const name = request.source.split(/[\\/]/).at(-1)!, separator = request.direction === 'upload' ? '/' : '\\';
+  const transfer: TransferInfo = { id: `fixture-transfer-${control.transfers.length + 1}`, sessionId: request.sessionId, direction: request.direction, mode: request.mode, source: request.source, destination: request.destinationDir + separator + name, name, state: 'queued', done: 0, total: 0 };
+  control.transfers.push(transfer); control.emit({ type: 'transfer', transfer: { ...transfer } }); return transfer.id;
+};
+api.cancelTransfer = async id => { calls.push({ method: 'cancelTransfer', request: { id } }); control.transferState(id, 'cancelled'); };
 api.mkdir = request => create(request, 'directory');
 api.rename = async request => {
   await record('rename', request); const entries = volume(request.sessionId, request.side), entry = entries.get(request.path);

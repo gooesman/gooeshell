@@ -48,12 +48,13 @@ export interface FileListing { path: string; entries: FileEntry[]; }
 export interface RemoteRequest { sessionId: string; path: string; sudoPassword?: string; elevated?: boolean; }
 export interface TransferRequest {
   sessionId: string; direction: 'upload' | 'download'; source: string; destinationDir: string;
-  resume: boolean; sudoPassword?: string; elevated?: boolean;
+  resume: boolean; mode?: 'direct' | 'archive'; sudoPassword?: string; elevated?: boolean;
 }
 export interface TransferInfo {
   id: string; sessionId: string; direction: 'upload' | 'download'; name: string;
   source: string; destination: string; total: number; done: number;
-  state: 'queued' | 'checking' | 'transferring' | 'completed' | 'cancelled' | 'failed';
+  mode?: 'direct' | 'archive';
+  state: 'queued' | 'packing' | 'checking' | 'transferring' | 'extracting' | 'completed' | 'cancelled' | 'failed';
   error?: string;
 }
 export interface TextFile { text: string; truncated: boolean; }

@@ -4,6 +4,8 @@ gooeshell is an independent Windows-first product. The current graphical applica
 
 The graphical application does not run or repackage the WezTerm executables. Its new code is MIT licensed under `desktop/LICENSE`; dependency licenses are retained in the packaged Node modules and Electron distribution. Font provenance is recorded below.
 
+Compressed file transfers use the [node-tar](https://github.com/isaacs/node-tar) library (BlueOak-1.0.0 license) and Node.js streaming gzip locally; the remote helper uses Python's standard-library `tarfile` and `gzip`. Archive validation and the transfer workflow are independent gooeshell code. No remote service is installed.
+
 - Upstream: https://github.com/wezterm/wezterm
 - Imported revision: `9fa147c9532c7b175335f6453a4dd7ad7e6473b2`
 - Original license and third-party notices: `LICENSE.md`, `licenses/`, and per-component notices.

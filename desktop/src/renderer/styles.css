@@ -1529,25 +1529,6 @@ kbd {
 .modal-body p {
   line-height:1.8
 }
-.file-selection-bar {
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding:0 9px;
-  border-bottom:1px solid var(--border);
-  font-size:10px;
-  background:var(--surface-raised);
-  color:var(--text);
-  height:28px;
-  min-height:28px;
-  max-height:28px;
-  flex-shrink:0;
-  white-space:nowrap
-}
-.file-selection-bar button {
-  font-size:10px;
-  color:var(--text)
-}
 .connection-summary {
   display:flex;
   align-items:center;
@@ -1848,16 +1829,6 @@ button,input,select,textarea,a,[role=tab],.tabbar,.window-controls {
 .window-controls>button.window-close:hover {
   background:var(--danger-surface);
   color:var(--danger)
-}
-.file-selection-bar.idle {
-  background:var(--surface-raised);
-  color:var(--text)
-}
-.file-selection-bar>button {
-  white-space:nowrap
-}
-.file-selection-bar>button:disabled {
-  opacity:.28
 }
 .pane-collapse-button {
   width:23px;

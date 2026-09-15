@@ -22,3 +22,21 @@
 .file-sort-button:focus-visible { outline:1px solid var(--border-strong); outline-offset:2px; }
 .file-sort-arrow { display:inline-flex; align-items:center; justify-content:center; flex:0 0 12px; width:12px; }
 .file-table .size-col .file-sort-button { justify-content:flex-end; }
+.transfer-dialog .file-action-location { margin-bottom:12px; }
+.transfer-source-list { list-style:none; max-height:108px; overflow:auto; margin:0 0 20px; padding:8px 11px; border:1px solid var(--border); border-radius:8px; background:var(--surface); }
+.transfer-source-list li { font:11px/1.8 var(--mono); color:var(--text-muted); overflow-wrap:anywhere; padding:2px 0; }
+.transfer-mode-options { min-width:0; border:0; padding:0; margin:0; display:flex; flex-direction:column; gap:9px; }
+.transfer-mode-options legend { padding:0; margin-bottom:10px; font-size:12px; color:var(--text-muted); }
+.transfer-mode-choice { display:flex; align-items:flex-start; gap:11px; padding:13px 14px; border:1px solid var(--border); border-radius:10px; cursor:pointer; }
+.transfer-mode-choice:hover,.transfer-mode-choice.selected { border-color:var(--border-strong); background:var(--surface-selected); }
+.transfer-mode-choice input { flex:0 0 auto; width:14px; height:14px; margin:2px 0 0; accent-color:var(--text); }
+.transfer-mode-choice>span { display:flex; flex-direction:column; gap:6px; }
+.transfer-mode-choice strong { font-size:12px; font-weight:500; color:var(--text); }
+.transfer-mode-choice>span>span,.transfer-dialog .transfer-mode-note { color:var(--text-muted); font-size:11px; line-height:1.75; }
+.transfer-dialog .transfer-mode-note { margin:14px 0 0; }
+.transfer-mode-badge { margin-left:7px; padding:1px 5px; border:1px solid var(--border); border-radius:4px; color:var(--text-muted); font-size:9px; }
+.transfer-row .transfer-detail { width:172px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.transfer-row .transfer-status { width:70px; }
+.transfer-progress.indeterminate>span { animation:transfer-stage-progress 1.5s ease-in-out infinite; }
+@keyframes transfer-stage-progress { from { transform:translateX(-110%); } to { transform:translateX(260%); } }
+@media (prefers-reduced-motion:reduce) { .transfer-progress.indeterminate>span { animation:none; opacity:.6; } }

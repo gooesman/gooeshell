@@ -1,6 +1,6 @@
 {
   "name": "gooeshell",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "description": "Graphical SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
@@ -45,7 +45,8 @@
     "lucide-react": "latest",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "ssh2": "1.17.0"
+    "ssh2": "1.17.0",
+    "tar": "^7.5.22"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
