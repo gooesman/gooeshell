@@ -14,6 +14,7 @@ import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
 import {createLocalFile,createLocalDirectory,removeLocalFile} from './file-mutations';
 import {systemFontCatalog} from './font-catalog';
+import {configureApplicationMenu} from './application-menu';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let commands:CommandStore;let shuttingDown=false;let workerAvailable=false;
 // Electron scopes this lock to userData. Different test/portable data directories
@@ -74,6 +75,7 @@ async function fonts():Promise<string[]>{
 }
 const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','terminalCwd','transfer','cancelTransfer','chmod','runFile']);
 if(primaryInstance)app.whenReady().then(async()=>{
+ configureApplicationMenu();
  void systemFontCatalog().catch(()=>{});
  app.setName('gooeshell');if(process.platform==='win32')app.setAppUserModelId('com.gooesman.gooeshell');store=new Store(app.getPath('userData'));
  commands=new CommandStore(app.getPath('userData'));

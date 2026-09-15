@@ -1,13 +1,14 @@
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs/promises');
 const assert = require('node:assert/strict');
+const { configureApplicationMenu } = require('../../dist-main/main/application-menu.js');
 const url = process.env.GOOESHELL_APP_CONNECTIONS_URL;
 const report = process.env.GOOESHELL_APP_CONNECTIONS_REPORT;
 if (!url || new URL(url).hostname !== '127.0.0.1' || !report || !process.env.GOOESHELL_APP_CONNECTIONS_DATA) throw new Error('An isolated loopback fixture and data directory are required');
 app.setPath('userData', process.env.GOOESHELL_APP_CONNECTIONS_DATA);
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 const result = { checks: {}, errors: [], visuals: {} };
-let window, phase = 'startup';
+let window, phase = 'startup', mainNavigations = 0, pageLoads = 0;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = script => window.webContents.executeJavaScript(script);
 async function until(predicate, label) {
@@ -49,11 +50,34 @@ const connectCount = () => evaluate(`window.appConnectionsFixture.calls.filter(c
 const historySelector = '[aria-label="最近连接"] .recent-connection';
 const activeSession = () => evaluate(`document.querySelector('[data-terminal-session][data-active="true"]')?.dataset.terminalSession || ''`);
 async function shortcut(keyCode) {
+  window.focus(); window.webContents.focus();
+  await until(() => window.isFocused(), 'native shortcut fixture focus');
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: ['control', 'shift'] });
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: ['control', 'shift'] });
   await delay(35);
 }
 const noDialog = () => until(() => evaluate('!document.querySelector("[role=dialog]")'), 'dialog closed');
+async function workspaceSnapshot() {
+  return evaluate(`(async () => ({
+    boot: window.fixtureBootMarker,
+    tabs: [...document.querySelectorAll('.terminal-tab')].map(tab => tab.textContent),
+    sessions: [...document.querySelectorAll('[data-terminal-session]')].map(node => node.dataset.terminalSession),
+    active: document.querySelector('[data-terminal-session][data-active="true"]')?.dataset.terminalSession || '',
+    buffers: (window.__appConnectionTerminals || []).filter(term => term.element?.isConnected).map(term => Array.from({ length: term.buffer.normal.length }, (_, index) => term.buffer.normal.getLine(index)?.translateToString(true) || '').join('\\n')),
+    connects: window.appConnectionsFixture.calls.filter(call => call.method === 'connect').length,
+    disconnects: window.appConnectionsFixture.calls.filter(call => call.method === 'disconnect').length,
+    history: (await window.appConnectionsFixture.state()).history
+  }))()`);
+}
+async function assertRefreshShortcutPreservesWorkspace(label) {
+  await evaluate(`window.fixtureRefreshNodes = [...document.querySelectorAll('.terminal-tab, .xterm')]`);
+  const before = await workspaceSnapshot(), navigations = mainNavigations, loads = pageLoads;
+  await shortcut('R'); await delay(250);
+  assert.equal(mainNavigations, navigations, label + ': must not start renderer navigation');
+  assert.equal(pageLoads, loads, label + ': must not reload the page');
+  assert.deepEqual(await workspaceSnapshot(), before, label + ': workspace, buffers and connection history must survive');
+  assert.equal(await evaluate(`window.fixtureRefreshNodes.length === document.querySelectorAll('.terminal-tab, .xterm').length && window.fixtureRefreshNodes.every((node, index) => node === document.querySelectorAll('.terminal-tab, .xterm')[index])`), true, label + ': retain every original tab and terminal instance');
+}
 async function picture(label) {
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   window.webContents.invalidate();
@@ -64,10 +88,18 @@ async function picture(label) {
 }
 async function run() {
   await app.whenReady();
+  configureApplicationMenu();
   window = new BrowserWindow({ show: false, width: 1280, height: 860, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+  window.webContents.on('did-start-navigation', (_event, _url, _inPlace, mainFrame) => { if (mainFrame) mainNavigations++; });
+  window.webContents.on('did-finish-load', () => { pageLoads++; });
   window.webContents.on('console-message', (...args) => { const details = args[0], message = typeof args[2] === 'string' ? args[2] : details.message, level = typeof args[1] === 'number' ? args[1] : details.level; if (level >= 3 || level === 'error') result.errors.push(message); });
   window.webContents.on('render-process-gone', (_event, detail) => result.errors.push(JSON.stringify(detail)));
   await window.loadURL(url);
+  // Menu accelerators only run for a focused native window; a hidden fixture
+  // would miss the production Ctrl+Shift+R reload even with the default menu.
+  window.show(); window.focus(); window.webContents.focus();
+  await until(() => window.isFocused(), 'focused App window');
+  await evaluate(`window.fixtureBootMarker = crypto.randomUUID()`);
   await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(historySelector)})) && Boolean(document.querySelector("#connection-group-development .host"))`), 'App history and grouped sidebar');
   assert.equal(await evaluate(`document.getElementById('file-manager').hidden`), true);
   assert.equal(await evaluate(`document.getElementById('command-library-dock').hidden`), true);
@@ -187,6 +219,22 @@ async function run() {
   assert.equal(await evaluate(`document.querySelector('.xterm') === window.fixtureTerminalNode`), true);
   assert.equal(await evaluate(`window.fixtureSourceTab.children[1].textContent`), '开发工作站');
   assert.equal(await evaluate(`window.fixtureDuplicateTab.children[1].textContent`), '开发工作站');
+  phase = 'online refresh shortcut preserves both live terminals';
+  await delay(550);
+  await evaluate(`window.appConnectionsFixture.emit({ type: 'terminal', sessionId: ${JSON.stringify(sourceSession)}, data: btoa('\\r\\nSOURCE_SCROLLBACK_MUST_SURVIVE\\r\\n'), bytes: 0 }); window.appConnectionsFixture.emit({ type: 'terminal', sessionId: ${JSON.stringify(duplicateSession)}, data: btoa('\\r\\nDUPLICATE_SCROLLBACK_MUST_SURVIVE\\r\\n'), bytes: 0 })`);
+  await until(async () => { const state = await workspaceSnapshot(); return state.buffers.some(text => text.includes('SOURCE_SCROLLBACK_MUST_SURVIVE')) && state.buffers.some(text => text.includes('DUPLICATE_SCROLLBACK_MUST_SURVIVE')); }, 'both terminal buffers populated');
+  await evaluate(`document.querySelector('[data-terminal-session][data-active="true"] .xterm-helper-textarea').focus()`);
+  await assertRefreshShortcutPreservesWorkspace('online terminal');
+  result.checks.onlineRefreshShortcutPreservesWorkspace = true;
+  phase = 'settings draft survives the refresh shortcut';
+  await click('设置');
+  await fill('[aria-label="背景图片路径"]', 'draft-must-survive-refresh.png');
+  await evaluate(`window.fixtureRefreshDialog = document.querySelector('.settings-dialog')`);
+  await assertRefreshShortcutPreservesWorkspace('settings input');
+  assert.equal(await evaluate(`document.querySelector('.settings-dialog') === window.fixtureRefreshDialog && document.querySelector('[aria-label="背景图片路径"]').value === 'draft-must-survive-refresh.png'`), true);
+  await click('取消'); await noDialog();
+  result.checks.settingsRefreshShortcutPreservesDraft = true;
+  phase = 'native sidebar and tab menus preserve each same-name terminal identity';
   await mouse('.host');
   assert.equal(await activeSession(), duplicateSession, 'ordinary sidebar click keeps the selected same-name terminal');
   await context('[data-fixture-tab="source"]'); await menuClick('切换到此终端');
@@ -233,6 +281,11 @@ async function run() {
   assert.equal(await connectCount(), connectsBeforeHomes);
   assert.equal(await evaluate(`document.querySelector('.terminal-tab.active') === window.fixtureSecondHomeTab`), true);
   result.checks.plusCreatesIndependentHomeTabs = true;
+  phase = 'home refresh shortcut preserves hidden live terminal and both homes';
+  await evaluate(`document.querySelector('.terminal-tab.active').focus()`);
+  await assertRefreshShortcutPreservesWorkspace('home');
+  assert.equal(await evaluate(`Boolean(document.querySelector('.connection-home')) && document.querySelector('.terminal-tab.active') === window.fixtureSecondHomeTab`), true);
+  result.checks.homeRefreshShortcutPreservesWorkspace = true;
 
   phase = 'home only lists recent choices and never lists a remote home identity';
   const listsBeforeHome = await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'remoteList').length`);

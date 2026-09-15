@@ -11,7 +11,7 @@ test('full App creates independent home tabs, connects in place, and preserves c
 }, async t => {
   const root = process.cwd(), artifactsRoot = path.resolve('../.build'); await fs.mkdir(artifactsRoot, { recursive: true });
   const artifacts = await fs.mkdtemp(path.join(artifactsRoot, 'app-connections-')), report = path.join(artifacts, 'result.json');
-  const vite = await createServer({ configFile: false, root, cacheDir: path.join(artifacts, 'vite-cache'), plugins: [react()], server: { host: '127.0.0.1', port: 0, hmr: false } });
+  const vite = await createServer({ configFile: false, root, cacheDir: path.join(artifacts, 'vite-cache'), plugins: [react()], resolve: { alias: [{ find: /^@xterm\/xterm$/, replacement: path.join(root, 'tests/fixtures/xterm-app-connections-observed.ts') }] }, server: { host: '127.0.0.1', port: 0, hmr: false } });
   await vite.listen(); t.after(() => vite.close()); const port = (vite.httpServer!.address() as { port: number }).port;
   const executable = process.platform === 'darwin' ? path.join(root, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron') : path.join(root, 'node_modules/electron/dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   const env = { ...process.env, GOOESHELL_APP_CONNECTIONS_URL: `http://127.0.0.1:${port}/tests/fixtures/app-connections-render.html`, GOOESHELL_APP_CONNECTIONS_REPORT: report, GOOESHELL_APP_CONNECTIONS_DATA: path.join(artifacts, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
@@ -23,5 +23,6 @@ test('full App creates independent home tabs, connects in place, and preserves c
   t.diagnostic(`full App connections artifacts: ${artifacts}`); assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
   for (const name of ['initialHomeTab', 'recentEditSavesWithoutConnection', 'hostKeyCancellationQueue', 'groupCreateMoveAndSort', 'groupDeletionPreservesConnections', 'historyDeletionPreservesFavorite', 'sidebarDirectConnectsAndReusesTab', 'reconnectStripLayout', 'reconnectShortcutPreservesRenderer', 'plusCreatesIndependentHomeTabs', 'homeRemoteOperationsDisabled', 'homeSelectionsReplaceExactTabs', 'homeTabNavigationPreservesRenderers', 'pendingHomeCloseCancelsOnlyItsAttempt', 'commandDockShortcutAndPersistence', 'independentTerminalPaletteAndDockLayout', 'cancelReconnectWiring', 'newSaveCreatesVisibleFavorite', 'lastTabCloseReturnsToFreshHome']) assert.equal(result.checks[name], true, name);
   for (const name of ['compactSidebarPreservesGroupActions', 'nativeMenusTargetSameNameTerminals', 'sidebarStatusUsesConnectionIdentity']) assert.equal(result.checks[name], true, name);
+  for (const name of ['onlineRefreshShortcutPreservesWorkspace', 'homeRefreshShortcutPreservesWorkspace', 'settingsRefreshShortcutPreservesDraft']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []); assert.equal(result.visuals['dark-home'].theme, 'dark'); assert.equal(result.visuals['light-home'].theme, 'light');
 });
