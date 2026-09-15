@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronLeft, ChevronRight, Cloud, Database, FileCode2, Folder, FolderPlus, MoreHorizontal, Plus, Router, Server, Settings2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Cloud, Database, FileCode2, Folder, FolderPlus, Plus, Router, Server, Settings2 } from 'lucide-react';
 import type { ConnectionGroup, HostProfile, SessionInfo } from '../shared/types';
 import { sameConnection } from '../shared/connections';
 import './connection-manager.css';
@@ -97,7 +97,6 @@ export default function ConnectionSidebar(props: ConnectionSidebarProps) {
               onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event, group); }}>
               {isCollapsed ? <ChevronRight className="connection-group-chevron" size={13} /> : <ChevronDown className="connection-group-chevron" size={13} />}<ConnectionIcon name={group.icon || 'folder'} size={14} /><span>{group.name}</span><small>{items.length}</small>
             </button>
-            <button type="button" className="connection-group-more" title={`${group.name} · 分组设置`} aria-label={`${group.name}分组菜单`} onClick={event => openMenu(event, group)}><MoreHorizontal size={15} /></button>
           </div>
           <div id={`connection-group-${group.id}`} hidden={isCollapsed}>
             {hosts(items)}{items.length === 0 && !collapsed && <div className="connection-group-empty">在连接设置中将服务器加入此分组</div>}

@@ -131,15 +131,15 @@ async function run() {
   phase = 'group creation and context move';
   await click('新建连接分组'); await fill('#connection-group-name', '实验设备'); await choose('#connection-group-icon', 'router'); await click('保存分组'); await noDialog();
   const newGroupId = await evaluate(`window.appConnectionsFixture.state().then(state => state.groups.find(group => group.name === '实验设备').id)`);
+  const groupToggle = '[aria-controls="connection-group-' + newGroupId + '"]';
   await context('.host'); await choose('[aria-label="移到连接分组"]', newGroupId);
   await until(() => evaluate(`Boolean(document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).querySelector('.host'))`), 'host moved into new group');
-  await click('实验设备分组菜单'); await click('上移');
+  await context(groupToggle, '.connection-group-menu'); await menuClick('上移', '.connection-group-menu');
   await until(() => evaluate(`document.querySelector('.connection-group').getAttribute('aria-label') === '实验设备'`), 'group reordered');
   assert.equal(await connectCount(), 0);
   result.checks.groupCreateMoveAndSort = true;
 
   phase = 'compact sidebar preserves groups, folding and native group actions';
-  const groupToggle = '[aria-controls="connection-group-' + newGroupId + '"]';
   await mouse(groupToggle);
   assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), true);
   await click('折叠侧边栏');
@@ -164,7 +164,7 @@ async function run() {
   await click('切换为白色主题'); await until(() => evaluate(`document.documentElement.dataset.theme === 'light'`), 'light theme'); await picture('light-home');
 
   phase = 'group deletion retains saved connection';
-  await click('实验设备分组菜单'); await click('删除分组（保留连接）'); await click('确认删除'); await noDialog();
+  await context(groupToggle, '.connection-group-menu'); await menuClick('删除分组（保留连接）', '.connection-group-menu'); await click('确认删除'); await noDialog();
   await until(() => evaluate(`Boolean(document.querySelector('.ungrouped .host'))`), 'deleted group moves host to ungrouped');
   assert.equal(await evaluate(`document.querySelectorAll('.host').length`), 1);
   assert.equal(await evaluate(`window.appConnectionsFixture.state().then(state => state.profiles.length)`), 1);
