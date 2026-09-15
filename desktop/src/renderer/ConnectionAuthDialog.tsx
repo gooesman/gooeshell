@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { api } from './api';
+import { connectionErrorText } from './connection-errors';
 import type { CredentialRemember, CredentialStatus, CredentialUpdate, HostProfile } from '../shared/types';
 import './connection-manager.css';
 
-export default function ConnectionAuthDialog({ profile, mode, busy, error, onSubmit, onClose, onCancel }: {
+const rememberDescription: Record<CredentialRemember, string> = {
+  never: '仅用于这次连接，下次连接需重新输入。',
+  session: '仅在应用运行期间记住，退出或重启后需重新输入。',
+  persistent: '使用系统加密保存，重启后可继续使用。',
+};
+
+export default function ConnectionAuthDialog({ profile, mode, busy, error, onSubmit, onClose, onCancel, onEdit }: {
   profile: HostProfile; mode: 'connect' | 'sudo'; busy: boolean; error: string;
-  onSubmit: (credentials: CredentialUpdate) => Promise<void>; onClose: () => void; onCancel: () => void;
+  onSubmit: (credentials: CredentialUpdate) => Promise<void>; onClose: () => void; onCancel: () => void; onEdit: () => void;
 }) {
   const [secret, setSecret] = useState('');
   const [jumpSecret, setJumpSecret] = useState('');
@@ -43,11 +50,11 @@ export default function ConnectionAuthDialog({ profile, mode, busy, error, onSub
       await onSubmit(update);
     }}>
       <div className="modal-body"><section className="connection-auth-section">{jump && <div className="connection-section-label">目标服务器</div>}<div className="property-endpoint"><strong>{profile.name}</strong><span>{profile.username}@{profile.host}:{profile.port}</span></div>
-        {targetSecret ? <><div className="form-field"><label htmlFor="connection-auth-secret">{sudo ? 'sudo 密码' : profile.auth === 'password' ? '登录密码' : '私钥口令'}</label><input id="connection-auth-secret" autoFocus type="password" value={secret} disabled={busy} onChange={event => setSecret(event.target.value)} autoComplete="off" placeholder={!sudo && (profile.auth === 'password' ? status?.hasPassword : status?.hasPassphrase) ? '已记住 · 留空保留' : ''}/></div>
-        <div className="form-field"><label htmlFor="connection-auth-remember">记住密码</label><select id="connection-auth-remember" value={remember} disabled={busy} onChange={event => { rememberTouched.current = true; setRemember(event.target.value as CredentialRemember); }}>{!sudo && <option value="never">不记住</option>}<option value="session">本次使用期间</option><option value="persistent" disabled={!status?.secureStorageAvailable}>长期记住 · 系统加密</option></select></div></> : <p className="connection-inline-note">目标服务器使用 SSH Agent 中的密钥验证。</p>}</section>
-        {jump && <section className="connection-auth-section"><div className="connection-section-label">跳板机</div><div className="property-endpoint"><strong>{jump.name || jump.host}</strong><span>{jump.username}@{jump.host}:{jump.port}</span></div>{jump.auth === 'agent' ? <p className="connection-inline-note">跳板机使用 SSH Agent 中的密钥验证。</p> : <><div className="form-field"><label htmlFor="connection-auth-jump-secret">{jump.auth === 'password' ? '跳板机登录密码' : '跳板机私钥口令'}</label><input id="connection-auth-jump-secret" autoFocus={!targetSecret} type="password" value={jumpSecret} disabled={busy} onChange={event => setJumpSecret(event.target.value)} autoComplete="off" placeholder={(jump.auth === 'password' ? status?.jump?.hasPassword : status?.jump?.hasPassphrase) ? '已记住 · 留空保留' : ''} /></div><div className="form-field"><label htmlFor="connection-auth-jump-remember">记住跳板机密码</label><select id="connection-auth-jump-remember" value={jumpRemember} disabled={busy} onChange={event => { jumpRememberTouched.current = true; setJumpRemember(event.target.value as CredentialRemember); }}><option value="never">不记住</option><option value="session">本次使用期间</option><option value="persistent" disabled={!status?.secureStorageAvailable}>长期记住 · 系统加密</option></select></div></>}</section>}
+        {targetSecret ? <><div className="form-field"><label htmlFor="connection-auth-secret">{sudo ? 'sudo 密码' : profile.auth === 'password' ? '登录密码' : '私钥口令'}</label><input id="connection-auth-secret" autoFocus type="password" value={secret} disabled={busy} required={sudo || (profile.auth === 'password' && (remember === 'never' || !status?.hasPassword))} onChange={event => { setSecret(event.target.value); onEdit(); }} autoComplete="off" placeholder={!sudo && remember !== 'never' && (profile.auth === 'password' ? status?.hasPassword : status?.hasPassphrase) ? '已记住 · 留空保留' : ''}/></div>
+        <div className="form-field"><label htmlFor="connection-auth-remember">记住密码</label><select id="connection-auth-remember" aria-describedby="connection-auth-remember-note" value={remember} disabled={busy} onChange={event => { rememberTouched.current = true; setRemember(event.target.value as CredentialRemember); onEdit(); }}>{!sudo && <option value="never">不记住</option>}<option value="session">本次使用期间</option><option value="persistent" disabled={!status?.secureStorageAvailable}>长期记住 · 系统加密</option></select><p id="connection-auth-remember-note" className="connection-inline-note">{rememberDescription[remember]}</p></div></> : <p className="connection-inline-note">目标服务器使用 SSH Agent 中的密钥验证。</p>}</section>
+        {jump && <section className="connection-auth-section"><div className="connection-section-label">跳板机</div><div className="property-endpoint"><strong>{jump.name || jump.host}</strong><span>{jump.username}@{jump.host}:{jump.port}</span></div>{jump.auth === 'agent' ? <p className="connection-inline-note">跳板机使用 SSH Agent 中的密钥验证。</p> : <><div className="form-field"><label htmlFor="connection-auth-jump-secret">{jump.auth === 'password' ? '跳板机登录密码' : '跳板机私钥口令'}</label><input id="connection-auth-jump-secret" autoFocus={!targetSecret} type="password" value={jumpSecret} disabled={busy} required={jump.auth === 'password' && (jumpRemember === 'never' || !status?.jump?.hasPassword)} onChange={event => { setJumpSecret(event.target.value); onEdit(); }} autoComplete="off" placeholder={jumpRemember !== 'never' && (jump.auth === 'password' ? status?.jump?.hasPassword : status?.jump?.hasPassphrase) ? '已记住 · 留空保留' : ''} /></div><div className="form-field"><label htmlFor="connection-auth-jump-remember">记住跳板机密码</label><select id="connection-auth-jump-remember" aria-describedby="connection-auth-jump-remember-note" value={jumpRemember} disabled={busy} onChange={event => { jumpRememberTouched.current = true; setJumpRemember(event.target.value as CredentialRemember); onEdit(); }}><option value="never">不记住</option><option value="session">本次使用期间</option><option value="persistent" disabled={!status?.secureStorageAvailable}>长期记住 · 系统加密</option></select><p id="connection-auth-jump-remember-note" className="connection-inline-note">{rememberDescription[jumpRemember]}</p></div></>}</section>}
         {sudo && <p className="settings-description" style={{marginTop:12}}>确认当前终端正在等待 sudo 密码后再填入。密码仅发送到这个连接。</p>}
-        {(error || statusError) && <div className="form-error" role="alert">{error || statusError}</div>}
+        {(error || statusError) && <div className="form-error" role="alert">{connectionErrorText(error || statusError)}</div>}
       </div><footer className="modal-footer"><button type="button" className="button secondary" disabled={busy && sudo} onClick={busy ? onCancel : onClose}>{busy ? '取消连接' : '取消'}</button><button type="submit" className="button primary" disabled={busy || !status}>{busy ? '正在处理…' : sudo ? '填入终端' : '连接'}</button></footer>
     </form>
   </section></div>;

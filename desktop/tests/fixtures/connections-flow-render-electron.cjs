@@ -59,6 +59,7 @@ async function run() {
     }
     if (method === 'connect') {
       if (backend.plan === 'auth') throw new Error('AUTH_REQUIRED: 请填写登录密码');
+      if (backend.plan === 'auth-failed') throw new Error('All configured authentication methods failed');
       if (backend.plan === 'jump-auth') throw new Error('JUMP_AUTH_FAILED: 跳板机身份验证失败');
       if (backend.plan === 'deferred') return new Promise(resolve => backend.pending.push({ request: value, resolve }));
       return { id: 'connected-' + (++backend.next), profile: value.profile };
@@ -159,12 +160,44 @@ async function run() {
   await reset({ empty: true }); backend.plan = 'auth';
   await invoke('direct', [profile]); await until(async () => (await state()).prompt?.mode === 'connect', 'authentication prompt');
   await until(() => evaluate(`Boolean(document.querySelector('.modal.compact[aria-label="身份验证"] input[type="password"]'))`), 'compact authentication rendered');
+  await until(() => evaluate(`!document.querySelector('.connection-auth-dialog button[type="submit"]').disabled`), 'authentication credentials loaded');
   assert.equal(await evaluate(`Boolean(document.getElementById('host-address'))`), false);
-  backend.plan = 'success'; await invoke('submitAuth', [secret]);
+  assert.doesNotMatch(await evaluate(`document.querySelector('.connection-auth-dialog').innerText`), /AUTH_REQUIRED|Error invoking remote method|gooeshell:api|Error:/);
+  assert.equal(await evaluate(`Boolean(document.querySelector('.connection-auth-dialog .form-error'))`), false, 'missing credentials should open a neutral prompt, not an authentication failure');
+  assert.equal(await evaluate(`document.getElementById('connection-auth-remember').value`), 'session');
+  assert.match(await evaluate(`document.getElementById('connection-auth-remember-note').textContent`), /退出.*重启.*重新输入/);
+  window.showInactive(); await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'); await delay(100);
+  await fs.writeFile(report + '.initial-auth.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); window.hide();
+  const callsBeforeEmptySubmit = backend.calls.filter(call => call.method === 'connect').length;
+  await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`); await delay(40);
+  assert.equal(backend.calls.filter(call => call.method === 'connect').length, callsBeforeEmptySubmit, 'empty required password must not start another connection attempt');
+  assert.equal(await evaluate(`document.getElementById('connection-auth-secret').validity.valueMissing`), true);
+  result.checks.emptyPasswordBlockedAndRememberScopeExplained = true;
+  await evaluate(`document.getElementById('connection-auth-secret').focus()`); await window.webContents.insertText(secret.password); await delay(30);
+  assert.equal(await evaluate(`Boolean(document.querySelector('.connection-auth-dialog .form-error'))`), false, 'typing a password must clear the initial missing-password error');
+  backend.plan = 'success'; await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`);
   await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'authentication connects');
   const authCall = backend.calls.filter(call => call.method === 'connect').at(-1);
-  assert.equal(authCall.value.profile.id, profile.id); assert.equal(authCall.value.credentials.password, 'fixture-only');
-  result.checks.authenticationUsesCompactPrompt = true;
+  assert.equal(authCall.value.profile.id, profile.id); assert.equal(authCall.value.credentials.password, 'fixture-only'); assert.equal(authCall.value.credentials.remember, 'session');
+  result.checks.authenticationUsesCompactPrompt = true; result.checks.missingPasswordPromptsWithoutTechnicalError = true;
+
+  phase = 'failed password submission remains retryable and editing clears its old error';
+  await reset({ empty: true }); backend.plan = 'auth'; await invoke('direct', [profile]);
+  await until(() => evaluate(`Boolean(document.getElementById('connection-auth-secret')) && !document.querySelector('.connection-auth-dialog button[type="submit"]').disabled`), 'retry authentication prompt');
+  await evaluate(`document.getElementById('connection-auth-secret').focus()`); await window.webContents.insertText('wrong-fixture-only'); await delay(30);
+  backend.plan = 'auth-failed'; await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`);
+  await until(() => evaluate(`Boolean(document.querySelector('.connection-auth-dialog .form-error')?.textContent)`), 'server authentication failure rendered');
+  assert.equal((await state()).sessions.length, 0); assert.equal((await state()).prompt.profile.id, profile.id);
+  const errorText = await evaluate(`document.querySelector('.connection-auth-dialog .form-error').textContent`);
+  assert.doesNotMatch(errorText, /Error invoking remote method|connections-flow:call|gooeshell:api|Error:|AUTH_FAILED/);
+  assert.equal(backend.calls.filter(call => call.method === 'connect').at(-1).value.credentials.password, 'wrong-fixture-only');
+  await evaluate(`(() => { const input = document.getElementById('connection-auth-secret'); input.focus(); input.select(); })()`);
+  await window.webContents.insertText(secret.password); await delay(30);
+  assert.equal(await evaluate(`Boolean(document.querySelector('.connection-auth-dialog .form-error'))`), false, 'editing failed credentials must remove their stale error');
+  backend.plan = 'success'; await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`);
+  await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'corrected password connects');
+  assert.equal(backend.calls.filter(call => call.method === 'connect').at(-1).value.credentials.password, secret.password);
+  result.checks.authenticationErrorClearsOnEditAndRetry = true;
 
   phase = 'jump authentication collects independent target and gateway credentials';
   await reset({ empty: true, tabs: ['jump-home'], activeId: 'jump-home' }); backend.plan = 'jump-auth';

@@ -4,6 +4,7 @@ import useConnections from '../../src/renderer/useConnections';
 import ConnectionAuthDialog from '../../src/renderer/ConnectionAuthDialog';
 import type { CredentialUpdate, HostProfile, SessionInfo } from '../../src/shared/types';
 import '../../src/renderer/styles.css';
+import '../../src/renderer/workspace.css';
 
 const messages: Array<{ message: string; error?: boolean }> = [];
 function Fixture() {
@@ -35,7 +36,7 @@ function Fixture() {
   });
   return <><output id="connections-state" data-session-count={sessions.length} data-active={activeId} />
     {connection.authPrompt && <ConnectionAuthDialog profile={connection.authPrompt.profile} mode={connection.authPrompt.mode} busy={connection.authBusy} error={connection.authError}
-      onSubmit={connection.submitAuth} onCancel={() => void connection.cancel(connection.authPrompt?.tabId)} onClose={() => connection.setAuthPrompt(null)} />}
+      onSubmit={connection.submitAuth} onEdit={connection.clearAuthError} onCancel={() => void connection.cancel(connection.authPrompt?.tabId)} onClose={() => connection.setAuthPrompt(null)} />}
   </>;
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><Fixture /></React.StrictMode>);

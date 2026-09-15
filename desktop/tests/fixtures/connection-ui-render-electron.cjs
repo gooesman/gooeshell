@@ -55,7 +55,10 @@ async function run() {
   ipcMain.handle('connection-ui:forget', (event, id) => { assert.equal(event.sender, window.webContents); assert.equal(id, 'one'); forgotten = true; });
   ipcMain.handle('connection-ui:forget-jump', (event, jump) => { assert.equal(event.sender, window.webContents); assert.equal(jump.id, jumpPreset.id); jumpForgotten = true; });
   window = new BrowserWindow({ show: false, width: 1150, height: 900, webPreferences: { preload: path.join(__dirname, 'connection-ui-render-preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
-  window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) result.errors.push(message); });
+  window.webContents.on('console-message', (...args) => {
+    const details = args[0], message = typeof args[2] === 'string' ? args[2] : details.message, level = typeof args[1] === 'number' ? args[1] : details.level;
+    if (level >= 3 || level === 'error') result.errors.push(message);
+  });
   window.webContents.on('render-process-gone', (_event, detail) => result.errors.push(JSON.stringify(detail)));
   await window.loadURL(url);
   await until(() => evaluate('Boolean(window.connectionFixture)'), 'fixture mount');
@@ -86,7 +89,11 @@ async function run() {
   assert.equal(await evaluate(`document.getElementById('connection-group-development').hidden`), false);
   assert.equal(await evaluate(`document.querySelectorAll('.host-icon').length`), 0);
   assert.equal(await evaluate(`document.querySelectorAll('.connection-group-toggle svg').length`), 2);
-  await click('开发环境分组菜单');
+  const groupPoint = await evaluate(`(() => { const bounds = document.querySelector('[aria-controls="connection-group-development"]').getBoundingClientRect(); return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) }; })()`);
+  window.webContents.sendInputEvent({ type: 'mouseMove', ...groupPoint });
+  window.webContents.sendInputEvent({ type: 'mouseDown', ...groupPoint, button: 'right', clickCount: 1 });
+  window.webContents.sendInputEvent({ type: 'mouseUp', ...groupPoint, button: 'right', clickCount: 1 });
+  await until(() => evaluate(`Boolean(document.querySelector('.connection-group-menu'))`), 'group right-click menu');
   await click('名称与图标…');
   assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).type`), 'editGroup');
   result.checks.groupCollapseAndPhysicalSession = true;

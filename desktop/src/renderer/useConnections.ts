@@ -1,6 +1,7 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api, isPreview } from './api';
 import { sameConnection } from '../shared/connections';
+import { connectionErrorText, isMissingCredentials } from './connection-errors';
 import type { ConnectionGroup, ConnectionHistoryEntry, CredentialUpdate, HostProfile, SessionInfo } from '../shared/types';
 
 type AuthPrompt = { profile: HostProfile; mode: 'connect' | 'sudo'; tabId?: string; sessionId?: string };
@@ -65,7 +66,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
       return true;
     } catch (error) {
       if (attempt.cancelled || (tabId && !hasTab(tabId)) || /CONNECTION_CANCELLED/.test(message(error))) return false;
-      if (tabId) setReconnectErrors(previous => ({ ...previous, [tabId]: message(error) }));
+      if (tabId) setReconnectErrors(previous => ({ ...previous, [tabId]: isMissingCredentials(error) ? '' : connectionErrorText(error) }));
       throw error;
     } finally {
       if (attempts.current.get(key) === attempt) attempts.current.delete(key);
@@ -102,7 +103,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     if (offline) setActiveId(offline.id);
     try { await establish(profile, undefined, tabId); }
     catch (error) {
-      if (canPromptAuthentication(profile, error)) showAuth({ profile, mode: 'connect', tabId }, message(error));
+      if (canPromptAuthentication(profile, error)) showAuth({ profile, mode: 'connect', tabId }, isMissingCredentials(error) ? '' : connectionErrorText(error));
       else notify(message(error), true);
     }
   };
@@ -123,7 +124,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     const tabId = session.tabId || session.id;
     try { await establish(latest, undefined, tabId); }
     catch (error) {
-      if (canPromptAuthentication(latest, error)) showAuth({ profile: latest, mode: 'connect', tabId }, message(error));
+      if (canPromptAuthentication(latest, error)) showAuth({ profile: latest, mode: 'connect', tabId }, isMissingCredentials(error) ? '' : connectionErrorText(error));
       else notify(message(error), true);
     }
   };
@@ -170,9 +171,10 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
         } else await api.sendSudoPassword({ sessionId: prompt.sessionId!, submit: sudoSubmit });
         setAuthPrompt(null);
       } else if (await establish(prompt.profile, credentials, prompt.tabId)) setAuthPrompt(null);
-    } catch (error) { setAuthError(message(error)); }
+    } catch (error) { setAuthError(connectionErrorText(error)); }
     finally { setAuthBusy(false); }
   };
   const hasUntargetedPending = [...attempts.current.values()].some(attempt => !attempt.tabId && !attempt.cancelled);
-  return { profiles, setProfiles, catalog, setCatalog, history, setHistory, groups, setGroups, refresh, save, establish, direct, duplicate, reconnect, close, cancel, cancelProfile, pending, hasUntargetedPending, reconnectErrors, sudo, authPrompt, setAuthPrompt, authBusy, authError, submitAuth };
+  const clearAuthError = () => setAuthError('');
+  return { profiles, setProfiles, catalog, setCatalog, history, setHistory, groups, setGroups, refresh, save, establish, direct, duplicate, reconnect, close, cancel, cancelProfile, pending, hasUntargetedPending, reconnectErrors, sudo, authPrompt, setAuthPrompt, authBusy, authError, clearAuthError, submitAuth };
 }
