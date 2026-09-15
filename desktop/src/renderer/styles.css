@@ -18,6 +18,8 @@
 
   --text-subtle: #808080;
 
+  --connected: #4caf78;
+
   --surface: #111111;
 
   --surface-raised: #1b1b1b;
@@ -67,6 +69,8 @@
   --text-muted: #626262;
 
   --text-subtle: #797979;
+
+  --connected: #25854f;
 
   --surface: #fafafa;
 
@@ -326,7 +330,7 @@ kbd {
   width:6px;
   height:6px;
   border-radius:50%;
-  background:var(--text-muted);
+  background:var(--connected);
   flex-shrink:0
 }
 .sidebar-empty {
@@ -438,7 +442,7 @@ kbd {
   background:var(--surface)
 }
 .connection-state.connected i {
-  background:var(--text-muted)
+  background:var(--connected)
 }
 .connection-state.connecting i {
   background:var(--surface);
