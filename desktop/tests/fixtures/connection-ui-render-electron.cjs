@@ -10,6 +10,10 @@ app.commandLine.appendSwitch('force-device-scale-factor', '1');
 const result = { checks: {}, errors: [] };
 let window, forgotten = false, jumpForgotten = false, phase = 'startup';
 const jumpPreset = { id: 'jump-existing', name: '公司网关', host: 'gateway.example.test', port: 2222, username: 'gateway-user', auth: 'password', rememberHost: true, reuseConnection: true };
+const identityPresets = [
+  { id: 'shared-target', name: '开发登录身份', username: 'shared-developer', version: 1, remember: 'persistent', hasPassword: true, references: [] },
+  { id: 'shared-jump', name: '网关登录身份', username: 'shared-gateway', version: 1, remember: 'session', hasPassword: true, references: [] },
+];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = script => window.webContents.executeJavaScript(script);
 async function until(predicate, label) {
@@ -17,7 +21,7 @@ async function until(predicate, label) {
   while (!(await predicate())) { if (Date.now() > end) throw new Error('Timed out: ' + label); await delay(20); }
 }
 async function click(label) {
-  const selector = `(() => [...document.querySelectorAll('button')].find(button => !button.disabled && (button.getAttribute('aria-label') === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)})))()`;
+  const selector = `(() => [...document.querySelectorAll('button')].find(button => !button.disabled && button.getClientRects().length && (button.getAttribute('aria-label') === ${JSON.stringify(label)} || button.textContent.trim() === ${JSON.stringify(label)})))()`;
   await until(() => evaluate(`Boolean(${selector})`), label);
   await evaluate(`${selector}.click()`);
   await delay(30);
@@ -34,7 +38,15 @@ async function choose(selector, value) {
   await evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await delay(30);
 }
-const ready = () => until(() => evaluate(`!!document.querySelector('#credential-remember') && !document.querySelector('#credential-remember').disabled`), 'credentials loaded');
+const ready = () => until(() => evaluate(`!!document.querySelector('button[type="submit"][form="connect-form"]') && !document.querySelector('button[type="submit"][form="connect-form"]').disabled`), 'credentials loaded');
+async function advanced() {
+  await evaluate(`(() => { const toggle = document.querySelector('.connection-advanced-toggle'); if (toggle.getAttribute('aria-expanded') === 'false') toggle.click(); })()`);
+  await until(() => evaluate(`Boolean(document.getElementById('connection-advanced-options'))`), 'advanced options expanded');
+}
+async function checkbox(label, checked) {
+  await evaluate(`(() => { const label = [...document.querySelectorAll('label.checkbox-row')].find(item => item.textContent.trim().startsWith(${JSON.stringify(label)})); if (!label) throw new Error('Checkbox label not found'); const input = label.querySelector('input[type="checkbox"]'); if (input.checked !== ${checked}) input.click(); })()`);
+  await delay(30);
+}
 async function picture(label) {
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   window.webContents.invalidate();
@@ -43,18 +55,25 @@ async function picture(label) {
 }
 async function run() {
   await app.whenReady();
+  ipcMain.handle('connection-ui:identities', event => { assert.equal(event.sender, window.webContents); return { identities: identityPresets, secureStorageAvailable: true }; });
   ipcMain.handle('connection-ui:catalog', event => { assert.equal(event.sender, window.webContents); return { connections: [{ jumpHost: jumpPreset }, { jumpHost: { ...jumpPreset } }], profiles: [], groups: [], history: [] }; });
   ipcMain.handle('connection-ui:status', async (event, profile) => {
     assert.equal(event.sender, window.webContents);
     await delay(40);
-    const existing = profile.id === 'one' && profile.host === 'dev.example.test' && profile.username === 'developer' && profile.auth === 'password' && !forgotten;
-    const jumpExisting = profile.jumpHost?.id === jumpPreset.id && profile.jumpHost?.host === jumpPreset.host && !jumpForgotten;
+    const existing = identityPresets.some(identity => identity.id === profile.loginIdentityId) || profile.id === 'one' && profile.host === 'dev.example.test' && profile.username === 'developer' && profile.auth === 'password' && !forgotten;
+    const jumpExisting = identityPresets.some(identity => identity.id === profile.jumpHost?.loginIdentityId) || profile.jumpHost?.id === jumpPreset.id && profile.jumpHost?.host === jumpPreset.host && !jumpForgotten;
     const jump = profile.jumpHost ? { remember: jumpExisting ? 'persistent' : 'never', hasPassword: jumpExisting, hasPassphrase: false, hasSudoPassword: false, sudoUsesLogin: false, secureStorageAvailable: true } : undefined;
     return { remember: existing ? 'persistent' : 'never', hasPassword: existing, hasPassphrase: false, hasSudoPassword: existing, sudoUsesLogin: true, secureStorageAvailable: true, jump };
   });
   ipcMain.handle('connection-ui:forget', (event, id) => { assert.equal(event.sender, window.webContents); assert.equal(id, 'one'); forgotten = true; });
   ipcMain.handle('connection-ui:forget-jump', (event, jump) => { assert.equal(event.sender, window.webContents); assert.equal(jump.id, jumpPreset.id); jumpForgotten = true; });
-  window = new BrowserWindow({ show: false, width: 1150, height: 900, webPreferences: { preload: path.join(__dirname, 'connection-ui-render-preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+  // Keep this fixture's new API mock private without changing its shared preload.
+  const fixtureData = process.env.GOOESHELL_CONNECTION_UI_DATA;
+  await fs.mkdir(fixtureData, { recursive: true });
+  const preload = path.join(fixtureData, 'connection-ui-identities-preload.cjs');
+  const preloadSource = await fs.readFile(path.join(__dirname, 'connection-ui-render-preload.cjs'), 'utf8');
+  await fs.writeFile(preload, preloadSource.replace('  connections:', "  listLoginIdentities: () => ipcRenderer.invoke('connection-ui:identities'),\n  connections:"));
+  window = new BrowserWindow({ show: false, width: 1150, height: 900, webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
   window.webContents.on('console-message', (...args) => {
     const details = args[0], message = typeof args[2] === 'string' ? args[2] : details.message, level = typeof args[1] === 'number' ? args[1] : details.level;
     if (level >= 3 || level === 'error') result.errors.push(message);
@@ -100,6 +119,10 @@ async function run() {
 
   phase = 'save settings without connection';
   await click('Edit fixture'); await ready();
+  assert.equal(await evaluate(`document.querySelector('.connection-advanced-toggle').getAttribute('aria-expanded')`), 'false');
+  assert.equal(await evaluate(`Boolean(document.getElementById('host-group') || document.getElementById('host-encoding'))`), false);
+  assert.equal(await evaluate(`document.querySelector('#host-user').closest('.form-grid').previousElementSibling.textContent`), '身份验证');
+  result.checks.simplifiedConnectionSections = true;
   assert.equal(await evaluate(`document.getElementById('credential-remember').value`), 'persistent');
   assert.equal(await evaluate(`document.getElementById('host-password').value`), '');
   assert.match(await evaluate(`document.getElementById('host-password').placeholder`), /留空保留/);
@@ -116,7 +139,8 @@ async function run() {
   phase = 'user preferences survive status refresh and changed identity';
   await click('Edit fixture'); await ready();
   await choose('#credential-remember', 'session');
-  await evaluate(`document.querySelector('input[type="checkbox"]').click()`);
+  await advanced();
+  await checkbox('sudo 密码与登录密码相同', false);
   await fill('#host-address', 'other.example.test');
   await ready();
   assert.equal(await evaluate(`document.getElementById('credential-remember').value`), 'session');
@@ -132,11 +156,12 @@ async function run() {
   await fill('#host-address', 'new.example.test'); await ready();
   await fill('#host-password', 'fixture-only-password');
   await choose('#credential-remember', 'persistent');
+  await advanced();
   await choose('#host-group', 'development');
   await click('云服务器');
   await evaluate(`window.connectionFixture.setTheme('light')`);
   await delay(60); await picture('light-dialog');
-  await click('连接服务器');
+  await click('连接');
   const connected = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'connect').at(-1).value`);
   assert.equal(connected.profile.icon, 'cloud'); assert.equal(connected.profile.groupId, 'development');
   assert.equal(connected.favorite, false); assert.equal(connected.credentials.password, 'fixture-only-password'); assert.equal(connected.credentials.remember, 'persistent');
@@ -163,9 +188,11 @@ async function run() {
   await evaluate(`document.getElementById('jump-reuse').click()`);
   await evaluate(`document.getElementById('jump-address').scrollIntoView({block:'start'})`);
   await picture('light-jump-options');
-  await click('保存到侧边栏');
+  await checkbox('收藏到左侧侧边栏', true);
+  await click('保存');
   const jumpSaved = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
   assert.equal(jumpSaved.profile.jumpHost.id, jumpPreset.id);
+  assert.equal(jumpSaved.favorite, true);
   assert.equal(jumpSaved.profile.jumpHost.reuseConnection, false);
   assert.equal(jumpSaved.credentials.password, 'target-fixture-password');
   assert.equal(jumpSaved.credentials.jump.password, 'jump-fixture-password');
@@ -184,7 +211,7 @@ async function run() {
   await fill('#jump-address', 'replacement.gateway.test'); await ready();
   assert.equal(await evaluate(`document.getElementById('jump-password').placeholder`), '输入跳板机密码');
   await fill('#jump-password', 'replacement-fixture-secret');
-  await click('保存到侧边栏');
+  await click('保存');
   const replacement = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
   assert.notEqual(replacement.profile.jumpHost.id, jumpPreset.id);
   assert.equal(replacement.profile.jumpHost.host, 'replacement.gateway.test');
@@ -198,7 +225,7 @@ async function run() {
   await until(() => evaluate(`document.getElementById('jump-password').placeholder === '输入跳板机密码'`), 'shared jump secret cleared');
   assert.equal(jumpForgotten, true); assert.equal(forgotten, false);
   await evaluate(`document.getElementById('jump-enabled').click()`); await ready();
-  await click('保存到侧边栏');
+  await click('保存');
   const direct = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
   assert.equal(direct.profile.jumpHost, undefined); assert.equal(direct.credentials.jump, undefined);
   result.checks.jumpIdentityIsolationAndDisable = true;
@@ -206,13 +233,48 @@ async function run() {
   phase = 'cancel a pending connection';
   await click('Edit fixture'); await ready();
   await evaluate('window.connectionFixture.holdNextConnect = true');
-  await click('保存并连接');
+  await click('连接');
   assert.equal(await evaluate(`document.querySelector('fieldset').disabled`), true);
   await click('取消连接');
   await until(() => evaluate(`!document.querySelector('fieldset').disabled`), 'cancel releases form');
   assert.equal(await evaluate(`window.connectionFixture.actions.at(-1).type`), 'cancel');
   result.checks.cancelPendingConnection = true;
   await click('关闭连接设置');
+
+  phase = 'shared login identities belong to independent target and gateway roles';
+  await click('New fixture'); await ready();
+  await fill('#host-address', 'identity-target.example.test'); await ready();
+  await fill('#host-password', 'unused-manual-fixture-secret');
+  await choose('#host-login-identity', 'shared-target'); await ready();
+  assert.equal(await evaluate(`document.getElementById('host-user').value`), 'shared-developer');
+  assert.equal(await evaluate(`document.getElementById('host-user').readOnly`), true);
+  assert.equal(await evaluate(`Boolean(document.getElementById('host-password') || document.getElementById('credential-remember'))`), false);
+  await advanced();
+  await evaluate(`document.getElementById('jump-enabled').click()`); await ready();
+  await fill('#jump-address', 'identity-gateway.example.test'); await ready();
+  await choose('#jump-login-identity', 'shared-jump'); await ready();
+  assert.equal(await evaluate(`document.getElementById('jump-user').value`), 'shared-gateway');
+  assert.equal(await evaluate(`document.getElementById('jump-user').readOnly`), true);
+  assert.equal(await evaluate(`Boolean(document.getElementById('jump-password') || document.getElementById('jump-remember'))`), false);
+  await click('保存');
+  const shared = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
+  assert.equal(shared.profile.loginIdentityId, 'shared-target'); assert.equal(shared.profile.username, 'shared-developer');
+  assert.equal(shared.profile.jumpHost.loginIdentityId, 'shared-jump'); assert.equal(shared.profile.jumpHost.username, 'shared-gateway');
+  assert.equal('password' in shared.credentials, false); assert.equal('password' in shared.credentials.jump, false);
+  result.checks.sharedIdentitiesSeparateTargetAndJump = true;
+
+  phase = 'switching a shared identity back to manual entry';
+  await click('New fixture'); await ready();
+  await fill('#host-address', 'manual-again.example.test'); await ready();
+  await choose('#host-login-identity', 'shared-target'); await ready();
+  await choose('#host-login-identity', ''); await ready();
+  assert.equal(await evaluate(`document.getElementById('host-user').readOnly`), false);
+  assert.equal(await evaluate(`document.getElementById('host-user').value`), 'shared-developer');
+  assert.equal(await evaluate(`document.getElementById('host-password').value`), '');
+  await fill('#host-password', 'manual-fixture-password'); await click('保存');
+  const manual = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
+  assert.equal(manual.profile.loginIdentityId, undefined); assert.equal(manual.credentials.password, 'manual-fixture-password');
+  result.checks.manualSelectionDoesNotKeepIdentityReference = true;
 
   phase = 'forget stored secrets';
   await click('Edit fixture'); await ready();

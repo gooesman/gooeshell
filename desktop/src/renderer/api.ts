@@ -1,4 +1,4 @@
-import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,ConnectionGroup,HostKeyPreference,EditableTextFile,CommandLibrary} from '../shared/types';
+import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionHistoryEntry,ConnectionGroup,HostKeyPreference,EditableTextFile,CommandLibrary,LoginIdentitySummary} from '../shared/types';
 import {defaultSettings} from '../shared/defaults';
 import {bundledFontFamilies} from '../shared/fonts';
 import {previewFontCatalog} from './preview-font-catalog';
@@ -12,6 +12,17 @@ let previewHistory:ConnectionHistoryEntry[]=[{profile:previewProfiles[0],connect
 let previewConnections=[...previewProfiles];
 let previewGroups:ConnectionGroup[]=[];
 let previewCommands:CommandLibrary={groups:[],commands:[]};
+let previewIdentities:LoginIdentitySummary[]=[];
+const previewIdentitySummary=(identity:LoginIdentitySummary):LoginIdentitySummary=>({...identity,references:previewConnections.flatMap(profile=>[
+ ...(profile.loginIdentityId===identity.id?[{connectionId:profile.id,name:profile.name,host:profile.host,port:profile.port,role:'target' as const}]:[]),
+ ...(profile.jumpHost?.loginIdentityId===identity.id?[{connectionId:profile.id,name:profile.name,host:profile.jumpHost.host,port:profile.jumpHost.port,role:'jump' as const}]:[]),
+])});
+function resolvedPreview(input:HostProfile):HostProfile{
+ const profile=structuredClone(input),target=previewIdentities.find(identity=>identity.id===profile.loginIdentityId),jump=previewIdentities.find(identity=>identity.id===profile.jumpHost?.loginIdentityId);
+ if(target){profile.username=target.username;profile.auth='password';profile.privateKeyPath='';}
+ if(jump&&profile.jumpHost){profile.jumpHost.username=jump.username;profile.jumpHost.auth='password';profile.jumpHost.privateKeyPath='';}
+ return profile;
+}
 const savePreview=(p:HostProfile,favorite:boolean)=>{previewConnections=[...previewConnections.filter(x=>x.id!==p.id),p];previewProfiles=[...previewProfiles.filter(x=>x.id!==p.id),...(favorite?[p]:[])];previewHistory=previewHistory.map(entry=>entry.profile.id===p.id?{...entry,profile:p}:entry);return p;};
 const previewListing=(p:string,local:boolean):FileListing=>({path:p,entries:(local?[
  ['项目文件','directory',0],['Downloads','directory',0],['deploy.sh','file',1248],['README.md','file',2870]
@@ -20,25 +31,36 @@ const unavailable=async()=>{throw new Error('这是浏览器界面预览；请�
 const previewTexts=new Map<string,EditableTextFile>();
 let previewRevision=0;
 const preview:DesktopApi={
+ listLoginIdentities:async()=>({identities:previewIdentities.map(previewIdentitySummary),secureStorageAvailable:false}),
+ saveLoginIdentity:async input=>{
+  const existing=previewIdentities.find(identity=>identity.id===input.id);
+  if(input.id&&!existing)throw new Error('此登录身份已被删除，请重新加载。');
+  if(existing&&input.expectedVersion!==existing.version)throw new Error('此登录身份已被修改，请重新加载。');
+  if(!input.name.trim()||!input.username.trim())throw new Error('请填写名称和 SSH 用户名。');
+  const identity:LoginIdentitySummary={id:existing?.id??crypto.randomUUID(),name:input.name.trim(),username:input.username.trim(),remember:input.remember,version:(existing?.version??0)+1,hasPassword:input.password===undefined?existing?.hasPassword??false:!!input.password,references:[]};
+  previewIdentities=[...previewIdentities.filter(item=>item.id!==identity.id),identity];return previewIdentitySummary(identity);
+ },
+ deleteLoginIdentity:async id=>{const identity=previewIdentities.find(item=>item.id===id);if(identity&&previewIdentitySummary(identity).references.length)throw new Error('此登录身份仍被连接使用，请先修改相关连接。');previewIdentities=previewIdentities.filter(item=>item.id!==id);},
+ prepareSshKey:unavailable,generateSshKey:unavailable,pushSshKey:unavailable,cancelSshKeyPush:async()=>{},applyVerifiedSshKey:unavailable,
  commandLibrary:async()=>structuredClone(previewCommands),
  saveCommandGroup:async group=>{previewCommands.groups=[...previewCommands.groups.filter(value=>value.id!==group.id),structuredClone(group)];},
  deleteCommandGroup:async id=>{previewCommands.groups=previewCommands.groups.filter(group=>group.id!==id);previewCommands.commands=previewCommands.commands.filter(command=>command.groupId!==id);},
  saveCommand:async command=>{if(!previewCommands.groups.some(group=>group.id===command.groupId))throw new Error('请先选择命令分组。');previewCommands.commands=[...previewCommands.commands.filter(value=>value.id!==command.id),structuredClone(command)];},
  deleteCommand:async id=>{previewCommands.commands=previewCommands.commands.filter(command=>command.id!==id);},
  sendCommand:async request=>{const command=previewCommands.commands.find(value=>value.id===request.commandId);if(!command||command.command!==request.expectedCommand)throw new Error('命令已变化，请重新加载。');},
- initial:async()=>({profiles:previewProfiles,connections:previewConnections,groups:previewGroups,connectionHistory:previewHistory,hostKeyPreferences:previewHostPreferences,settings:previewSettings,localHome:'C:\\Users\\developer',version:'界面演示 · 不会连接服务器'}),
- connections:async()=>({profiles:previewProfiles,connections:previewConnections,history:previewHistory,groups:previewGroups}),
- saveConnection:async r=>savePreview(r.profile,r.favorite),
+ initial:async()=>({profiles:previewProfiles.map(resolvedPreview),connections:previewConnections.map(resolvedPreview),groups:previewGroups,connectionHistory:previewHistory.map(entry=>({...entry,profile:resolvedPreview(entry.profile)})),hostKeyPreferences:previewHostPreferences,settings:previewSettings,localHome:'C:\\Users\\developer',version:'界面演示 · 不会连接服务器'}),
+ connections:async()=>({profiles:previewProfiles.map(resolvedPreview),connections:previewConnections.map(resolvedPreview),history:previewHistory.map(entry=>({...entry,profile:resolvedPreview(entry.profile)})),groups:previewGroups}),
+ saveConnection:async r=>savePreview(resolvedPreview(r.profile),r.favorite),
  deleteConnection:async id=>{previewConnections=previewConnections.filter(x=>x.id!==id);previewProfiles=previewProfiles.filter(x=>x.id!==id);previewHistory=previewHistory.filter(x=>x.profile.id!==id);},
  deleteHistory:async id=>{previewHistory=previewHistory.filter(x=>x.profile.id!==id);},
  saveGroup:async group=>{previewGroups=[...previewGroups.filter(x=>x.id!==group.id),group].sort((a,b)=>a.order-b.order);},
  deleteGroup:async id=>{previewGroups=previewGroups.filter(x=>x.id!==id);for(const profile of [...previewConnections])if(profile.groupId===id)savePreview({...profile,groupId:undefined},previewProfiles.some(x=>x.id===profile.id));},
- credentialStatus:async profile=>{const empty={remember:'never' as const,hasPassword:false,hasPassphrase:false,hasSudoPassword:false,sudoUsesLogin:true,secureStorageAvailable:false};return {...empty,...(profile.jumpHost?{jump:{...empty}}:{})};},
+ credentialStatus:async profile=>{const empty={remember:'never' as const,hasPassword:false,hasPassphrase:false,hasSudoPassword:false,sudoUsesLogin:true,secureStorageAvailable:false};const status=(id?:string)=>{const identity=previewIdentities.find(item=>item.id===id);return{...empty,...(identity?{remember:identity.remember,hasPassword:identity.hasPassword}:{})};};return {...status(profile.loginIdentityId),...(profile.jumpHost?{jump:status(profile.jumpHost.loginIdentityId)}:{})};},
  saveCredentials:async()=>{},forgetCredentials:async()=>{},forgetJumpCredentials:async()=>{},sendSudoPassword:unavailable,cancelConnect:async()=>{},
  setHostKeyPreference:async p=>{previewHostPreferences=[...previewHostPreferences.filter(entry=>entry.host.toLowerCase()!==p.host.toLowerCase()||entry.port!==p.port),...(p.skipVerification?[p]:[])];},
  connectionHistory:async()=>previewHistory,clearConnectionHistory:async()=>{previewHistory=[];},
  saveProfile:async p=>{previewProfiles=[...previewProfiles.filter(x=>x.id!==p.id),p];},deleteProfile:async id=>{previewProfiles=previewProfiles.filter(x=>x.id!==id);},saveSettings:async s=>{previewSettings=s;},
- connect:async r=>{previewHistory=[{profile:{...r.profile},connectedAt:Date.now()},...previewHistory.filter(entry=>entry.profile.host.toLowerCase()!==r.profile.host.toLowerCase()||entry.profile.port!==r.profile.port||entry.profile.username!==r.profile.username)].slice(0,30);const id='preview-'+Date.now();setTimeout(()=>emit({type:'terminal',sessionId:id,data:btoa('\r\n  gooeshell graphical preview\r\n  No server is connected in this browser preview.\r\n\r\n'),bytes:0}),400);return{id,profile:r.profile};},
+ connect:async r=>{const profile=resolvedPreview(r.profile);previewHistory=[{profile,connectedAt:Date.now()},...previewHistory.filter(entry=>entry.profile.host.toLowerCase()!==profile.host.toLowerCase()||entry.profile.port!==profile.port||entry.profile.username!==profile.username)].slice(0,30);const id='preview-'+Date.now();setTimeout(()=>emit({type:'terminal',sessionId:id,data:btoa('\r\n  gooeshell graphical preview\r\n  No server is connected in this browser preview.\r\n\r\n'),bytes:0}),400);return{id,profile};},
  disconnect:async id=>emit({type:'sessionClosed',sessionId:id,message:'已关闭演示会话'}),confirmHostKey:async()=>{},
  localList:async p=>previewListing(p||'C:\\Users\\developer',true),remoteList:async r=>previewListing(r.path==='.'?'/home/developer':r.path,false),
  chooseFiles:async()=>[],showInFolder:unavailable,transfer:unavailable,cancelTransfer:async()=>{},

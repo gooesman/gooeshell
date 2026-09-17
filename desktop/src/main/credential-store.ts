@@ -82,10 +82,12 @@ export class CredentialStore {
     return result;
   }
   private async prepareInternal(profile:HostProfile,input:CredentialUpdate):Promise<ConnectionSecrets>{
+    this.validateProfile(profile);
     const update=cleanUpdate(input);
     if(update.remember==='never')return this.onlySecrets(update);
     if(update.remember==='persistent')await this.requireEncryption();
-    const previous=await this.getInternal(profile);
+    // A complete replacement does not need to decrypt credentials being discarded.
+    const previous=secretFields.every(field=>update[field]!==undefined)?emptySecrets():await this.getInternal(profile);
     const next:ConnectionSecrets={...previous,remember:update.remember,sudoUsesLogin:update.sudoUsesLogin};
     for(const field of secretFields)if(update[field]!==undefined){if(update[field])next[field]=update[field];else delete next[field];}
     return next;

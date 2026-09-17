@@ -80,3 +80,8 @@
 .sidebar.connection-sidebar.collapsed .host-dot { display: block; position: absolute; top: 5px; right: 4px; width: 4px; height: 4px; }
 .sidebar.connection-sidebar.collapsed .sidebar-empty { display: block; padding: 8px 0; font-size: 10px; text-align: center; overflow-wrap: anywhere; }
 @media (max-height: 750px) { .connection-manager-dialog .modal-body { padding-top: 17px; padding-bottom: 17px; } .connection-section-label { margin-top: 19px; padding-top: 16px; } }
+.connection-management-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.identity-select { margin-bottom: 12px; }
+.identity-select select { min-width: 0; flex: 1; }
+.identity-select .connection-inline-note { margin-top: 7px; }
+.connection-auth-dialog .checkbox-row { margin-top: 15px; font-size: 11px; }

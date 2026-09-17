@@ -1,6 +1,6 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api, isPreview } from './api';
-import { sameConnection } from '../shared/connections';
+import { sameConnection, sameConnectionConfiguration } from '../shared/connections';
 import { connectionErrorText, isMissingCredentials } from './connection-errors';
 import type { ConnectionGroup, ConnectionHistoryEntry, CredentialUpdate, HostProfile, SessionInfo } from '../shared/types';
 
@@ -110,7 +110,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
   const sessionProfile = (session: SessionInfo) => {
     // A changed endpoint is a new connection; the old terminal keeps its original identity.
     const configured = current.current.catalog.find(profile => profile.id === session.profile.id);
-    return configured && !sameConnection(configured, session.profile)
+    return configured && !sameConnectionConfiguration(configured, session.profile)
       ? { ...session.profile, id: crypto.randomUUID(), groupId: undefined }
       : configured || session.profile;
   };
@@ -157,7 +157,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
       else notify(message(error), true);
     } finally { sudoPending.current = false; }
   };
-  const submitAuth = async (credentials: CredentialUpdate) => {
+  const submitAuth = async (credentials: CredentialUpdate, selectedProfile?: HostProfile, saveIdentitySelection = false) => {
     if (!authPrompt || authBusy) return;
     const prompt = authPrompt; setAuthBusy(true); setAuthError('');
     try {
@@ -170,7 +170,18 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
           notify('密码已保存；目标终端已切换或断开，请回到该终端后再使用快捷键。');
         } else await api.sendSudoPassword({ sessionId: prompt.sessionId!, submit: sudoSubmit });
         setAuthPrompt(null);
-      } else if (await establish(prompt.profile, credentials, prompt.tabId)) setAuthPrompt(null);
+      } else {
+        let target = selectedProfile || prompt.profile;
+        const selectionChanged = target.loginIdentityId !== prompt.profile.loginIdentityId
+          || (!target.loginIdentityId && target.username !== prompt.profile.username)
+          || target.jumpHost?.loginIdentityId !== prompt.profile.jumpHost?.loginIdentityId;
+        if (selectionChanged) {
+          if (saveIdentitySelection) target = await save(target, profiles.some(profile => profile.id === prompt.profile.id));
+          else target = { ...target, id: crypto.randomUUID(), groupId: undefined,
+            jumpHost: target.jumpHost ? { ...target.jumpHost, id: crypto.randomUUID() } : undefined };
+        }
+        if (await establish(target, credentials, prompt.tabId)) setAuthPrompt(null);
+      }
     } catch (error) { setAuthError(connectionErrorText(error)); }
     finally { setAuthBusy(false); }
   };

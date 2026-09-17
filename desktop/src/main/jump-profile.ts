@@ -16,14 +16,15 @@ export function cleanJumpProfile(input:unknown):JumpHostProfile{
   const id=text(value.id,'标识');
   const host=text(value.host,'地址').replace(/^\[|\]$/g,'');
   if(!host)throw new Error('请填写跳板机地址');
-  const username=text(value.username,'用户名');
+  const loginIdentityId=value.loginIdentityId===undefined||value.loginIdentityId===''?undefined:text(value.loginIdentityId,'登录身份');
+  const username=text(value.username??'','用户名',255,!!loginIdentityId);
   if(!Number.isInteger(value.port)||Number(value.port)<1||Number(value.port)>65535)throw new Error('跳板机端口应在 1–65535 之间');
   if(value.auth!=='password'&&value.auth!=='key'&&value.auth!=='agent')throw new Error('跳板机身份验证方式无效');
   if(typeof value.rememberHost!=='boolean'||typeof value.reuseConnection!=='boolean')throw new Error('跳板机指纹或连接复用选项无效');
   const name=text(value.name,'名称',255,true)||host;
   const privateKeyPath=value.privateKeyPath===undefined?'':text(value.privateKeyPath,'私钥路径',2048,true);
-  if(value.auth==='key'&&!privateKeyPath)throw new Error('请选择跳板机私钥文件');
-  return{id,name,host,port:Number(value.port),username,auth:value.auth,privateKeyPath,rememberHost:value.rememberHost,reuseConnection:value.reuseConnection};
+  if(!loginIdentityId&&value.auth==='key'&&!privateKeyPath)throw new Error('请选择跳板机私钥文件');
+  return{id,name,host,port:Number(value.port),username,auth:loginIdentityId?'password':value.auth,privateKeyPath:loginIdentityId?'':privateKeyPath,rememberHost:value.rememberHost,reuseConnection:value.reuseConnection,...(loginIdentityId?{loginIdentityId}:{})};
 }
 
 /** Reused hop presets share credentials without sharing a target's credential id. */
@@ -33,5 +34,6 @@ export function jumpCredentialProfile(input:JumpHostProfile):HostProfile{
     id:`jump:${createHash('sha256').update(jump.id).digest('hex')}`,
     name:jump.name,host:jump.host,port:jump.port,username:jump.username,
     auth:jump.auth,privateKeyPath:jump.privateKeyPath,rememberHost:jump.rememberHost,encoding:'utf8',
+    ...(jump.loginIdentityId?{loginIdentityId:jump.loginIdentityId}:{}),
   };
 }

@@ -46,6 +46,16 @@ async function menuClick(label, menu = '.connection-context-menu') {
   await evaluate(`(() => { for (const button of document.querySelectorAll(${JSON.stringify(menu + ' button')})) { delete button.dataset.nativeClick; if (button.textContent.trim() === ${JSON.stringify(label)}) button.dataset.nativeClick = 'true'; } })()`);
   await mouse(selector);
 }
+async function openAdvanced() {
+  await until(() => evaluate(`Boolean(document.querySelector('.connection-advanced-toggle'))`), 'connection advanced options');
+  if (await evaluate(`document.querySelector('.connection-advanced-toggle').getAttribute('aria-expanded') !== 'true'`)) await mouse('.connection-advanced-toggle');
+  await until(() => evaluate(`document.querySelector('.connection-advanced-toggle').getAttribute('aria-expanded') === 'true'`), 'advanced options expanded');
+}
+async function sidebarSettings() {
+  await context('.host');
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.connection-context-menu [role="menuitem"]')].map(item => item.textContent.trim())`), ['连接设置…'], 'sidebar menu only exposes connection settings');
+  await menuClick('连接设置…');
+}
 const connectCount = () => evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'connect').length`);
 const historySelector = '[aria-label="最近连接"] .recent-connection';
 const activeSession = () => evaluate(`document.querySelector('[data-terminal-session][data-active="true"]')?.dataset.terminalSession || ''`);
@@ -109,9 +119,13 @@ async function run() {
   assert.equal(await evaluate(`document.querySelectorAll('.saved-connection').length`), 0);
   assert.equal(await evaluate(`document.querySelectorAll('.host .host-icon').length`), 0);
   assert.equal(await evaluate(`document.querySelectorAll('.connection-group-toggle svg').length`), 2);
+  assert.equal(await evaluate(`[...document.querySelectorAll('#server-sidebar button')].some(button => [button.title, button.getAttribute('aria-label'), button.textContent.trim()].some(label => label === '设置' || label === '打开设置'))`), false);
+  assert.equal(await evaluate(`[...document.querySelectorAll('.titlebar button')].some(button => /纯终端/.test(button.title + ' ' + button.getAttribute('aria-label') + ' ' + button.textContent))`), false);
+  assert.equal(await evaluate(`[...document.querySelectorAll('.titlebar button')].filter(button => button.title === '设置' || button.getAttribute('aria-label') === '设置').length`), 1);
+  result.checks.simplifiedToolbarAndSettingsEntry = true;
   result.checks.initialHomeTab = true;
   phase = 'recent menu edits and saves without connecting';
-  await context(historySelector); await click('编辑连接设置…');
+  await context(historySelector); await click('连接设置…');
   await until(() => evaluate(`!!document.getElementById('credential-remember') && !document.getElementById('credential-remember').disabled`), 'connection settings loaded');
   await fill('#host-name', '开发工作站'); await click('保存'); await noDialog();
   await until(() => evaluate(`document.querySelector('.recent-copy strong').textContent === '开发工作站' && document.querySelector('.host-name').textContent === '开发工作站'`), 'name synced in history and sidebar');
@@ -132,7 +146,7 @@ async function run() {
   await click('新建连接分组'); await fill('#connection-group-name', '实验设备'); await choose('#connection-group-icon', 'router'); await click('保存分组'); await noDialog();
   const newGroupId = await evaluate(`window.appConnectionsFixture.state().then(state => state.groups.find(group => group.name === '实验设备').id)`);
   const groupToggle = '[aria-controls="connection-group-' + newGroupId + '"]';
-  await context('.host'); await choose('[aria-label="移到连接分组"]', newGroupId);
+  await sidebarSettings(); await openAdvanced(); await choose('#host-group', newGroupId); await click('保存'); await noDialog();
   await until(() => evaluate(`Boolean(document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).querySelector('.host'))`), 'host moved into new group');
   await context(groupToggle, '.connection-group-menu'); await menuClick('上移', '.connection-group-menu');
   await until(() => evaluate(`document.querySelector('.connection-group').getAttribute('aria-label') === '实验设备'`), 'group reordered');
@@ -211,7 +225,8 @@ async function run() {
   const sourceSession = await activeSession(), duplicateCount = await connectCount();
   await evaluate(`window.fixtureSourceTab = document.querySelector('.terminal-tab.active'); window.fixtureSourceTab.dataset.fixtureTab = 'source'`);
   await context('.host');
-  await menuClick('新建同名终端');
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.connection-context-menu [role="menuitem"]')].map(item => item.textContent.trim())`), ['连接设置…']);
+  await menuClick('连接设置…'); await openAdvanced(); await click('新建同名终端'); await noDialog();
   await until(async () => await activeSession() !== sourceSession && (await evaluate(`document.querySelectorAll('.terminal-tab').length`)) === 2, 'expanded sidebar creates another terminal');
   const duplicateSession = await activeSession();
   await evaluate(`window.fixtureDuplicateTab = document.querySelector('.terminal-tab.active'); window.fixtureDuplicateTab.dataset.fixtureTab = 'duplicate'`);
@@ -227,7 +242,7 @@ async function run() {
   await assertRefreshShortcutPreservesWorkspace('online terminal');
   result.checks.onlineRefreshShortcutPreservesWorkspace = true;
   phase = 'settings draft survives the refresh shortcut';
-  await click('设置');
+  await click('设置'); await click('字体与外观');
   await fill('[aria-label="背景图片路径"]', 'draft-must-survive-refresh.png');
   await evaluate(`window.fixtureRefreshDialog = document.querySelector('.settings-dialog')`);
   await assertRefreshShortcutPreservesWorkspace('settings input');
@@ -250,7 +265,8 @@ async function run() {
   assert.equal(await connectCount(), duplicateCount + 2);
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 2);
   await click('折叠侧边栏'); await context('.host'); await picture('dark-compact-connection-menu');
-  await menuClick('新建同名终端');
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.connection-context-menu [role="menuitem"]')].map(item => item.textContent.trim())`), ['连接设置…']);
+  await menuClick('连接设置…'); await openAdvanced(); await click('新建同名终端'); await noDialog();
   await until(() => evaluate(`document.querySelectorAll('.terminal-tab').length === 3`), 'compact sidebar creates another terminal');
   assert.equal(await connectCount(), duplicateCount + 3);
   await evaluate(`window.fixtureSourceTab.click(); [...document.querySelectorAll('.terminal-tab')].filter(tab => tab !== window.fixtureSourceTab).forEach(tab => tab.querySelector('.tab-close').click())`);
@@ -391,17 +407,22 @@ async function run() {
   phase = 'sidebar status follows the saved endpoint rather than only its profile id';
   const savedAddress = await evaluate(`window.appConnectionsFixture.state().then(state => state.profiles[0].host)`);
   const statusConnects = await connectCount(), statusSession = await activeSession();
-  await context('.host'); await menuClick('编辑连接设置…');
+  await sidebarSettings();
   await fill('#host-address', 'replacement.example.test'); await click('保存'); await noDialog();
   await until(() => evaluate(`document.querySelector('.host-address').textContent.includes('replacement.example.test')`), 'replacement address saved');
   assert.equal(await evaluate(`Boolean(document.querySelector('.host.active, .host .host-dot'))`), false, 'an old running transport must not mark its replacement endpoint active or online');
-  await context('.terminal-tab.active'); await menuClick('此地址的指纹设置…');
-  await until(() => evaluate(`Boolean(document.querySelector('.connection-properties .property-endpoint'))`), 'original tab fingerprint properties opened');
-  assert.equal(await evaluate(`document.querySelector('.connection-properties .property-endpoint > span').textContent`), savedAddress + ':22', 'tab fingerprint properties must remain bound to the running endpoint');
-  await click('取消'); await noDialog();
+  await context('.terminal-tab.active');
+  assert.equal(await evaluate(`document.querySelector('.connection-context-menu').textContent.includes('此终端仍使用原地址')`), true);
+  assert.equal(await evaluate(`[...document.querySelectorAll('.connection-context-menu [role="menuitem"]')].some(item => item.textContent.includes('指纹设置'))`), false);
+  await menuClick('连接设置…'); await openAdvanced();
+  assert.equal(await evaluate(`document.getElementById('host-address').value`), 'replacement.example.test', 'tab settings edit the current saved configuration');
+  assert.equal(await evaluate(`Boolean(document.querySelector('[aria-label="自动接受服务器指纹"]')?.getClientRects().length)`), true, 'host fingerprint preferences are inside connection advanced options');
+  assert.equal(await evaluate(`document.querySelector('.breadcrumb').textContent.includes(${JSON.stringify(savedAddress + ':22')})`), true, 'the active transport keeps its original endpoint snapshot');
+  assert.equal(await activeSession(), statusSession); assert.equal(await connectCount(), statusConnects);
+  await click('关闭连接设置'); await noDialog();
   await click('折叠侧边栏');
   assert.equal(await evaluate(`Boolean(document.querySelector('.host.active, .host .host-dot'))`), false);
-  await context('.host'); await menuClick('编辑连接设置…');
+  await sidebarSettings();
   await fill('#host-address', savedAddress); await click('保存'); await noDialog();
   await until(() => evaluate(`Boolean(document.querySelector('.host.active .host-dot'))`), 'restored matching address shows live status');
   assert.equal(await connectCount(), statusConnects); assert.equal(await activeSession(), statusSession);
@@ -424,7 +445,9 @@ async function run() {
   await click('快速连接');
   await fill('#host-address', 'new.example.test');
   await until(() => evaluate(`!!document.getElementById('credential-remember') && !document.getElementById('credential-remember').disabled`), 'new connection ready');
-  await click('保存到侧边栏'); await noDialog();
+  await openAdvanced();
+  await evaluate(`(() => { const label = [...document.querySelectorAll('.connection-manager-dialog label')].find(label => label.textContent.includes('收藏到左侧侧边栏')); const input = label.querySelector('input[type="checkbox"]'); if (!input.checked) input.click(); })()`);
+  await click('保存'); await noDialog();
   await until(() => evaluate(`document.querySelectorAll('.host').length === 2`), 'saved connection is visible');
   assert.equal(await connectCount(), connectsBeforeSave);
   assert.equal(await evaluate(`window.appConnectionsFixture.state().then(state => state.profiles.some(profile => profile.host === 'new.example.test'))`), true);

@@ -32,5 +32,6 @@ test('connection lifecycle keeps terminal identity and prevents cancelled or ret
   for (const name of ['jumpPromptSeparatesCredentials', 'agentTargetSupportsJumpAuthAndReconnect']) assert.equal(result.checks[name], true, name);
   for (const name of ['missingPasswordPromptsWithoutTechnicalError', 'authenticationErrorClearsOnEditAndRetry', 'emptyPasswordBlockedAndRememberScopeExplained']) assert.equal(result.checks[name], true, name);
   for (const name of ['sameNameDuplicatesPreserveActiveMatch', 'oldTargetDuplicateUsesSeparateProfile']) assert.equal(result.checks[name], true, name);
+  for (const name of ['temporaryIdentityLeavesSavedDefaultsAndPasswords', 'selectedIdentityCanBecomeConnectionDefault', 'sharedPasswordUpdateRequiresExplicitSelection', 'identityUpdateChangesReconnectWithoutRetargetingLiveSession']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []);
 });

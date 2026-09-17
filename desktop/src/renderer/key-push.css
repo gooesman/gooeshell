@@ -1,0 +1,12 @@
+.key-push-dialog { width: 590px; }
+.key-push-dialog .modal-body { min-height: 0; overflow-y: auto; }
+.key-push-dialog .form-field { margin: 15px 0; }
+.key-source { margin: 20px 0 16px; }
+.key-summary, .key-push-result { display: grid; gap: 9px; padding: 14px; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); }
+.key-summary strong { font-weight: 500; }
+.key-fingerprint { font: 11px var(--mono); overflow-wrap: anywhere; color: var(--text-muted); }
+.key-summary .dialog-path { margin: 0; overflow-wrap: anywhere; }
+.key-auth { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+.key-auth summary { cursor: pointer; margin-bottom: 10px; color: var(--text-muted); }
+.key-push-result p { margin: 0; line-height: 1.65; }
+.key-push-dialog .modal-header, .key-push-dialog .modal-footer { flex-shrink: 0; }

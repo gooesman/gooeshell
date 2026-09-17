@@ -2,15 +2,23 @@ import type {FontFamilyInfo} from './font-types';
 export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
 export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
 export type CredentialRemember = 'never' | 'session' | 'persistent';
-export interface JumpCredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; }
-export interface CredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; sudoPassword?: string; sudoUsesLogin: boolean; jump?: JumpCredentialUpdate; }
+export interface JumpCredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; updateSharedIdentity?: boolean; }
+export interface CredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; sudoPassword?: string; sudoUsesLogin: boolean; jump?: JumpCredentialUpdate; updateSharedIdentity?: boolean; }
+export interface LoginIdentityReference { connectionId: string; name: string; host: string; port: number; role: 'target' | 'jump'; }
+export interface LoginIdentitySummary { id: string; name: string; username: string; version: number; hasPassword: boolean; remember: 'session' | 'persistent'; references: LoginIdentityReference[]; }
+export interface LoginIdentityList { identities: LoginIdentitySummary[]; secureStorageAvailable: boolean; }
+export interface SaveLoginIdentityInput { id?: string; name: string; username: string; password?: string; remember: 'session' | 'persistent'; expectedVersion?: number; }
+export interface PreparedSshKey { keyId: string; publicKey: string; fingerprint: string; privateKeyPath?: string; name: string; }
+export interface SshKeyPushResult { installed: true; alreadyPresent: boolean; verified: boolean; verificationError?: string; verificationId?: string; }
 export interface CredentialStatus { remember: CredentialRemember; hasPassword: boolean; hasPassphrase: boolean; hasSudoPassword: boolean; sudoUsesLogin: boolean; secureStorageAvailable: boolean; jump?: CredentialStatus; }
 export interface JumpHostProfile {
+  loginIdentityId?: string;
   id: string; name: string; host: string; port: number; username: string;
   auth: 'password' | 'key' | 'agent'; privateKeyPath?: string;
   rememberHost: boolean; reuseConnection: boolean;
 }
 export interface HostProfile {
+  loginIdentityId?: string;
   id: string; name: string; host: string; port: number; username: string;
   auth: 'password' | 'key' | 'agent'; privateKeyPath?: string;
   rememberHost: boolean; encoding: 'utf8' | 'gb18030' | 'big5';
@@ -84,6 +92,14 @@ export type AppEvent =
   | { type: 'notice'; message: string };
 
 export interface DesktopApi {
+  listLoginIdentities(): Promise<LoginIdentityList>;
+  saveLoginIdentity(input: SaveLoginIdentityInput): Promise<LoginIdentitySummary>;
+  deleteLoginIdentity(id: string): Promise<void>;
+  prepareSshKey(input: { path: string; passphrase?: string }): Promise<PreparedSshKey>;
+  generateSshKey(input: { name: string; passphrase?: string }): Promise<PreparedSshKey>;
+  pushSshKey(input: { profile: HostProfile; credentials?: CredentialUpdate; keyId: string; attemptId: string }): Promise<SshKeyPushResult>;
+  cancelSshKeyPush(attemptId: string): Promise<void>;
+  applyVerifiedSshKey(input: { verificationId: string }): Promise<HostProfile>;
   initial(): Promise<InitialState>;
   commandLibrary(): Promise<CommandLibrary>;
   saveCommandGroup(group: CommandGroup): Promise<void>;

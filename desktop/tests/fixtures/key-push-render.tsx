@@ -1,0 +1,25 @@
+import React, { useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import KeyPushDialog from '../../src/renderer/KeyPushDialog';
+import { api, isPreview } from '../../src/renderer/api';
+import type { HostProfile } from '../../src/shared/types';
+import '../../src/renderer/styles.css';
+import '../../src/renderer/connection-manager.css';
+if (!isPreview) throw new Error('Only isolated preview fixture is permitted');
+const profile:HostProfile={id:'fixture',name:'隔离测试服务器',host:'target.example.test',port:22,username:'developer',auth:'password',rememberHost:true,encoding:'utf8',loginIdentityId:'shared',jumpHost:{id:'jump',name:'跳板机',host:'jump.example.test',port:22,username:'operator',auth:'password',rememberHost:true,reuseConnection:true,loginIdentityId:'jump-shared'}};
+const fixture={prepared:[] as unknown[],generated:[] as unknown[],pushes:[] as any[],applies:[] as string[],cancelled:[] as string[],closed:0,applied:[] as HostProfile[],response:'verified',failPrepare:false,reset:()=>{}};
+let pending:{reject:(error:Error)=>void}|undefined;
+const info=(path:string)=>({keyId:'opaque-key',name:'test-key',publicKey:'ssh-ed25519 fixture-only',fingerprint:'SHA256:fixture-only',privateKeyPath:path.endsWith('.pub')?undefined:path});
+api.prepareSshKey=async request=>{fixture.prepared.push(request);if(fixture.failPrepare)throw new Error('无法读取 SSH 密钥，请检查文件格式和私钥口令');return info(request.path);};
+api.generateSshKey=async request=>{fixture.generated.push(request);return info('C:/fixture/keys/id_ed25519');};
+api.chooseFiles=async()=>['C:/fixture/id_ed25519'];
+api.pushSshKey=async request=>{fixture.pushes.push(structuredClone(request));
+  if(fixture.response==='pending')return new Promise((_,reject)=>{pending={reject};});
+  if(fixture.response==='auth'&&!request.credentials.password)throw new Error('AUTH_REQUIRED: 请输入此连接的登录密码。');
+  return fixture.response==='public'?{installed:true,alreadyPresent:true,verified:false,verificationError:'尚未验证，请选择对应私钥。'}:{installed:true,alreadyPresent:false,verified:true,verificationId:'opaque-verification'};
+};
+api.cancelSshKeyPush=async id=>{fixture.cancelled.push(id);pending?.reject(new Error('CONNECTION_CANCELLED: 已取消密钥推送'));pending=undefined;};
+api.applyVerifiedSshKey=async input=>{fixture.applies.push(input.verificationId);return{...profile,loginIdentityId:undefined,auth:'key',privateKeyPath:'C:/fixture/id_ed25519'};};
+(window as any).keyPushFixture=fixture;
+function Fixture(){const[revision,setRevision]=useState(0);fixture.reset=()=>setRevision(value=>value+1);return <KeyPushDialog key={revision} profile={profile} credentials={{remember:'session',sudoUsesLogin:true,updateSharedIdentity:true,jump:{remember:'session',updateSharedIdentity:true}}} onClose={()=>{fixture.closed++;}} onApplied={async value=>{fixture.applied.push(value);}}/>;}
+createRoot(document.getElementById('root')!).render(<React.StrictMode><Fixture/></React.StrictMode>);

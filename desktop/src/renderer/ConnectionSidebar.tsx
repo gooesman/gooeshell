@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, ChevronLeft, ChevronRight, Cloud, Database, FileCode2, Folder, FolderPlus, Plus, Router, Server, Settings2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Cloud, Database, FileCode2, Folder, FolderPlus, Plus, Router, Server } from 'lucide-react';
 import type { ConnectionGroup, HostProfile, SessionInfo } from '../shared/types';
 import { sameConnection } from '../shared/connections';
 import './connection-manager.css';
@@ -35,7 +35,7 @@ export interface ConnectionSidebarProps {
   onGroupMove?: (id: string, direction: 'up' | 'down') => void;
   onToggle: () => void;
   onQuickConnect: () => void;
-  onSettings: () => void;
+  onSettings?: () => void;
   connectShortcut?: string;
   settingsShortcut?: string;
   toggleShortcut?: string;
@@ -75,7 +75,7 @@ export default function ConnectionSidebar(props: ConnectionSidebarProps) {
     const selected = !!active && sameConnection(active.profile, profile);
     return <button type="button" key={profile.id} className={`host${selected ? ' active' : ''}`} aria-current={selected ? 'page' : undefined}
       aria-label={`${profile.name}，${profile.username}@${profile.host}:${profile.port}`}
-      title={`${profile.name}\n${profile.username}@${profile.host}:${profile.port}\n${online ? '点击切换到终端' : '点击连接'} · 右键可新建同名终端`}
+      title={`${profile.name}\n${profile.username}@${profile.host}:${profile.port}\n${online ? '点击切换到终端' : '点击连接'} · 右键打开连接设置`}
       onClick={() => { setMenu(null); props.onConnect(profile); }} onContextMenu={event => { setMenu(null); props.onContextMenu(event, profile); }}>
       {collapsed && <span className="host-icon"><ConnectionIcon name={profile.icon} /></span>}
       <span className="host-copy"><span className="host-name">{profile.name}</span><span className="host-address">{profile.username}@{profile.host}</span></span>
@@ -106,7 +106,7 @@ export default function ConnectionSidebar(props: ConnectionSidebarProps) {
       {ungrouped.length > 0 && <section className="connection-group ungrouped" aria-label="未分组"><div className="connection-ungrouped-label" title={`未分组 · ${ungrouped.length} 个连接`}><Folder size={14} aria-hidden="true" /><span>未分组</span><small>{ungrouped.length}</small></div>{hosts(ungrouped)}</section>}
       {profiles.length === 0 && groups.length === 0 && <div className="sidebar-empty" title="收藏的服务器会显示在这里，连接设置可以单独保存。">{collapsed ? '暂无连接' : <>收藏的服务器会显示在这里。<br />连接设置可以单独保存。</>}</div>}
     </nav>
-    <div className="sidebar-bottom"><button type="button" onClick={props.onToggle} aria-label={collapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!collapsed} aria-controls="server-sidebar" title={`${collapsed ? '展开侧边栏' : '折叠侧边栏'}${props.toggleShortcut ? ` · ${props.toggleShortcut}` : ''}`}>{collapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}<span className="item-label">折叠侧栏</span></button><button type="button" onClick={props.onSettings} title={`设置${props.settingsShortcut ? ` · ${props.settingsShortcut}` : ''}`} aria-label="设置"><Settings2 size={17} /><span className="item-label">设置</span>{props.settingsShortcut && <kbd>{props.settingsShortcut}</kbd>}</button></div>
+    <div className="sidebar-bottom"><button type="button" onClick={props.onToggle} aria-label={collapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!collapsed} aria-controls="server-sidebar" title={`${collapsed ? '展开侧边栏' : '折叠侧边栏'}${props.toggleShortcut ? ` · ${props.toggleShortcut}` : ''}`}>{collapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}<span className="item-label">折叠侧栏</span></button></div>
     {menu && createPortal(<div ref={menuRef} className="context-menu connection-group-menu" role="menu" aria-label="连接分组操作" style={{ left: menu.x, top: menu.y }}>
       <div className="menu-caption">{menu.group.name}</div>
       <button type="button" role="menuitem" onClick={() => { props.onGroupEdit(menu.group); setMenu(null); }}>名称与图标…</button>

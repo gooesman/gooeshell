@@ -13,6 +13,7 @@ const fixture = 'window.appExplorerFixture';
 const pane = side => `.file-pane[data-side="${side}"]`;
 const row = (path, side = 'remote') => `${pane(side)} [data-file-path=${JSON.stringify(path)}]`;
 const visible = selector => `Boolean([...document.querySelectorAll(${JSON.stringify(selector)})].find(value => value.getClientRects().length > 0))`;
+const nativePoint = point => { const zoom = window.webContents.getZoomFactor(); return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) }; };
 async function until(predicate, label) { const end = Date.now() + 10_000; while (!(await predicate())) { if (Date.now() > end) throw new Error('Timed out: ' + label); await delay(30); } }
 async function click(label, scope = 'body') {
   const match = `(() => [...document.querySelectorAll(${JSON.stringify(scope + ' button')})].find(button => !button.disabled && button.getClientRects().length && (button.getAttribute('aria-label') === ${JSON.stringify(label)} || button.title === ${JSON.stringify(label)} || button.textContent.trim().replace(/(?:…|\\.{3})$/, '') === ${JSON.stringify(label)} || (${JSON.stringify(label)} === '删除' && button.textContent.trim().startsWith('删除')))))()`;
@@ -25,9 +26,10 @@ async function mouse(selector, button = 'left', modifiers = []) {
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   const point = await evaluate(`(() => { const target = document.querySelector(${JSON.stringify(selector)}), bounds = target.getBoundingClientRect(), x = Math.round(bounds.x + bounds.width / 2), y = Math.round(bounds.y + bounds.height / 2), hit = document.elementFromPoint(x, y); return { x, y, visible: bounds.width > 0 && bounds.height > 0 && (target === hit || target.contains(hit)) }; })()`);
   assert.equal(point.visible, true, 'unobstructed native mouse target: ' + selector);
-  window.webContents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
-  window.webContents.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button, clickCount: 1, modifiers });
-  window.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button, clickCount: 1, modifiers });
+  const inputPoint = nativePoint(point);
+  window.webContents.sendInputEvent({ type: 'mouseMove', ...inputPoint });
+  window.webContents.sendInputEvent({ type: 'mouseDown', ...inputPoint, button, clickCount: 1, modifiers });
+  window.webContents.sendInputEvent({ type: 'mouseUp', ...inputPoint, button, clickCount: 1, modifiers });
   await delay(50);
 }
 async function context(selector) { await mouse(selector, 'right'); await until(() => evaluate(visible('.context-menu')), 'file context menu'); }
@@ -36,9 +38,10 @@ async function blankClick(side, button = 'left') {
   const point = await evaluate(`(() => { const wrap = document.querySelector(${JSON.stringify(pane(side) + ' .file-table-wrap')}); wrap.scrollTop = 0; const bounds = wrap.getBoundingClientRect(); return { x: Math.round(bounds.x + bounds.width / 3), y: Math.round(bounds.bottom - 6) }; })()`);
   assert.equal(await evaluate(`Boolean(document.elementFromPoint(${point.x}, ${point.y})?.closest('[data-file-path]'))`), false, 'blank-area fixture must not click a row');
   assert.equal(await evaluate(`Boolean(document.elementFromPoint(${point.x}, ${point.y})?.closest(${JSON.stringify(pane(side) + ' .file-table-wrap')}))`), true, 'blank-area native hit must be inside the file list');
-  window.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+  const inputPoint = nativePoint(point);
+  window.webContents.sendInputEvent({ type: 'mouseMove', ...inputPoint });
   await delay(40);
-  for (const type of ['mouseDown', 'mouseUp']) window.webContents.sendInputEvent({ type, ...point, button, clickCount: 1 });
+  for (const type of ['mouseDown', 'mouseUp']) window.webContents.sendInputEvent({ type, ...inputPoint, button, clickCount: 1 });
   if (button === 'right') await until(() => evaluate(visible('.context-menu')), 'blank context menu');
   else await delay(50);
 }
@@ -69,10 +72,18 @@ async function assertSort(side, label, direction, files) {
 }
 async function run() {
   await app.whenReady();
-  window = new BrowserWindow({ show: false, width: 1510, height: 1050, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+  const smallDisplay = process.env.GOOESHELL_EXPLORER_SMALL_DISPLAY === '1';
+  window = new BrowserWindow({ show: false, width: smallDisplay ? 1024 : 1510, height: smallDisplay ? 768 : 1050, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
   window.webContents.on('console-message', (...args) => { const details = args[0], message = typeof args[2] === 'string' ? args[2] : details.message, level = typeof args[1] === 'number' ? args[1] : details.level; if (level >= 3 || level === 'error') result.errors.push(message); });
   window.webContents.on('render-process-gone', (_event, detail) => result.errors.push(JSON.stringify(detail)));
   await window.loadURL(url);
+  // Windows hosted runners may clamp the native window to a 1024px display.
+  // Keep the intended full-column CSS viewport without overriding app styles;
+  // native mouse coordinates above still target the actual scaled controls.
+  const viewport = await evaluate('({width:innerWidth,height:innerHeight})');
+  window.webContents.setZoomFactor(Math.min(1, viewport.width / 1510, viewport.height / 950));
+  await until(() => evaluate('innerWidth >= 1400 && innerHeight >= 900'), 'full explorer test viewport');
+  result.viewport = await evaluate('({width:innerWidth,height:innerHeight})');
   await until(() => evaluate(`document.querySelectorAll('.host').length === 2`), 'fixture hosts');
   await host('A'); const sessionA = await activeSession(); await click('展开文件管理'); await pathIs('/home/a');
   // More vertical room makes the blank-area native pointer test independent of platform font metrics.

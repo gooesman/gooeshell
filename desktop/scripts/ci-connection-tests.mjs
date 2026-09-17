@@ -6,8 +6,9 @@ const child = spawn(process.execPath, [
   'node_modules/tsx/dist/cli.mjs', '--test', '--test-concurrency=1',
   'tests/reload-shortcuts.test.ts', 'tests/connection-ui-render.test.ts', 'tests/connections-flow-render.test.ts',
   'tests/connection-main.test.ts', 'tests/terminal-reconnect.test.ts', 'tests/app-connections-render.test.ts',
+  'tests/settings-identities-render.test.ts', 'tests/key-push-render.test.ts',
 ], {
-  env: { ...process.env, GOOESHELL_RELOAD_SHORTCUTS_TEST: '1', GOOESHELL_CONNECTION_UI_TEST: '1', GOOESHELL_CONNECTIONS_FLOW_TEST: '1', GOOESHELL_CONNECTION_MAIN_TEST: '1', GOOESHELL_RECONNECT_RENDER_TEST: '1', GOOESHELL_APP_CONNECTIONS_TEST: '1' },
+  env: { ...process.env, GOOESHELL_RELOAD_SHORTCUTS_TEST: '1', GOOESHELL_CONNECTION_UI_TEST: '1', GOOESHELL_CONNECTIONS_FLOW_TEST: '1', GOOESHELL_CONNECTION_MAIN_TEST: '1', GOOESHELL_RECONNECT_RENDER_TEST: '1', GOOESHELL_APP_CONNECTIONS_TEST: '1', GOOESHELL_SETTINGS_IDENTITIES_TEST: '1', GOOESHELL_KEY_PUSH_UI_TEST: '1' },
   windowsHide: true, stdio: 'inherit',
 });
 child.once('error', error => { console.error(error); process.exitCode = 1; });

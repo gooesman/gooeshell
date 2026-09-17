@@ -27,7 +27,7 @@ function Fixture() {
       close: connection.close,
       cancel: connection.cancel,
       sudo: (id: string) => connection.sudo(sessions.find(session => session.id === id)!),
-      submitAuth: (credentials: CredentialUpdate) => connection.submitAuth(credentials),
+      submitAuth: (credentials: CredentialUpdate, selectedProfile?: HostProfile, saveIdentitySelection = false) => connection.submitAuth(credentials, selectedProfile, saveIdentitySelection),
       save: connection.save,
       setActiveId,
       setTabs,

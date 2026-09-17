@@ -15,13 +15,15 @@ import {cleanCommandText} from './command-store';
 import {readTerminalDirectory, type TerminalDirectory} from './terminal-cwd';
 import { remoteMutationPath } from './file-mutations';
 import { performArchiveTransfer } from './archive-transfer';
+import { canonicalPublicKey, type ResolvedLocalKey } from './local-keys';
+import { installPublicKey } from './ssh-key-install';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
 const MAX_TEXT = 2 * 1024 * 1024;
 type TrustedHost = { fingerprint: string; savedAt: string };
 type TrustStore = { version: 1; hosts: Record<string, TrustedHost> };
-type Credentials = Pick<ConnectConfig, 'password' | 'privateKey' | 'passphrase' | 'agent'>;
+type Credentials = Pick<ConnectConfig, 'password' | 'privateKey' | 'passphrase' | 'agent' | 'authHandler'>;
 interface Session {
   id: string;
   profile: HostProfile;
@@ -44,6 +46,7 @@ interface Session {
   terminalCols: number;
   terminalRows: number;
   closed: boolean;
+  ephemeral?: boolean;
 }
 interface JumpTransport {
   id: string;
@@ -105,6 +108,7 @@ export class SshService {
   private readonly jobs = new Map<string, TransferJob>();
   private readonly questions = new Map<string, HostQuestion>();
   private readonly attempts = new Map<string, ConnectAttempt>();
+  private readonly keyAttempts = new Map<string, { cancelled: boolean; session?: Session }>();
   private readonly jumps = new Set<JumpTransport>();
   private readonly jumpPool = new Map<string, Set<JumpTransport>>();
   private trust?: Promise<TrustStore>;
@@ -387,6 +391,72 @@ export class SshService {
     const attempt=this.attempts.get(attemptId);if(!attempt)return;
     attempt.cancelled=true;
     if(attempt.session)this.finishSession(attempt.session,'已取消连接');
+  }
+
+  cancelSshKeyPush(attemptId: string): void {
+    const attempt = this.keyAttempts.get(attemptId);
+    if (!attempt) return;
+    attempt.cancelled = true;
+    if (attempt.session) this.finishSession(attempt.session, '已取消公钥推送');
+  }
+
+  /** Dedicated clients: no PTY, terminal events, history entry or existing-session mutation. */
+  async pushSshKey(request: ConnectRequest & { key: ResolvedLocalKey; attemptId: string }): Promise<{
+    installed: true; alreadyPresent: boolean; verified: boolean; verificationError?: string;
+  }> {
+    if (typeof request.attemptId !== 'string' || !request.attemptId || request.attemptId.length > 255) throw new Error('公钥推送请求编号无效');
+    if (this.keyAttempts.has(request.attemptId)) throw new Error('此公钥正在推送，请稍候');
+    const attempt: { cancelled: boolean; session?: Session } = { cancelled: false };
+    this.keyAttempts.set(request.attemptId, attempt);
+    const timer = setTimeout(() => this.cancelSshKeyPush(request.attemptId), 180_000); timer.unref();
+    let selected: Credentials = {}, credentials: Credentials = {}, jumpCredentials: Credentials = {};
+    try {
+      if (this.stopped) throw new Error('应用正在退出');
+      const key = canonicalPublicKey(request.key.publicKey);
+      if (request.key.privateKeyPath) {
+        selected = await this.readCredentials({ auth: 'key', privateKeyPath: request.key.privateKeyPath }, undefined, request.key.passphrase);
+        const current = canonicalPublicKey(selected.privateKey as Buffer, request.key.passphrase);
+        if (!current.isPrivate || current.publicKey !== key.publicKey) throw new Error('所选私钥已改变或与公钥不匹配，请重新选择');
+        // Never fall back to a stored password, SSH Agent or server "none" authentication.
+        selected.authHandler = ['publickey'];
+      }
+      const profile = { ...request.profile, ...(request.profile.jumpHost ? { jumpHost: { ...request.profile.jumpHost } } : {}) };
+      if (!profile.host?.trim() || !profile.username?.trim() || !Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) throw new Error('请填写服务器地址、用户名和有效端口');
+      credentials = await this.readCredentials(profile, request.password, request.passphrase);
+      if (profile.jumpHost) jumpCredentials = await this.readCredentials(profile.jumpHost, request.jumpPassword, request.jumpPassphrase);
+      if (attempt.cancelled || this.stopped) throw new Error('KEY_PUSH_CANCELLED: 已取消公钥推送');
+      const session: Session = {
+        id: randomUUID(), profile, credentials, jumpCredentials, ephemeral: true,
+        skipHostKeyVerification: request.skipHostKeyVerification === true,
+        skipJumpHostKeyVerification: request.skipJumpHostKeyVerification === true,
+        abort: new AbortController(), clients: new Set(), forwards: new Set(), pendingBytes: 0,
+        terminalReady: false, terminalCols: 100, terminalRows: 30, closed: false,
+      };
+      attempt.session = session;
+      const client = await this.openClient(session);
+      const result = await installPublicKey(client, key.publicKey, session.abort.signal);
+      client.end();
+      if (attempt.cancelled) throw new Error('KEY_PUSH_CANCELLED: 已取消公钥推送');
+      if (!request.key.privateKeyPath) return { ...result, verified: false, verificationError: '仅选择了公钥文件，未进行私钥登录验证' };
+      eraseCredentials(session.credentials); session.credentials = selected;
+      try {
+        const verification = await this.openClient(session);
+        verification.end();
+        if (attempt.cancelled) throw new Error('KEY_PUSH_CANCELLED: 已取消公钥推送');
+        return { ...result, verified: true };
+      } catch (error) {
+        if (attempt.cancelled) throw error;
+        return { ...result, verified: false, verificationError: `公钥已安装，但密钥登录验证失败：${message(error)}` };
+      }
+    } catch (error) {
+      if (attempt.cancelled) throw new Error('KEY_PUSH_CANCELLED: 操作已取消或超时；公钥可能已安装，重试会自动去重');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (attempt.session) this.finishSession(attempt.session, '公钥推送结束');
+      eraseCredentials(credentials); eraseCredentials(jumpCredentials); eraseCredentials(selected);
+      this.keyAttempts.delete(request.attemptId);
+    }
   }
 
   private async readCredentials(profile: Pick<HostProfile, 'auth' | 'privateKeyPath'>, password?: string, passphrase?: string): Promise<Credentials> {
@@ -902,7 +972,7 @@ export class SshService {
     session.shell = undefined;
     session.terminalClient = undefined;
     this.sessions.delete(session.id);
-    this.emit({ type: 'sessionClosed', sessionId: session.id, message: reason });
+    if (!session.ephemeral) this.emit({ type: 'sessionClosed', sessionId: session.id, message: reason });
   }
 
   disconnect(id: string): void {
@@ -913,6 +983,7 @@ export class SshService {
   shutdown(): void {
     this.stopped = true;
     for(const id of this.attempts.keys())this.cancelConnect(id);
+    for(const id of this.keyAttempts.keys())this.cancelSshKeyPush(id);
     for (const session of this.sessions.values()) this.finishSession(session, '应用正在退出');
     for (const jump of this.jumps) this.closeJump(jump, '应用正在退出');
   }

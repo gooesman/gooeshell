@@ -13,8 +13,13 @@ const first = { id: 'transport-one', tabId: 'stable-tab-one', profile };
 const second = { id: 'transport-two', tabId: 'stable-tab-two', profile: other };
 const secret = { remember: 'session', password: 'fixture-only', sudoUsesLogin: true };
 const jump = { id: 'gateway-one', name: '公司网关', host: 'gateway.example.test', port: 22, username: 'gateway-user', auth: 'password', rememberHost: true, reuseConnection: true };
+const identitySeeds = [
+  { id: 'shared-target', name: '共享开发账号', username: 'shared-developer', version: 1, hasPassword: true, remember: 'persistent', references: [] },
+  { id: 'shared-jump', name: '共享网关账号', username: 'shared-gateway', version: 1, hasPassword: true, remember: 'persistent', references: [] },
+];
 const backend = {
   connections: [profile, other], calls: [], plan: 'success', next: 0, pending: [], holdSave: false, pendingSave: null, sudoMissing: true,
+  identities: structuredClone(identitySeeds), sharedPasswordUpdates: [],
 };
 let window, phase = 'startup';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -28,9 +33,30 @@ async function invoke(method, args = [], wait = true) {
   const expression = `window.connectionHarness.${method}(...${JSON.stringify(args)})`;
   return evaluate(wait ? expression : `void ${expression}`);
 }
+async function choose(selector, value) {
+  await until(() => evaluate(`document.querySelector(${JSON.stringify(selector)}) instanceof HTMLSelectElement && !document.querySelector(${JSON.stringify(selector)}).disabled`), 'select ready: ' + selector);
+  await evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await delay(30);
+}
+async function fill(selector, value) {
+  await evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); input.focus(); input.select(); })()`);
+  await window.webContents.insertText(value); await delay(30);
+}
+async function checkbox(label) {
+  await evaluate(`(() => { const label = [...document.querySelectorAll('.connection-auth-dialog label.checkbox-row')].find(item => item.textContent.trim() === ${JSON.stringify(label)}); if (!label) throw new Error('Authentication checkbox not found'); label.querySelector('input').click(); })()`); await delay(30);
+}
+const authReady = () => until(() => evaluate(`Boolean(document.querySelector('.connection-auth-dialog')) && !document.querySelector('.connection-auth-dialog button[type="submit"]').disabled`), 'identity authentication ready');
+function resolveProfile(value) {
+  const result = structuredClone(value), identity = backend.identities.find(identity => identity.id === result.loginIdentityId);
+  if (identity) result.username = identity.username;
+  const jumpIdentity = backend.identities.find(identity => identity.id === result.jumpHost?.loginIdentityId);
+  if (jumpIdentity) result.jumpHost.username = jumpIdentity.username;
+  return result;
+}
 async function reset({ offline = false, empty = false, tabs, activeId } = {}) {
   assert.equal(backend.pending.length, 0, 'previous attempts must settle before the next scenario');
   backend.connections = [structuredClone(profile), structuredClone(other)]; backend.calls = []; backend.plan = 'success'; backend.sudoMissing = true;
+  backend.identities = structuredClone(identitySeeds); backend.sharedPasswordUpdates = [];
   const sessions = empty ? [] : [first, second];
   activeId ??= empty ? '' : first.id;
   await invoke('reset', [{ sessions, tabs, activeId, closed: offline ? { [first.id]: '断开' } : {} }]);
@@ -51,18 +77,23 @@ async function run() {
   ipcMain.handle('connections-flow:call', async (event, method, value) => {
     assert.equal(event.sender, window.webContents);
     backend.calls.push({ method, value });
-    if (method === 'connections') return { connections: backend.connections, profiles: backend.connections, groups: [], history: backend.connections.map(profile => ({ profile, connectedAt: 100 })) };
+    if (method === 'listLoginIdentities') return { identities: backend.identities, secureStorageAvailable: true };
+    if (method === 'connections') { const connections = backend.connections.map(resolveProfile); return { connections, profiles: connections, groups: [], history: connections.map(profile => ({ profile, connectedAt: 100 })) }; }
     if (method === 'saveConnection') { backend.connections = backend.connections.map(profile => profile.id === value.profile.id ? value.profile : profile); return value.profile; }
     if (method === 'credentialStatus') {
       const status = { remember: 'session', hasPassword: false, hasPassphrase: false, hasSudoPassword: false, sudoUsesLogin: true, secureStorageAvailable: true };
-      return { ...status, ...(value.jumpHost ? { jump: { ...status, remember: 'persistent' } } : {}) };
+      const identity = backend.identities.find(identity => identity.id === value.loginIdentityId);
+      const jumpIdentity = backend.identities.find(identity => identity.id === value.jumpHost?.loginIdentityId);
+      return { ...status, ...(identity ? { remember: identity.remember, hasPassword: identity.hasPassword } : {}), ...(value.jumpHost ? { jump: { ...status, remember: 'persistent', hasPassword: !!jumpIdentity?.hasPassword } } : {}) };
     }
     if (method === 'connect') {
       if (backend.plan === 'auth') throw new Error('AUTH_REQUIRED: 请填写登录密码');
       if (backend.plan === 'auth-failed') throw new Error('All configured authentication methods failed');
       if (backend.plan === 'jump-auth') throw new Error('JUMP_AUTH_FAILED: 跳板机身份验证失败');
       if (backend.plan === 'deferred') return new Promise(resolve => backend.pending.push({ request: value, resolve }));
-      return { id: 'connected-' + (++backend.next), profile: value.profile };
+      if (value.profile.loginIdentityId && value.credentials?.updateSharedIdentity && value.credentials.password) backend.sharedPasswordUpdates.push({ role: 'target', identityId: value.profile.loginIdentityId });
+      if (value.profile.jumpHost?.loginIdentityId && value.credentials?.jump?.updateSharedIdentity && value.credentials.jump.password) backend.sharedPasswordUpdates.push({ role: 'jump', identityId: value.profile.jumpHost.loginIdentityId });
+      return { id: 'connected-' + (++backend.next), profile: resolveProfile(value.profile) };
     }
     if (method === 'cancelConnect' || method === 'disconnect') return;
     if (method === 'saveCredentials') {
@@ -198,6 +229,73 @@ async function run() {
   await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'corrected password connects');
   assert.equal(backend.calls.filter(call => call.method === 'connect').at(-1).value.credentials.password, secret.password);
   result.checks.authenticationErrorClearsOnEditAndRetry = true;
+
+  for (const keepDefault of [false, true]) {
+    phase = keepDefault ? 'saving selected login identities as connection defaults' : 'temporary shared login identities do not rewrite saved connection defaults';
+    await reset({ empty: true, tabs: ['identity-home'], activeId: 'identity-home' });
+    backend.connections[0] = { ...profile, jumpHost: structuredClone(jump) }; await invoke('refresh');
+    await until(async () => (await state()).catalog[0].jumpHost?.id === jump.id, 'routed catalog ready');
+    backend.plan = 'auth'; await invoke('direct', [backend.connections[0], false, 'identity-home']); await authReady();
+    await choose('#auth-login-identity', 'shared-target'); await authReady();
+    await fill('#connection-auth-secret', 'target-temporary-fixture-password');
+    await choose('#auth-jump-identity', 'shared-jump'); await authReady();
+    await fill('#connection-auth-jump-secret', 'jump-temporary-fixture-password');
+    assert.equal(await evaluate(`[...document.querySelectorAll('.connection-auth-dialog label.checkbox-row input')].some(input => input.checked)`), false);
+    if (keepDefault) await checkbox('设为此连接的默认登录身份');
+    backend.plan = 'success'; await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`);
+    await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'selected identities connected');
+    const call = backend.calls.filter(call => call.method === 'connect').at(-1), saved = backend.calls.filter(call => call.method === 'saveConnection');
+    assert.equal(call.value.profile.loginIdentityId, 'shared-target'); assert.equal(call.value.profile.username, 'shared-developer');
+    assert.equal(call.value.profile.jumpHost.loginIdentityId, 'shared-jump'); assert.equal(call.value.profile.jumpHost.username, 'shared-gateway');
+    assert.equal(call.value.credentials.password, 'target-temporary-fixture-password'); assert.equal(call.value.credentials.jump.password, 'jump-temporary-fixture-password');
+    assert.equal(call.value.credentials.updateSharedIdentity, undefined); assert.equal(call.value.credentials.jump.updateSharedIdentity, undefined);
+    assert.deepEqual(backend.sharedPasswordUpdates, []); assert.equal((await state()).sessions[0].tabId, 'identity-home');
+    if (keepDefault) {
+      assert.equal(saved.length, 1); assert.equal(saved[0].value.credentials, undefined); assert.equal(saved[0].value.favorite, true);
+      assert.equal(call.value.profile.id, profile.id); assert.equal(backend.connections[0].loginIdentityId, 'shared-target'); assert.equal(backend.connections[0].jumpHost.loginIdentityId, 'shared-jump');
+      result.checks.selectedIdentityCanBecomeConnectionDefault = true;
+    } else {
+      assert.equal(saved.length, 0); assert.notEqual(call.value.profile.id, profile.id); assert.notEqual(call.value.profile.jumpHost.id, jump.id);
+      assert.equal(backend.connections[0].loginIdentityId, undefined); assert.equal(backend.connections[0].jumpHost.loginIdentityId, undefined); assert.equal(backend.connections[0].username, profile.username);
+      result.checks.temporaryIdentityLeavesSavedDefaultsAndPasswords = true;
+    }
+  }
+
+  phase = 'shared password updates require explicit per-role checkboxes';
+  await reset({ empty: true }); backend.connections[0] = { ...profile, jumpHost: structuredClone(jump) }; await invoke('refresh');
+  await until(async () => (await state()).catalog[0].jumpHost?.id === jump.id, 'routed update catalog ready');
+  backend.plan = 'auth'; await invoke('direct', [backend.connections[0]]); await authReady();
+  await choose('#auth-login-identity', 'shared-target'); await authReady(); await fill('#connection-auth-secret', 'explicit-target-fixture-password');
+  await choose('#auth-jump-identity', 'shared-jump'); await authReady(); await fill('#connection-auth-jump-secret', 'explicit-jump-fixture-password');
+  await checkbox('连接成功后更新此身份的共享密码'); await checkbox('连接成功后更新跳板机身份的共享密码');
+  backend.plan = 'success'; await evaluate(`document.querySelector('.connection-auth-dialog form').requestSubmit()`);
+  await until(async () => (await state()).sessions.length === 1 && !(await state()).prompt, 'explicit identity password update completes');
+  const explicitUpdateCall = backend.calls.filter(call => call.method === 'connect').at(-1);
+  assert.equal(explicitUpdateCall.value.credentials.updateSharedIdentity, true); assert.equal(explicitUpdateCall.value.credentials.jump.updateSharedIdentity, true);
+  assert.deepEqual(backend.sharedPasswordUpdates, [{ role: 'target', identityId: 'shared-target' }, { role: 'jump', identityId: 'shared-jump' }]);
+  assert.equal(backend.calls.some(call => call.method === 'saveConnection'), false, 'password update and default selection are independent choices');
+  result.checks.sharedPasswordUpdateRequiresExplicitSelection = true;
+
+  phase = 'identity username updates affect reconnects while other live sessions keep original users';
+  await reset({ empty: true, tabs: ['identity-live-one', 'identity-live-two'], activeId: 'identity-live-one' });
+  backend.connections[0] = { ...profile, loginIdentityId: 'shared-target', username: 'shared-developer' }; await invoke('refresh');
+  await until(async () => (await state()).catalog[0].loginIdentityId === 'shared-target', 'shared binding catalog ready');
+  await invoke('direct', [backend.connections[0], false, 'identity-live-one']); await until(async () => (await state()).sessions.length === 1, 'first shared session');
+  const oldLive = (await state()).sessions[0];
+  await invoke('direct', [backend.connections[0], true, 'identity-live-two']); await until(async () => (await state()).sessions.length === 2, 'second shared session');
+  const untouchedLive = (await state()).sessions.find(session => session.id !== oldLive.id);
+  backend.identities[0] = { ...backend.identities[0], username: 'renamed-developer', version: 2 }; await invoke('refresh');
+  await until(async () => (await state()).catalog[0].username === 'renamed-developer', 'new identity username in catalog');
+  assert.equal((await state()).sessions.find(session => session.id === oldLive.id).profile.username, 'shared-developer');
+  assert.equal((await state()).sessions.find(session => session.id === untouchedLive.id).profile.username, 'shared-developer');
+  await invoke('setClosed', [{ [oldLive.id]: '断开' }]); await until(async () => !!(await state()).closed[oldLive.id], 'first identity session offline');
+  await invoke('reconnect', [oldLive.id]);
+  const identityReconnectCall = backend.calls.filter(call => call.method === 'connect').at(-1);
+  assert.equal(identityReconnectCall.value.profile.id, profile.id); assert.equal(identityReconnectCall.value.profile.loginIdentityId, 'shared-target'); assert.equal(identityReconnectCall.value.profile.username, 'renamed-developer');
+  await until(async () => !(await state()).sessions.some(session => session.id === oldLive.id), 'reconnected identity replaces old transport');
+  assert.equal((await state()).sessions.find(session => session.tabId === 'identity-live-one').profile.username, 'renamed-developer');
+  assert.deepEqual((await state()).sessions.find(session => session.id === untouchedLive.id), untouchedLive);
+  result.checks.identityUpdateChangesReconnectWithoutRetargetingLiveSession = true;
 
   phase = 'jump authentication collects independent target and gateway credentials';
   await reset({ empty: true, tabs: ['jump-home'], activeId: 'jump-home' }); backend.plan = 'jump-auth';

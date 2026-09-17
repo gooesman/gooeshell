@@ -59,4 +59,9 @@ async function run() {
   assert.notEqual(state.families[0], state.families[1]); result.checks.isolatedAtlas = true;
   assert.ok(state.canvas > 0, 'GPU renderer required for glyph atlas regression'); result.state = state; result.success = true;
 }
-run().catch(async error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); if (window && !window.isDestroyed()) try { await fs.writeFile(report + '.failure.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); } catch {} }).finally(async () => { if (window && !window.isDestroyed()) window.destroy(); await fs.writeFile(report, JSON.stringify(result, null, 2)); app.exit(result.success ? 0 : 1); });
+run().catch(async error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); if (window && !window.isDestroyed()) try { await fs.writeFile(report + '.failure.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); } catch {} }).finally(async () => {
+  // Closing the last window can terminate Electron before an async write ends.
+  // Persist diagnostics first, including the original failure if one occurred.
+  await fs.writeFile(report, JSON.stringify(result, null, 2));
+  app.exit(result.success ? 0 : 1);
+});

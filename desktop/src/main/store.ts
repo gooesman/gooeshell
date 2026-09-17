@@ -3,7 +3,7 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {defaultSettings,migrateDefaultShortcuts,normalizeShortcut} from '../shared/defaults';
 import {preferredChineseFont,systemFontCatalog} from './font-catalog';
-import {connectionIdentity} from '../shared/connections';
+import {connectionIdentity,connectionConfigurationIdentity} from '../shared/connections';
 import {cleanJumpProfile} from './jump-profile';
 import {normalizeTerminalPalette} from '../shared/terminal-palettes';
 import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,ConnectionGroup,ConnectionIcon} from '../shared/types';
@@ -16,14 +16,15 @@ export function cleanProfile(input:HostProfile):HostProfile {
   if(!input||typeof input!=='object')throw new Error('连接配置无效');
   const text=(s:unknown,max=255)=>typeof s==='string'&&!/[\0\r\n]/.test(s)&&s.length<=max?s.trim():'';
   const host=text(input.host);const username=text(input.username);
-  if(!host||!username||!Number.isInteger(input.port)||input.port<1||input.port>65535)throw new Error('请填写主机、用户名和有效端口');
+  const loginIdentityId=input.loginIdentityId===undefined||input.loginIdentityId===''?undefined:identifier(input.loginIdentityId,'登录身份');
+  if(!host||(!username&&!loginIdentityId)||!Number.isInteger(input.port)||input.port<1||input.port>65535)throw new Error('请填写主机、用户名和有效端口');
   if(input.icon!==undefined&&!connectionIcons.has(input.icon))throw new Error('连接图标无效');
   const groupId=input.groupId===undefined||input.groupId===''?undefined:identifier(input.groupId,'分组');
   const jumpHost=input.jumpHost===undefined?undefined:cleanJumpProfile(input.jumpHost);
   return {id:text(input.id)||randomUUID(),name:text(input.name)||host,host,username,port:input.port,
-    auth:input.auth==='key'||input.auth==='agent'?input.auth:'password',privateKeyPath:text(input.privateKeyPath,2048),
+    auth:!loginIdentityId&&(input.auth==='key'||input.auth==='agent')?input.auth:'password',privateKeyPath:loginIdentityId?'':text(input.privateKeyPath,2048),
     rememberHost:input.rememberHost===true,encoding:['utf8','gb18030','big5'].includes(input.encoding)?input.encoding:'utf8',
-    ...(groupId?{groupId}:{}),...(input.icon?{icon:input.icon}:{}),...(jumpHost?{jumpHost}:{})};
+    ...(loginIdentityId?{loginIdentityId}:{}),...(groupId?{groupId}:{}),...(input.icon?{icon:input.icon}:{}),...(jumpHost?{jumpHost}:{})};
 }
 export function cleanGroup(input:ConnectionGroup):ConnectionGroup{
   if(!input||typeof input!=='object'||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||/[\0\r\n]/.test(input.name))throw new Error('请填写有效的分组名称');
@@ -92,7 +93,7 @@ function cleanCatalog(input:unknown):ConnectionCatalog{
 }
 function canonicalProfile(catalog:ConnectionCatalog,profile:HostProfile):HostProfile{
   const record=catalog.records.find(value=>value.profile.id===profile.id)
-    ??catalog.records.find(value=>connectionIdentity(value.profile)===connectionIdentity(profile));
+    ??catalog.records.find(value=>connectionConfigurationIdentity(value.profile)===connectionConfigurationIdentity(profile));
   return record?{...profile,id:record.profile.id}:profile;
 }
 function validateGroup(catalog:ConnectionCatalog,profile:HostProfile){
@@ -179,7 +180,7 @@ export class Store {
     return this.catalog(catalog=>{
       if(requireExisting&&!catalog.records.some(record=>record.profile.id===safe.id))return;
       const current=preserveCurrent?catalog.records.find(record=>record.profile.id===safe.id)?.profile:undefined;
-      if(current&&connectionIdentity(current)!==connectionIdentity(safe))return;
+      if(current&&connectionConfigurationIdentity(current)!==connectionConfigurationIdentity(safe))return;
       const saved=current??putConnection(catalog,safe);
       catalog.history=[{connectionId:saved.id,connectedAt:Date.now()},...catalog.history.filter(previous=>previous.connectionId!==saved.id)].slice(0,historyLimit);
     },true);

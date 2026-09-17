@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopApi, AppEvent } from '../shared/types';
 const call = (method:string,...args:unknown[]) => ipcRenderer.invoke('gooeshell:call',method,args);
 const api: DesktopApi = {
+  listLoginIdentities:()=>call('listLoginIdentities'),saveLoginIdentity:r=>call('saveLoginIdentity',r),deleteLoginIdentity:id=>call('deleteLoginIdentity',id),
+  prepareSshKey:r=>call('prepareSshKey',r),generateSshKey:r=>call('generateSshKey',r),pushSshKey:r=>call('pushSshKey',r),cancelSshKeyPush:id=>call('cancelSshKeyPush',id),applyVerifiedSshKey:r=>call('applyVerifiedSshKey',r),
   initial:()=>call('initial'),saveProfile:p=>call('saveProfile',p),deleteProfile:id=>call('deleteProfile',id),
   connections:()=>call('connections'),saveConnection:r=>call('saveConnection',r),deleteConnection:id=>call('deleteConnection',id),deleteHistory:id=>call('deleteHistory',id),
   saveGroup:g=>call('saveGroup',g),deleteGroup:id=>call('deleteGroup',id),

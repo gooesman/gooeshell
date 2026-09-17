@@ -12,6 +12,7 @@ const fail=error=>{report.errors.push(error?.stack||String(error));saveReport();
 process.on('uncaughtException',fail);process.on('unhandledRejection',fail);
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const roles=menu=>menu?.items.flatMap(item=>[item.role?.toLowerCase(),...(item.submenu?roles(item.submenu):[])])||[];
+const roleItem=(menu,role)=>{for(const item of menu?.items||[]){if(item.role?.toLowerCase()===role)return item;const found=roleItem(item.submenu,role);if(found)return found;}};
 let window,loads=0,starts=0;
 const evaluate=code=>window.webContents.executeJavaScript(code);
 async function until(predicate,label){const end=Date.now()+5000;while(!(await predicate())){if(Date.now()>end)throw new Error('Timed out: '+label);await delay(20);}}
@@ -41,11 +42,19 @@ async function run(){
   const accelerator=process.platform==='darwin'?'meta':'control';
   for(const [modifiers,check] of [[[accelerator,'shift'],'defaultMenuReproducesForceReload'],[[accelerator],'defaultMenuReproducesReload']]){
     const before=await snapshot(),beforeLoads=loads,beforeStarts=starts;
-    await key('R',modifiers);
+    if(process.platform==='darwin'){
+      // sendInputEvent delivers renderer keys on macOS, but does not dispatch
+      // Cocoa application-menu accelerators on hosted runners. Exercise the
+      // real default menu action as the positive control on this platform;
+      // protected keyboard events below remain native input checks everywhere.
+      const item=roleItem(defaultMenu,check==='defaultMenuReproducesForceReload'?'forcereload':'reload');
+      assert(item&&item.enabled,'Default reload menu action is available');
+      item.click({},window,window.webContents);
+    }else await key('R',modifiers);
     await until(()=>loads>beforeLoads,'default accelerator reloads the renderer');
     const after=await snapshot();
     assert.notEqual(after.identity,before.identity);assert.equal(loads,beforeLoads+1);assert.equal(starts,beforeStarts+1);
-    report.baseline.push({key:'R',modifiers,loads:loads-beforeLoads,identityChanged:before.identity!==after.identity});report.checks[check]=true;
+    report.baseline.push({method:process.platform==='darwin'?'menu-role':'native-accelerator',key:'R',modifiers,loads:loads-beforeLoads,identityChanged:before.identity!==after.identity});report.checks[check]=true;
   }
   configureApplicationMenu();
   report.protectedRoles=roles(Menu.getApplicationMenu());
