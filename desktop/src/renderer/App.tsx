@@ -71,18 +71,21 @@ function remainingTime(seconds: number) {
 }
 function TransferRow({ transfer, cancel, retry, context, busy }: { transfer: TransferInfo; cancel: () => void; retry: () => void; context: (event: React.MouseEvent) => void; busy: boolean }) {
   const preparing = transfer.state === 'packing' || transfer.state === 'extracting';
-  const indeterminate = preparing && !transfer.total;
+  const checking = transfer.state === 'checking';
+  const verification = checking ? transfer.verification : undefined;
+  const indeterminate = (preparing && !transfer.total) || (checking && (!verification || !(verification.total > 0)));
   const archived = transfer.mode === 'archive';
   const transferring = transfer.state === 'transferring';
   const speed = transfer.bytesPerSecond;
   const validSpeed = speed !== undefined && Number.isFinite(speed) && speed >= 0;
   const eta = validSpeed && speed > 0 && transfer.total > 0 ? remainingTime(Math.max(0, transfer.total - transfer.done) / speed) : '估算中';
-  const status = ({ queued: '等待中', checking: '校验中', packing: '打包压缩中', transferring: '传输中', extracting: '自动解压中', completed: '已完成', cancelled: '已取消', failed: '失败' })[transfer.state];
-  const percent = transfer.state === 'completed' ? 100 : transfer.total ? Math.min(100, transfer.done / transfer.total * 100) : 0;
-  const detail = archived ? preparing ? transfer.total ? `文件 · ${bytes(transfer.done)} / ${bytes(transfer.total)}` : (transfer.state === 'packing' ? '正在生成压缩包' : '正在恢复文件与目录') : transfer.state === 'transferring' ? `压缩包 · ${bytes(transfer.done)} / ${bytes(transfer.total)}` : transfer.state === 'completed' ? '已传输并自动解压' : transfer.state === 'checking' ? '正在检查文件' : transfer.state === 'queued' ? '等待开始' : '任务已停止' : `${bytes(transfer.done)} / ${bytes(transfer.total)}`;
+  const status = verification ? verification.stage === 'resume' ? '校验已有内容' : '校验文件' : ({ queued: '等待中', checking: '检查文件中', packing: '打包压缩中', transferring: '传输中', extracting: '自动解压中', completed: '已完成', cancelled: '已取消', failed: '失败' })[transfer.state];
+  const progressDone = verification?.done ?? transfer.done, progressTotal = verification?.total ?? transfer.total;
+  const percent = transfer.state === 'completed' ? 100 : indeterminate ? 0 : progressTotal > 0 ? Math.max(0, Math.min(100, progressDone / progressTotal * 100)) : 0;
+  const detail = verification ? `已校验 ${bytes(verification.done)} / ${bytes(verification.total)}` : checking ? '正在检查文件' : archived ? preparing ? transfer.total ? `文件 · ${bytes(transfer.done)} / ${bytes(transfer.total)}` : (transfer.state === 'packing' ? '正在生成压缩包' : '正在恢复文件与目录') : transfer.state === 'transferring' ? `压缩包 · ${bytes(transfer.done)} / ${bytes(transfer.total)}` : transfer.state === 'completed' ? '已传输并自动解压' : transfer.state === 'queued' ? '等待开始' : '任务已停止' : `${bytes(transfer.done)} / ${bytes(transfer.total)}`;
   return <div className="transfer-row" data-transfer-id={transfer.id} tabIndex={0} onContextMenu={context} title={transfer.error || `${archived ? '打包压缩传输 · ' : ''}${transfer.source} → ${transfer.destination}`}>
     <span className="transfer-direction">{transfer.direction === 'upload' ? '↑' : '↓'}</span><span className="transfer-name">{transfer.name}{archived && <span className="transfer-mode-badge">压缩</span>}</span><span className="transfer-detail" title={detail}>{detail}</span>
-    <div className="transfer-metrics" title={archived ? '速度和剩余时间按压缩包估算，不含打包与解压时间' : '按近期实际传输速度估算剩余时间'}>{transferring && <><span className="transfer-speed">{validSpeed ? `${bytes(Math.round(speed))}/s` : '测速中'}</span><span className="transfer-eta">{eta}</span></>}</div>
+    <div className="transfer-metrics" title={transferring ? archived ? '速度和剩余时间按压缩包估算，不含打包与解压时间' : '按近期实际传输速度估算剩余时间' : undefined}>{transferring && <><span className="transfer-speed">{validSpeed ? `${bytes(Math.round(speed))}/s` : '测速中'}</span><span className="transfer-eta">{eta}</span></>}{verification && !indeterminate && <span className="transfer-verification-percent">{Math.round(percent)}%</span>}</div>
     <div className={`transfer-progress${indeterminate ? ' indeterminate' : ''}`} role="progressbar" aria-label={`${transfer.name}：${status}${archived && transfer.state === 'transferring' ? '（压缩包）' : ''}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={indeterminate ? undefined : Math.round(percent)}><span style={{ width: indeterminate ? '40%' : `${percent}%` }} /></div><span className={`transfer-status ${transfer.state}`}>{busy ? '正在停止…' : status}</span>
     {activeTransferStates.includes(transfer.state) ? <IconButton title="取消传输" disabled={busy} onClick={cancel}>×</IconButton> : transfer.state === 'failed' || transfer.state === 'cancelled' ? <IconButton title={archived ? '重新打包传输' : '继续传输'} disabled={busy} onClick={retry}>↻</IconButton> : <span style={{ width: 23 }} />}
   </div>;

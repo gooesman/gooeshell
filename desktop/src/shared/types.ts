@@ -62,6 +62,7 @@ export interface TransferInfo {
   id: string; sessionId: string; direction: 'upload' | 'download'; name: string;
   source: string; destination: string; total: number; done: number;
   bytesPerSecond?: number;
+  verification?: { done: number; total: number; method: 'sha256' | 'readback'; stage: 'resume' | 'final' };
   mode?: 'direct' | 'archive';
   state: 'queued' | 'packing' | 'checking' | 'transferring' | 'extracting' | 'completed' | 'cancelled' | 'failed';
   error?: string;

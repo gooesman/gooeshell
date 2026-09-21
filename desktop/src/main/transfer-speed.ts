@@ -62,6 +62,7 @@ export class TransferProgress {
     this.clearTimer();
     this.info.state = state;
     this.info.bytesPerSecond = undefined;
+    this.info.verification = undefined;
     if (state === 'transferring') {
       this.rate.reset();
       this.info.bytesPerSecond = 0;

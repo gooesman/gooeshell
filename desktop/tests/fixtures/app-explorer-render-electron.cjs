@@ -322,6 +322,45 @@ async function run() {
   await evaluate(`${fixture}.transferState(${JSON.stringify(metricsId)}, 'completed', 11264, 11264)`);
   result.checks.transferSpeedAndEtaStayCurrent = true;
 
+  phase = 'verification progress uses checked bytes instead of completed transfer bytes';
+  const setVerification = async (verification, mode = 'direct', state = 'checking') => {
+    await evaluate(`(() => { const transfer = ${fixture}.transfers.find(item => item.id === ${JSON.stringify(metricsId)}); transfer.verification = ${JSON.stringify(verification) ?? 'undefined'}; transfer.mode = ${JSON.stringify(mode)}; ${fixture}.transferState(transfer.id, ${JSON.stringify(state)}, 11264, 11264); })()`);
+  };
+  const verificationProgress = () => evaluate(`(() => { const bar = document.querySelector(${JSON.stringify(transferRow(metricsId) + ' [role="progressbar"]')}); return { value: bar.getAttribute('aria-valuenow'), indeterminate: bar.classList.contains('indeterminate'), width: bar.firstElementChild.style.width }; })()`);
+  await setVerification({ stage: 'final', method: 'sha256', done: 256, total: 1024 });
+  await until(async () => (await metricText('transfer-status')) === '校验文件', 'final verification state');
+  assert.equal(await metricText('transfer-detail'), '已校验 256 B / 1.0 KB');
+  assert.equal(await metricText('transfer-verification-percent'), '25%');
+  assert.deepEqual(await verificationProgress(), { value: '25', indeterminate: false, width: '25%' });
+  assert.equal(await metricText('transfer-speed'), ''); assert.equal(await metricText('transfer-eta'), '');
+  await setVerification({ stage: 'resume', method: 'readback', done: 1024, total: 2048 });
+  await until(async () => (await metricText('transfer-status')) === '校验已有内容', 'resume verification state');
+  assert.equal(await metricText('transfer-detail'), '已校验 1.0 KB / 2.0 KB');
+  assert.equal(await metricText('transfer-verification-percent'), '50%');
+  assert.deepEqual(await verificationProgress(), { value: '50', indeterminate: false, width: '50%' });
+  result.checks.verificationUsesIndependentProgress = true;
+
+  await setVerification(undefined);
+  await until(async () => (await metricText('transfer-status')) === '检查文件中', 'check without byte progress');
+  assert.equal(await metricText('transfer-detail'), '正在检查文件');
+  assert.equal(await metricText('transfer-verification-percent'), '');
+  assert.deepEqual(await verificationProgress(), { value: null, indeterminate: true, width: '40%' });
+  result.checks.preparingDoesNotShowCompletedTransferProgress = true;
+
+  await setVerification({ stage: 'final', method: 'sha256', done: 3072, total: 4096 }, 'archive');
+  await until(async () => (await metricText('transfer-verification-percent')) === '75%', 'archive verification progress');
+  assert.equal(await metricText('transfer-detail'), '已校验 3.0 KB / 4.0 KB');
+  assert.equal(await metricText('transfer-status'), '校验文件');
+  assert.deepEqual(await verificationProgress(), { value: '75', indeterminate: false, width: '75%' });
+  for (const state of ['transferring', 'extracting', 'completed', 'failed', 'cancelled']) {
+    await evaluate(`${fixture}.transferState(${JSON.stringify(metricsId)}, ${JSON.stringify(state)}, 11264, 11264)`);
+    await until(() => evaluate(`Boolean(document.querySelector(${JSON.stringify(transferRow(metricsId) + ' .transfer-status.' + state)}))`), 'stale verification in ' + state);
+    assert.equal(await metricText('transfer-verification-percent'), '');
+    assert.doesNotMatch(await metricText('transfer-detail'), /已校验/);
+  }
+  await setVerification(undefined, 'direct', 'completed');
+  result.checks.archiveVerificationAndStageChangesStayCurrent = true;
+
   phase = 'task context menu stops work and deletes only queue entries';
   const removesBeforeTaskActions = (await mutationCalls('removeFile')).length;
   await evaluate(`document.querySelectorAll('.toast-stack button').forEach(button => button.click())`);

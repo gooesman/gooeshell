@@ -17,6 +17,7 @@ import { remoteMutationPath } from './file-mutations';
 import { performArchiveTransfer } from './archive-transfer';
 import { canonicalPublicKey, type ResolvedLocalKey } from './local-keys';
 import { installPublicKey } from './ssh-key-install';
+import { createTransferHash } from './transfer-hash-probe';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -853,7 +854,7 @@ export class SshService {
         if (request.mode === 'archive') {
           await performArchiveTransfer(job.client, sftp, request, info, job.abort.signal, emit,
             targetEndpoint(session), message => this.emit({ type: 'notice', message }));
-        } else await performSftpTransfer(sftp, request, info, job.abort.signal, emit, targetEndpoint(session));
+        } else await performSftpTransfer(sftp, request, info, job.abort.signal, emit, targetEndpoint(session), createTransferHash(sftp, job.client));
         info.state = 'completed';
       } catch (error) {
         info.state = job.abort.signal.aborted ? 'cancelled' : 'failed';

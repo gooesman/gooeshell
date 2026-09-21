@@ -7,6 +7,7 @@ import { extractLocalArchive, packLocalArchive } from './local-archive';
 import { cleanupRemoteArchive, extractRemoteArchive, packRemoteArchive, prepareRemoteArchive,
   type RemoteArchiveContext } from './remote-archive';
 import { isSftpClosed, performSftpTransfer, trackSftp } from './sftp-transfer';
+import { createTransferHash } from './transfer-hash-probe';
 
 const operations = { packLocalArchive, extractLocalArchive, prepareRemoteArchive, packRemoteArchive,
   extractRemoteArchive, cleanupRemoteArchive, performSftpTransfer };
@@ -50,7 +51,7 @@ export async function performArchiveTransfer(
   let remote: RemoteArchiveContext | undefined;
   let local: { directory: string; parent: string; stat: Stats } | undefined;
   const phase = (state: TransferInfo['state'], total = 0) => {
-    info.state = state; info.done = 0; info.total = total; info.bytesPerSecond = undefined; emit(true);
+    info.state = state; info.done = 0; info.total = total; info.bytesPerSecond = undefined; info.verification = undefined; emit(true);
   };
   const progress = (done: number, total?: number) => {
     info.done = done;
@@ -109,8 +110,9 @@ export async function performArchiveTransfer(
       destination: wireRequest.destinationDir, mode: 'direct' };
     await ops.performSftpTransfer(sftp, wireRequest, wireInfo, signal, force => {
       info.state = wireInfo.state; info.done = wireInfo.done; info.total = wireInfo.total;
+      info.verification = wireInfo.verification;
       info.bytesPerSecond = wireInfo.state === 'transferring' ? wireInfo.bytesPerSecond : undefined; emit(force);
-    }, endpointKey);
+    }, endpointKey, createTransferHash(sftp, client));
     checkCancelled(signal);
     phase('extracting', originalBytes);
     if (request.direction === 'upload') {

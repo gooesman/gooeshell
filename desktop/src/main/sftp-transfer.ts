@@ -1,11 +1,15 @@
 import { constants, promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferInfo, TransferRequest } from '../shared/types';
 import { TransferProgress } from './transfer-speed';
+import type { RemoteTransferHash } from './remote-transfer-hash';
 
 const CHUNK = 64 * 1024;
+const VERIFY_CONCURRENCY = 16;
+const HASH_CHUNK = 1024 * 1024;
 const MAX_ENTRIES = 50_000;
 const activeTargets = new Set<string>();
 const closedSftp = new WeakSet<SFTPWrapper>();
@@ -64,9 +68,11 @@ export async function remoteClose(sftp: SFTPWrapper, handle: Buffer): Promise<vo
   });
 }
 
-async function remoteRead(sftp: SFTPWrapper, handle: Buffer, buffer: Buffer, position: number, length: number, transferred?: (bytes: number) => void): Promise<number> {
+async function remoteRead(sftp: SFTPWrapper, handle: Buffer, buffer: Buffer, position: number, length: number, transferred?: (bytes: number) => void, signal?: AbortSignal): Promise<number> {
   let received = 0;
   while (received < length) {
+    if (signal) cancelled(signal);
+    if (isSftpClosed(sftp)) throw new Error('文件连接已断开，未完成的 .gooeshell.part 文件已保留');
     const count = await new Promise<number>((resolve, reject) => {
       sftp.read(handle, buffer, received, length - received, position + received,
         (error, bytesRead) => error ? reject(error) : resolve(bytesRead));
@@ -99,19 +105,105 @@ async function localWrite(handle: FileHandle, buffer: Buffer, position: number, 
 
 async function compare(
   local: FileHandle, sftp: SFTPWrapper, remote: Buffer, length: number,
-  signal: AbortSignal, update: () => void,
+  signal: AbortSignal, update: (done: number) => void,
 ): Promise<void> {
-  const left = Buffer.allocUnsafe(CHUNK);
-  const right = Buffer.allocUnsafe(CHUNK);
+  let next = 0, done = 0, failed = false;
+  // Fixed slots bound memory to 2 MiB and overlap network round trips. Always
+  // drain active reads before the caller closes either file handle on failure.
+  const results = await Promise.allSettled(Array.from({ length: Math.min(VERIFY_CONCURRENCY, Math.ceil(length / CHUNK)) }, async () => {
+    const left = Buffer.allocUnsafe(CHUNK), right = Buffer.allocUnsafe(CHUNK);
+    try {
+      while (!failed && next < length) {
+        cancelled(signal);
+        const position = next, count = Math.min(CHUNK, length - position);
+        next += count;
+        const reads = await Promise.allSettled([localRead(local, left, position, count), remoteRead(sftp, remote, right, position, count, undefined, signal)]);
+        for (const read of reads) if (read.status === 'rejected') throw read.reason;
+        const [a, b] = reads as PromiseFulfilledResult<number>[];
+        if (a.value !== count || b.value !== count || !left.subarray(0, count).equals(right.subarray(0, count))) throw mismatch();
+        cancelled(signal);
+        done += count; update(done);
+      }
+    } catch (error) { failed = true; throw error; }
+  }));
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
+  cancelled(signal);
+}
+
+function mismatch(): Error {
+  return new Error('已有内容或校验内容不一致，保留 .gooeshell.part；请改用新目标或检查源文件');
+}
+
+async function localHash(local: FileHandle, length: number, signal: AbortSignal, update: (done: number) => void): Promise<string> {
+  const buffer = Buffer.allocUnsafe(HASH_CHUNK), hash = createHash('sha256');
   for (let position = 0; position < length;) {
-    cancelled(signal); update();
-    const count = Math.min(CHUNK, length - position);
-    const [a, b] = await Promise.all([localRead(local, left, position, count), remoteRead(sftp, remote, right, position, count)]);
-    if (a !== count || b !== count || !left.subarray(0, count).equals(right.subarray(0, count))) {
-      throw new Error('已有内容或校验内容不一致，保留 .gooeshell.part；请改用新目标或检查源文件');
-    }
-    position += count;
+    signal.throwIfAborted();
+    const count = Math.min(HASH_CHUNK, length - position);
+    if (await localRead(local, buffer, position, count) !== count) throw mismatch();
+    hash.update(buffer.subarray(0, count));
+    position += count; update(position);
   }
+  signal.throwIfAborted();
+  return hash.digest('hex');
+}
+
+async function verify(
+  local: FileHandle, sftp: SFTPWrapper, remote: Buffer, remotePath: string, length: number,
+  signal: AbortSignal, info: TransferInfo, emit: (force?: boolean) => void,
+  stage: 'resume' | 'final', remoteHash?: RemoteTransferHash,
+): Promise<void> {
+  cancelled(signal);
+  if (!length) return;
+  const start = (method: 'sha256' | 'readback') => {
+    info.verification = { done: 0, total: length, stage, method }; emit(true); cancelled(signal);
+  };
+  const update = (done: number) => {
+    info.verification = { ...info.verification!, done }; emit();
+  };
+  const [localBefore, remoteBefore] = await Promise.all([local.stat(), sftpCall<Stats>(cb => sftp.fstat(remote, cb))]);
+  let verified = false;
+  if (remoteHash && length >= 256 * 1024) {
+    start('sha256');
+    const stop = new AbortController(), combined = AbortSignal.any([signal, stop.signal]);
+    const useReadback = new Error('使用兼容校验');
+    let localDone = 0, remoteDone = 0;
+    let firstFailure: unknown, failed = false;
+    const drainOnFailure = async <T>(operation: Promise<T>): Promise<T> => {
+      try { return await operation; } catch (error) {
+        if (error !== useReadback && !failed) { firstFailure = error; failed = true; }
+        stop.abort(); throw error;
+      }
+    };
+    const results = await Promise.allSettled([
+      drainOnFailure(localHash(local, length, combined, done => { localDone = done; update(Math.min(localDone, remoteDone)); })),
+      drainOnFailure(remoteHash(remotePath, length, combined, done => { remoteDone = done; update(Math.min(localDone, remoteDone)); }).then(result => {
+        if (!result) stop.abort(useReadback);
+        return result;
+      })),
+    ]);
+    cancelled(signal);
+    // Preserve the actual failure rather than the other reader's secondary
+    // cancellation. A capability fallback is the only intentionally aborted hash.
+    if (failed) throw firstFailure;
+    const [left, right] = results;
+    if (right.status === 'rejected') throw right.reason;
+    if (left.status === 'rejected' && left.reason !== useReadback) throw left.reason;
+    if (right.value) {
+      if (left.status !== 'fulfilled') throw mismatch();
+      if (right.value.size !== remoteBefore.size || right.value.mtime !== remoteBefore.mtime) throw new Error('远程文件在校验期间改变，保留 .part');
+      if (right.value.sha256 !== left.value) throw mismatch();
+      verified = true;
+    }
+  }
+  if (!verified) { start('readback'); await compare(local, sftp, remote, length, signal, update); }
+  cancelled(signal);
+  const [localAfter, remoteAfter] = await Promise.all([local.stat(), sftpCall<Stats>(cb => sftp.fstat(remote, cb))]);
+  if (localBefore.size !== localAfter.size || localBefore.mtimeMs !== localAfter.mtimeMs || localBefore.ctimeMs !== localAfter.ctimeMs
+    || localBefore.ino !== localAfter.ino || localBefore.dev !== localAfter.dev
+    || remoteBefore.size !== remoteAfter.size || remoteBefore.mtime !== remoteAfter.mtime) {
+    throw new Error('文件在校验期间改变，保留 .part');
+  }
+  update(length); cancelled(signal);
 }
 
 interface Item { source: string; destination: string; directory: boolean; size: number; }
@@ -171,6 +263,7 @@ async function plan(sftp: SFTPWrapper, request: TransferRequest, signal: AbortSi
 export async function performSftpTransfer(
   sftp: SFTPWrapper, request: TransferRequest, info: TransferInfo,
   signal: AbortSignal, emit: (force?: boolean) => void, endpointKey: string,
+  remoteHash?: RemoteTransferHash,
 ): Promise<void> {
   trackSftp(sftp);
   const progress = new TransferProgress(info, emit, signal);
@@ -199,14 +292,14 @@ export async function performSftpTransfer(
       if (activeTargets.has(targetKey)) throw new Error('另一个任务正在写入同一目标，请等待该任务结束');
       activeTargets.add(targetKey);
       try {
-        if (request.direction === 'upload') await upload(sftp, item, request.resume, info, signal, emit, progress);
-        else await download(sftp, item, request.resume, info, signal, emit, progress);
+        if (request.direction === 'upload') await upload(sftp, item, request.resume, info, signal, emit, progress, remoteHash);
+        else await download(sftp, item, request.resume, info, signal, emit, progress, remoteHash);
       } finally { activeTargets.delete(targetKey); }
     }
   } finally { progress.dispose(); }
 }
 
-async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void, progress: TransferProgress): Promise<void> {
+async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void, progress: TransferProgress, remoteHash?: RemoteTransferHash): Promise<void> {
   if (await remoteStat(sftp, item.destination)) throw new Error(`目标文件已存在，不会覆盖：${item.destination}`);
   const partial = `${item.destination}.gooeshell.part`;
   const existing = await remoteStat(sftp, partial);
@@ -222,7 +315,7 @@ async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tran
     // SSH_FXF_READ | WRITE | CREAT | EXCL. No TRUNC, including when resuming.
     remote = await sftpCall<Buffer>(cb => sftp.open(partial, existing ? 'r+' : 0x2b, { mode: 0o600 }, cb));
     progress.phase('checking');
-    await compare(local, sftp, remote, offset, signal, emit);
+    await verify(local, sftp, remote, partial, offset, signal, info, emit, 'resume', remoteHash);
     const completedBefore = info.done;
     info.done += offset;
     progress.phase('transferring');
@@ -236,7 +329,7 @@ async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tran
       position += count; info.done = completedBefore + position; emit();
     }
     progress.phase('checking');
-    await compare(local, sftp, remote, before.size, signal, emit);
+    await verify(local, sftp, remote, partial, before.size, signal, info, emit, 'final', remoteHash);
     const after = await local.stat();
     const remoteAfter = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || remoteAfter.size !== before.size) throw new Error('文件在传输/校验期间改变，保留 .part');
@@ -251,7 +344,7 @@ async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tran
   }
 }
 
-async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void, progress: TransferProgress): Promise<void> {
+async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: TransferInfo, signal: AbortSignal, emit: (force?: boolean) => void, progress: TransferProgress, remoteHash?: RemoteTransferHash): Promise<void> {
   if (await localExists(item.destination)) throw new Error(`目标文件已存在，不会覆盖：${item.destination}`);
   const partial = `${item.destination}.gooeshell.part`;
   const existing = await localExists(partial) ? await fs.lstat(partial) : undefined;
@@ -268,20 +361,20 @@ async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tr
     const before = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     if (!before.isFile() || before.size !== item.size) throw new Error('远程源文件在准备任务后发生变化');
     progress.phase('checking');
-    await compare(local, sftp, remote, offset, signal, emit);
+    await verify(local, sftp, remote, item.source, offset, signal, info, emit, 'resume', remoteHash);
     const completedBefore = info.done;
     info.done += offset; progress.phase('transferring');
     const buffer = Buffer.allocUnsafe(CHUNK);
     for (let position = offset; position < before.size;) {
       cancelled(signal);
       const count = Math.min(CHUNK, before.size - position);
-      if (await remoteRead(sftp, remote, buffer, position, count, bytes => progress.transferred(bytes)) !== count) throw new Error('远程源文件提前结束，保留 .part');
+      if (await remoteRead(sftp, remote, buffer, position, count, bytes => progress.transferred(bytes), signal) !== count) throw new Error('远程源文件提前结束，保留 .part');
       await localWrite(local, buffer, position, count);
       position += count; info.done = completedBefore + position; emit();
     }
     progress.phase('checking');
     await local.sync();
-    await compare(local, sftp, remote, before.size, signal, emit);
+    await verify(local, sftp, remote, item.source, before.size, signal, info, emit, 'final', remoteHash);
     const after = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     const currentPath = await fs.lstat(partial);
     if (before.size !== after.size || before.mtime !== after.mtime || currentPath.ino !== opened.ino || currentPath.dev !== opened.dev || currentPath.size !== before.size) throw new Error('文件在传输/校验期间改变，保留 .part');

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Client, type SFTPWrapper } from 'ssh2';
 import { performSftpTransfer, sftpCall } from '../src/main/sftp-transfer';
+import { createTransferHash } from '../src/main/transfer-hash-probe';
 import type { TransferInfo, TransferRequest } from '../src/shared/types';
 
 const readyFile = process.env.GOOESHELL_SFTP_TEST_READY;
@@ -38,7 +39,7 @@ test('real SSH/SFTP transfers with verified resume and no overwrite', { skip: re
         else if (info.bytesPerSecond !== undefined) assert.ok(Number.isFinite(info.bytesPerSecond) && info.bytesPerSecond >= 0);
         options.onProgress?.({ ...info });
         if (options.abortAt !== undefined && info.done >= options.abortAt) abort.abort();
-      }, 'fixture');
+      }, 'fixture', createTransferHash(sftp, client));
     } finally { assert.equal(info.bytesPerSecond, undefined); }
     return info;
   };
