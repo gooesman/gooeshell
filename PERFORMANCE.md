@@ -39,6 +39,10 @@
 
 ## 复现入口
 
+四个平台的原生构建、功能回归与未压缩成品启动已在 [CI 35727218922](https://github.com/gooesman/gooeshell/actions/runs/35727218922) 通过。工作区包含 6 组检查；Intel Mac 托管机无法创建 WebGL 2，对应 GPU 一组明确跳过，独立 DOM 多标签检查通过，其余平台保留 GPU 覆盖。
+
+发布还要求每个最终 ZIP、DMG、AppImage 和 deb 提取后启动，验证包内版本、架构及完整应用内容。报告包含实际分发包的 SHA-256；发布再次核对相同字节。此检查使用隔离目录，Linux 不执行系统安装脚本，Mac 临时签名验证不等同于 Apple 公证。
+
 在 `desktop/` 安装依赖后：
 
 ```powershell

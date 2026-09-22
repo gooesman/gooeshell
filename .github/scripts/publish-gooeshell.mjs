@@ -78,9 +78,16 @@ for (const [target, arch] of platforms) {
   assert.equal(manifest.target, target);
   assert.equal(manifest.arch, arch);
   assert.equal(manifest.buildUrl, run.html_url);
+  assert.equal(manifest.packageValidation?.success, true, 'Publishing requires final-package launch verification');
+  assert.equal(manifest.packageValidation.revision, revision);
+  assert.equal(manifest.packageValidation.version, version);
+  assert.equal(manifest.packageValidation.target, target); assert.equal(manifest.packageValidation.arch, arch);
   const extensions = target === 'win' ? ['zip'] : target === 'mac' ? ['zip', 'dmg'] : ['AppImage', 'deb'];
   assert.deepEqual(manifest.artifacts.map(item => item.filename).sort(), extensions.map(ext => `gooeshell-${version}-${target}-${arch}.${ext}`).sort());
+  assert.equal(manifest.packageValidation.packages.length, extensions.length);
   for (const item of manifest.artifacts) {
+    const verified = manifest.packageValidation.packages.filter(entry => entry.name === item.sourceFilename);
+    assert.equal(verified.length, 1); assert.equal(verified[0].sha256, item.sha256); assert.equal(verified[0].bytes, item.bytes);
     const filename = path.join(folder, item.filename);
     assert.equal((await fs.stat(filename)).size, item.bytes);
     const hash = createHash('sha256');

@@ -85,6 +85,12 @@ try {
     assert.equal(manifest.arch, arch);
     assert.equal(manifest.runner, runner);
     assert.equal(manifest.buildUrl, `https://github.com/${repository}/actions/runs/${runId}`);
+    assert.equal(manifest.packageValidation?.success, true, 'Draft uploads require final-package launch verification');
+    assert.equal(manifest.packageValidation.revision, revision);
+    assert.equal(manifest.packageValidation.version, version);
+    assert.equal(manifest.packageValidation.target, target);
+    assert.equal(manifest.packageValidation.arch, arch);
+    assert.equal(manifest.packageValidation.packages.length, extensions.length);
     assert.ok(Array.isArray(manifest.artifacts));
     assert.deepEqual(manifest.artifacts.map(item => item.filename).sort(), [...filenames].sort());
     const checksums = [];
@@ -92,6 +98,10 @@ try {
       const item = manifest.artifacts.find(item => item.filename === filename);
       assert.ok(Number.isSafeInteger(item.bytes) && item.bytes > 0);
       assert.match(item.sha256, /^[0-9a-f]{64}$/);
+      const verified = manifest.packageValidation.packages.filter(entry => entry.name === item.sourceFilename);
+      assert.equal(verified.length, 1, `Missing or duplicate package validation: ${filename}`);
+      assert.equal(verified[0].sha256, item.sha256, 'The uploaded package must be exactly the validated bytes');
+      assert.equal(verified[0].bytes, item.bytes);
       const extension = filename.slice(filename.lastIndexOf('.') + 1);
       const sourceArch = target === 'linux' ? { AppImage: 'x86_64', deb: 'amd64' }[extension] : arch;
       assert.equal(item.sourceFilename, `gooeshell-${version}-${target}-${sourceArch}.${extension}`);

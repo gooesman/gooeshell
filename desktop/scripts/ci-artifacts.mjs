@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -20,6 +21,12 @@ if (mode === 'verify') {
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
   if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error('Invalid source revision');
   const extensions = target === 'win' ? ['zip'] : target === 'mac' ? ['zip', 'dmg'] : ['AppImage', 'deb'];
+  const packageValidation = JSON.parse(await fs.readFile(`test-output/package-install-${target}-${arch}.json`, 'utf8'));
+  assert.equal(packageValidation.success, true, 'Each final package must have passed extraction and actual launch');
+  assert.equal(packageValidation.revision, revision);
+  assert.equal(packageValidation.version, version);
+  assert.equal(packageValidation.target, target); assert.equal(packageValidation.arch, arch);
+  assert.equal(packageValidation.packages.length, extensions.length);
   const destination = path.resolve('release/artifacts');
   await fs.mkdir(destination, { recursive: true });
   const artifacts = [];
@@ -36,6 +43,9 @@ if (mode === 'verify') {
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(source)) hash.update(chunk);
     const sha256 = hash.digest('hex');
+    const verified = packageValidation.packages.filter(item => item.name === sourceFilename);
+    assert.equal(verified.length, 1, `Missing package validation: ${sourceFilename}`);
+    assert.equal(verified[0].bytes, size); assert.equal(verified[0].sha256, sha256, 'The distributed package must be exactly the validated bytes');
     await fs.copyFile(source, path.join(destination, filename));
     artifacts.push({ filename, sourceFilename, bytes: size, sha256 });
   }
@@ -45,7 +55,7 @@ if (mode === 'verify') {
     name: 'gooeshell', version, revision, target, arch,
     runner: process.platform, node: process.version,
     ...(run && repository ? { buildUrl: `https://github.com/${repository}/actions/runs/${run}` } : {}),
-    artifacts,
+    artifacts, packageValidation,
   };
   await fs.writeFile(path.join(destination, `BUILD-${target}-${arch}.json`), JSON.stringify(manifest, null, 2) + '\n');
   await fs.writeFile(path.join(destination, `SHA256-${target}-${arch}.txt`), artifacts.map(item => `${item.sha256}  ${item.filename}\n`).join(''));

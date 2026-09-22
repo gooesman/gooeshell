@@ -9,14 +9,19 @@ const platform = { win: 'win32', mac: 'darwin', linux: 'linux' }[target];
 assert.equal(process.platform, platform, 'Smoke tests must use a native runner');
 assert.equal(process.arch, arch, 'Smoke tests must use the native architecture');
 const release = path.resolve(process.env.GOOESHELL_SMOKE_RELEASE || 'release');
-const executable = target === 'win' ? path.join(release, 'win-unpacked/gooeshell.exe')
+const defaultExecutable = target === 'win' ? path.join(release, 'win-unpacked/gooeshell.exe')
   : target === 'mac' ? path.join(release, arch === 'arm64' ? 'mac-arm64' : 'mac', 'gooeshell.app/Contents/MacOS/gooeshell')
   : path.join(release, 'linux-unpacked/gooeshell');
+const executable = process.env.GOOESHELL_SMOKE_EXECUTABLE ? path.resolve(process.env.GOOESHELL_SMOKE_EXECUTABLE) : defaultExecutable;
+const nodeExecutable = process.env.GOOESHELL_SMOKE_NODE_EXECUTABLE ? path.resolve(process.env.GOOESHELL_SMOKE_NODE_EXECUTABLE) : executable;
+const packageLabel = process.env.GOOESHELL_SMOKE_PACKAGE || '';
+assert.match(packageLabel, /^[a-zA-Z0-9-]*$/, 'Invalid package smoke label');
 await fs.access(executable);
+await fs.access(nodeExecutable);
 const output = path.resolve('test-output');
 await fs.mkdir(output, { recursive: true });
 const data = await fs.mkdtemp(path.join(output, 'smoke-data-'));
-const reportFile = path.join(output, `smoke-${target}-${arch}.json`);
+const reportFile = path.join(output, `smoke-${target}-${arch}${packageLabel ? '-' + packageLabel : ''}.json`);
 const reservation = createServer();
 await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
 const port = reservation.address().port;
@@ -151,7 +156,7 @@ try {
   assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:false,followInPathBar:true,remoteDisabled:true});
   assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
   assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
-  const resources = target === 'mac' ? path.resolve(path.dirname(executable), '../Resources') : path.join(path.dirname(executable), 'resources');
+  const resources = target === 'mac' ? path.resolve(path.dirname(nodeExecutable), '../Resources') : path.join(path.dirname(nodeExecutable), 'resources');
   // Load the library from the packaged ASAR with the packaged Node runtime.
   // This catches production dependencies accidentally left in devDependencies.
   const archiveSmoke = String.raw`
@@ -171,7 +176,7 @@ try {
     })().catch(error=>{console.error(error);process.exitCode=1;});
   `;
   phase('exercise packaged archive dependency');
-  const archiveResult = await new Promise((resolve, reject) => execFile(executable,
+  const archiveResult = await new Promise((resolve, reject) => execFile(nodeExecutable,
     ['-e', archiveSmoke, fileRoot, path.join(resources, 'app.asar/dist-main/main/local-archive.js')],
     { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 },
     (error, stdout, stderr) => error ? reject(new Error(`Packaged archive smoke failed: ${stderr || error.message}`)) : resolve(JSON.parse(stdout.trim()))));

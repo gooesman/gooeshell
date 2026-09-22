@@ -98,6 +98,12 @@ jobs:
           $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
           git rev-parse HEAD | Set-Content -LiteralPath release/win-unpacked/BUILD.txt
           Compress-Archive -Path release/win-unpacked/* -DestinationPath "release/gooeshell-$version-win-x64.zip"
+      - name: Extract and launch every distribution package
+        if: runner.os != 'Linux'
+        run: node scripts/ci-package-check.mjs ${{ matrix.target }} ${{ matrix.arch }}
+      - name: Extract and launch Linux distribution packages
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/ci-package-check.mjs ${{ matrix.target }} ${{ matrix.arch }}
       - name: Prepare checksums and build provenance
         run: node scripts/ci-artifacts.mjs collect ${{ matrix.target }} ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
@@ -115,6 +121,7 @@ jobs:
           path: |
             desktop/test-output/ci-*/fixture*.log
             desktop/test-output/smoke-*.json
+            desktop/test-output/package-install-*.json
             desktop/test-output/editor-main-*/result.json
             .build/editor-render-*/result.json*
             desktop/test-output/connection-main-*/result.json
