@@ -66,6 +66,8 @@ export class IdentityStore {
       const secret=password(decoded.password);if(!secret)throw new Error();return secret;
     }catch{throw new Error('CREDENTIAL_DECRYPT_FAILED: 登录身份密码无法解密，请重新填写密码或删除该身份后重建。');}
   }
+  /** Startup/sidebar metadata must not initialize or unlock the system keyring. */
+  metadata(profiles:HostProfile[]=[]):Promise<LoginIdentitySummary[]>{return this.serial(async()=>(await this.read()).identities.map(record=>this.summary(record,profiles)));}
   list(profiles:HostProfile[]=[]):Promise<LoginIdentityList>{return this.serial(async()=>({identities:(await this.read()).identities.map(record=>this.summary(record,profiles)),secureStorageAvailable:await this.available()}));}
   snapshot(id:string,includePassword=true):Promise<LoginIdentitySnapshot>{return this.serial(async()=>{
     const record=(await this.read()).identities.find(item=>item.id===text(id,'标识'));

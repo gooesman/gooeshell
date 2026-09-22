@@ -299,7 +299,17 @@ run().catch(async error => {
 }).finally(async () => {
   metrics.elapsedMs = Date.now() - started;
   metrics.calls = { reads: backend.reads, writes: backend.writes, copies: backend.copies };
-  if (window && !window.isDestroyed()) window.destroy();
-  await fs.writeFile(reportFile, JSON.stringify(metrics, null, 2));
-  app.exit(metrics.success ? 0 : 1);
+  // Destroying the last window can quit Electron while an asynchronous report
+  // write is still pending. Keep it alive until the complete report is in place;
+  // app.exit closes it afterwards. A partial temporary file is never parsed.
+  let exitCode = metrics.success ? 0 : 1;
+  try {
+    await fs.writeFile(reportFile + '.tmp', JSON.stringify(metrics, null, 2));
+    await fs.rename(reportFile + '.tmp', reportFile);
+  } catch (error) {
+    exitCode = 1;
+    console.error(`Failed to write editor renderer report ${reportFile}:`, error);
+  } finally {
+    app.exit(exitCode);
+  }
 });

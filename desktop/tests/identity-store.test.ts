@@ -26,6 +26,56 @@ test('identity metadata survives a cold start while session password does not',a
  const restarted=new IdentityStore(root,encryption);assert.equal((await restarted.snapshot(saved.id)).password,undefined);
  assert.equal((await restarted.list()).identities[0].hasPassword,false);assert.equal((await restarted.list()).identities[0].name,'测试身份');assert(!(await fs.readFile(file,'utf8')).includes('session-password'));
 });
+
+test('empty and independent connection metadata does not read the identity catalog or initialize encryption',async()=>{
+ let metadataCalls=0;
+ const unused={metadata:async()=>{metadataCalls++;throw new Error('Identity catalog must not be read for independent connections');}} as unknown as IdentityStore;
+ assert.deepEqual(await resolveIdentityMetadata(unused,[]),[]);
+ const configured={...base,jumpHost:{id:'hop',name:'Hop',host:'hop.invalid',port:22,username:'gateway',auth:'agent' as const,rememberHost:true,reuseConnection:true}};
+ const [copy]=await resolveIdentityMetadata(unused,[configured]);
+ assert.deepEqual(copy,configured);assert.notEqual(copy,configured);assert.notEqual(copy.jumpHost,configured.jumpHost);assert.equal(metadataCalls,0);
+});
+
+test('cold metadata resolution completes even if system encryption availability never resolves', {timeout:5000},async t=>{
+ const {root,identities}=await fixture(t);
+ const target=await identities.save({name:'Target identity',username:'alice',password:'target-persistent-secret',remember:'persistent'});
+ const hop=await identities.save({name:'Jump identity',username:'gateway',password:'hop-persistent-secret',remember:'persistent'});
+ let availabilityCalls=0,secretCalls=0;
+ const blocked=new IdentityStore(root,{
+  available:()=>{availabilityCalls++;return new Promise<boolean>(()=>{});},
+  encrypt:async()=>{secretCalls++;throw new Error('Unexpected encryption');},decrypt:async()=>{secretCalls++;throw new Error('Unexpected decryption');},
+ });
+ const configured={...base,username:'old-target',auth:'key' as const,privateKeyPath:'old-key',loginIdentityId:target.id,
+  jumpHost:{id:'hop',name:'Hop',host:'hop.invalid',port:22,username:'old-hop',auth:'key' as const,privateKeyPath:'old-hop-key',rememberHost:true,reuseConnection:true,loginIdentityId:hop.id}};
+ const [resolved]=await resolveIdentityMetadata(blocked,[configured]);
+ assert.equal(resolved.username,'alice');assert.equal(resolved.auth,'password');assert.equal(resolved.privateKeyPath,'');
+ assert.equal(resolved.jumpHost?.username,'gateway');assert.equal(resolved.jumpHost?.auth,'password');assert.equal(resolved.jumpHost?.privateKeyPath,'');
+ assert.equal(configured.username,'old-target');assert.equal(configured.jumpHost.username,'old-hop');
+ const metadata=await blocked.metadata([configured]);
+ assert.equal(metadata[0].name,'Target identity');assert.equal(metadata[0].version,target.version);assert.equal(metadata[0].hasPassword,true);
+ assert.equal(metadata[1].name,'Jump identity');assert.equal(metadata[1].version,hop.version);assert.equal(metadata[1].hasPassword,true);
+ assert.deepEqual(metadata.map(item=>item.references[0].role),['target','jump']);
+ for(const item of metadata)assert.deepEqual(Object.keys(item).sort(),['hasPassword','id','name','references','remember','username','version']);
+ assert(!JSON.stringify(metadata).includes('persistent-secret'));assert.equal(availabilityCalls,0);assert.equal(secretCalls,0);
+ const missing={...base,loginIdentityId:'deleted-identity'};
+ assert.deepEqual(await resolveIdentityMetadata(blocked,[missing]),[missing]);
+ await assert.rejects(resolveLoginIdentities(blocked,missing),/LOGIN_IDENTITY_NOT_FOUND/);
+ assert.equal(availabilityCalls,0);assert.equal(secretCalls,0);
+});
+
+test('metadata-only reads do not bypass encryption checks for passwords or persistent writes',async t=>{
+ const {root,encryption,identities,file}=await fixture(t),saved=await identities.save({name:'Shared',username:'alice',password:'protected-password',remember:'persistent'});
+ const original=await fs.readFile(file,'utf8');let availabilityCalls=0,decryptCalls=0;
+ const available=encryption.available.bind(encryption),decrypt=encryption.decrypt.bind(encryption);
+ encryption.available=async()=>{availabilityCalls++;return available();};encryption.decrypt=async bytes=>{decryptCalls++;return decrypt(bytes);};
+ const restarted=new IdentityStore(root,encryption);encryption.enabled=false;
+ await resolveIdentityMetadata(restarted,[{...base,loginIdentityId:saved.id}]);assert.equal(availabilityCalls,0);assert.equal(decryptCalls,0);
+ await assert.rejects(restarted.snapshot(saved.id),/CREDENTIAL_STORAGE_UNAVAILABLE/);assert.equal(availabilityCalls,1);assert.equal(decryptCalls,0);
+ await assert.rejects(restarted.save({id:saved.id,name:saved.name,username:saved.username,remember:'persistent',password:'replacement',expectedVersion:saved.version}),/CREDENTIAL_STORAGE_UNAVAILABLE/);
+ assert.equal(await fs.readFile(file,'utf8'),original);assert.equal((await restarted.list()).secureStorageAvailable,false);
+ encryption.enabled=true;assert.equal((await restarted.snapshot(saved.id)).password,'protected-password');assert.equal(decryptCalls,1);
+ assert(!JSON.stringify(await restarted.metadata()).includes('protected-password'));assert(!(await fs.readFile(file,'utf8')).includes('protected-password'));
+});
 test('persistent identity passwords are encrypted with an independent namespace and no renderer secrets',async t=>{
  const {root,encryption,identities,file}=await fixture(t),saved=await identities.save({name:'Production',username:'admin',password:'persistent-password',remember:'persistent'});
  assert.equal((await new IdentityStore(root,encryption).snapshot(saved.id)).password,'persistent-password');

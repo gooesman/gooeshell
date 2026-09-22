@@ -24,6 +24,9 @@ await new Promise(resolve => reservation.close(resolve));
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.GOOESHELL_DEV_URL;
+const started = Date.now();
+const diagnostics = { phase: 'launch', phases: [], commands: [], events: [] };
+function phase(name) { diagnostics.phase = name; diagnostics.phases.push({ name, elapsedMs: Date.now() - started }); }
 const child = spawn(executable, [
   `--user-data-dir=${data}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
   // Ubuntu hosted runners restrict user namespaces; this is limited to the disposable CI launch.
@@ -36,14 +39,23 @@ child.stderr.on('data', bytes => { logs = (logs + bytes.toString()).slice(-12_00
 child.once('error', error => { launchError = error; });
 const stopped = new Promise(resolve => child.once('close', resolve));
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-const deadline = Date.now() + 45_000;
+const deadline = started + 45_000;
 let socket;
 let nextId = 0;
 const pending = new Map();
-async function call(method, params = {}) {
+async function call(method, params = {}, timeoutMs = Math.max(1, deadline - Date.now())) {
   const id = ++nextId;
-  const result = new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-  socket.send(JSON.stringify({ id, method, params }));
+  const command = { id, method, phase: diagnostics.phase, startedMs: Date.now() - started };
+  diagnostics.commands.push(command);
+  const result = new Promise((resolve, reject) => {
+    const finish = (error, value) => {
+      clearTimeout(timer); pending.delete(id); command.elapsedMs = Date.now() - started - command.startedMs;
+      if (error) { command.error = String(error); reject(error); } else { command.completed = true; resolve(value); }
+    };
+    const timer = setTimeout(() => finish(new Error(`Packaged application inspection timed out in ${command.phase} (${method})`)), timeoutMs);
+    pending.set(id, { resolve: value => finish(undefined, value), reject: error => finish(error) });
+    try { socket.send(JSON.stringify({ id, method, params })); } catch (error) { finish(error); }
+  });
   return result;
 }
 async function until(check) {
@@ -54,48 +66,63 @@ async function until(check) {
     if (value) return value;
     await pause(150);
   }
-  throw new Error('Packaged application did not become ready within 45 seconds');
+  throw new Error(`Packaged application did not become ready within 45 seconds (${diagnostics.phase})`);
 }
 const watchdog = setTimeout(() => {
-  for (const item of pending.values()) item.reject(new Error('Packaged application inspection timed out'));
+  for (const item of [...pending.values()]) item.reject(new Error(`Packaged application inspection timed out in ${diagnostics.phase}`));
   socket?.close();
   child.kill();
 }, 50_000);
 try {
+  phase('discover packaged page');
   const page = await until(async () => {
     try {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1000) }).then(response => response.json());
       return targets.find(item => item.type === 'page' && item.url.startsWith('file:') && item.webSocketDebuggerUrl);
     } catch { return undefined; }
   });
+  diagnostics.page = { id: page.id, url: page.url, title: page.title };
+  phase('connect page inspector');
   socket = new WebSocket(page.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true });
-    socket.addEventListener('error', reject, { once: true });
-  });
   socket.addEventListener('message', event => {
     const message = JSON.parse(event.data);
+    if (message.method && ['Runtime.exceptionThrown', 'Inspector.targetCrashed', 'Page.javascriptDialogOpening'].includes(message.method)) {
+      diagnostics.events.push({ method: message.method, params: message.params, elapsedMs: Date.now() - started });
+    }
     const item = pending.get(message.id);
     if (!item) return;
     pending.delete(message.id);
     message.error ? item.reject(new Error(JSON.stringify(message.error))) : item.resolve(message.result);
   });
   socket.addEventListener('close', () => {
-    for (const item of pending.values()) item.reject(new Error('Application inspection connection closed'));
+    for (const item of [...pending.values()]) item.reject(new Error('Application inspection connection closed'));
     pending.clear();
   });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Packaged page inspector did not open before the startup deadline')), Math.max(1, deadline - Date.now()));
+    socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+    socket.addEventListener('error', error => { clearTimeout(timer); reject(error); }, { once: true });
+  });
+  await call('Runtime.enable'); await call('Page.enable');
+  phase('wait for rendered home');
   await until(async () => {
     const result = await call('Runtime.evaluate', {
       expression: 'Boolean(window.gooeshell && document.querySelector("#server-sidebar") && document.body.innerText.includes("快速连接"))', returnByValue: true,
     });
     return result.result?.value;
   });
+  phase('read initial settings through packaged IPC');
   const result = await call('Runtime.evaluate', {
-    expression: '(async () => { const state = await window.gooeshell.initial(); const fonts = await window.gooeshell.fontCatalog(); return { version: state.version, profiles: state.profiles.length, theme: state.settings.theme, fonts: fonts.length, title: document.title }; })()',
+    expression: '(async () => { const state = await window.gooeshell.initial(); return { version: state.version, profiles: state.profiles.length, theme: state.settings.theme, title: document.title }; })()',
     returnByValue: true, awaitPromise: true,
   });
   assert.equal(result.exceptionDetails, undefined, 'Packaged preload or main IPC failed');
   const state = result.result.value;
+  diagnostics.initial = state;
+  phase('read system font catalog through packaged IPC');
+  const fontResult = await call('Runtime.evaluate', { expression: '(async () => (await window.gooeshell.fontCatalog()).length)()', returnByValue: true, awaitPromise: true });
+  assert.equal(fontResult.exceptionDetails, undefined, 'Packaged font catalog IPC failed');
+  state.fonts = fontResult.result.value;
   const { version } = JSON.parse(await fs.readFile('package.json', 'utf8'));
   assert.equal(state.version, version);
   assert.equal(state.profiles, 0, 'Smoke launch must use its isolated settings directory');
@@ -104,6 +131,7 @@ try {
   const fileRoot = await fs.mkdtemp(path.join(output, 'smoke-files-'));
   const selected = path.join(fileRoot, 'selected'), leaf = path.join(selected, 'new.txt');
   const keep = path.join(fileRoot, 'keep.txt'); await fs.writeFile(keep, 'outside selected tree');
+  phase('exercise packaged file operations');
   const files = await call('Runtime.evaluate', {
     expression: `(async()=>{
       const api=window.gooeshell, request={side:'local',sessionId:''};
@@ -142,14 +170,29 @@ try {
       console.log(JSON.stringify({entries:extracted.entries,bytes:extracted.originalBytes}));
     })().catch(error=>{console.error(error);process.exitCode=1;});
   `;
+  phase('exercise packaged archive dependency');
   const archiveResult = await new Promise((resolve, reject) => execFile(executable,
     ['-e', archiveSmoke, fileRoot, path.join(resources, 'app.asar/dist-main/main/local-archive.js')],
     { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 },
     (error, stdout, stderr) => error ? reject(new Error(`Packaged archive smoke failed: ${stderr || error.message}`)) : resolve(JSON.parse(stdout.trim()))));
-  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value, archive:archiveResult }, null, 2) + '\n');
+  phase('complete');
+  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value, archive:archiveResult, elapsedMs: Date.now() - started, diagnostics }, null, 2) + '\n');
   console.log(`Packaged application smoke passed: ${target}-${arch} ${version}`);
 } catch (error) {
-  await fs.writeFile(reportFile, JSON.stringify({ success: false, target, arch, error: String(error), logs }, null, 2) + '\n');
+  clearTimeout(watchdog);
+  // An unresolved async IPC promise does not necessarily stop the renderer.
+  // Capture its state without calling that IPC again; bound diagnostics rather
+  // than hiding the original failure behind another unbounded inspector call.
+  if (socket?.readyState === WebSocket.OPEN) {
+    const checks = await Promise.allSettled([
+      call('Runtime.evaluate', { expression: '({readyState:document.readyState,title:document.title,visibility:document.visibilityState,focused:document.hasFocus(),preload:!!window.gooeshell,sidebar:!!document.querySelector("#server-sidebar"),text:document.body?.innerText.slice(0,12000),dialogs:document.querySelectorAll("[role=dialog]").length})', returnByValue: true }, 2500),
+      call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, 2500),
+    ]);
+    diagnostics.failureSnapshot = checks[0].status === 'fulfilled' ? checks[0].value.result?.value : { error: String(checks[0].reason) };
+    // Keep the image with the JSON artifact already collected on every CI host.
+    diagnostics.failureScreenshot = checks[1].status === 'fulfilled' ? { format: 'png', base64: checks[1].value.data } : { error: String(checks[1].reason) };
+  }
+  await fs.writeFile(reportFile, JSON.stringify({ success: false, target, arch, error: String(error), elapsedMs: Date.now() - started, diagnostics, logs }, null, 2) + '\n');
   throw error;
 } finally {
   clearTimeout(watchdog);

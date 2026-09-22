@@ -51,10 +51,13 @@ test('built-in editor preserves drafts and saves to its original connection', {
   const exit = await new Promise<number | null>((resolve, reject) => {
     child.once('close', resolve); child.once('error', reject);
   });
-  const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => {
-    throw new Error(`No editor renderer report: ${stderr}`);
-  }));
   t.diagnostic(`editor render artifacts: ${artifacts}`);
+  const reportText = await fs.readFile(report, 'utf8').catch(error => {
+    throw new Error(`No editor renderer report at ${report} (exit ${exit}): ${error}\n${stderr}`);
+  });
+  let result;
+  try { result = JSON.parse(reportText); }
+  catch (error) { throw new Error(`Invalid editor renderer report at ${report} (${Buffer.byteLength(reportText)} bytes, exit ${exit}): ${error}\n${stderr}`); }
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr);
   assert.equal(result.success, true, JSON.stringify(result, null, 2) + stderr);
   assert.equal(result.checks.keyboardSave, true);

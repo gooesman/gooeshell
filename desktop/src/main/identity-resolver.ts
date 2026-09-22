@@ -20,7 +20,8 @@ export function connectionCredentialUpdate(profile:HostProfile,update?:Credentia
 }
 /** Rendering metadata must remain possible when a system keyring is locked. */
 export async function resolveIdentityMetadata(store:IdentityStore,profiles:HostProfile[]):Promise<HostProfile[]>{
-  const identities=(await store.list()).identities;
+  if(!profiles.some(profile=>profile.loginIdentityId||profile.jumpHost?.loginIdentityId))return structuredClone(profiles);
+  const identities=await store.metadata();
   return profiles.map(input=>{
     const profile=structuredClone(input),target=identities.find(item=>item.id===profile.loginIdentityId),jump=identities.find(item=>item.id===profile.jumpHost?.loginIdentityId);
     if(target){profile.username=target.username;profile.auth='password';profile.privateKeyPath='';}
