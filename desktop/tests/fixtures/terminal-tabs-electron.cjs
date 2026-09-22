@@ -9,10 +9,11 @@ app.setPath('userData', userData); app.commandLine.appendSwitch('force-device-sc
 // Exercise a real WebGL atlas on CI, including hosts without a physical GPU.
 // macOS Chromium 151+ SwANGLE needs a separately bundled Vulkan loader; forcing
 // it can disable all WebGL in Electron distributions without that library.
-// ANGLE's platform OpenGL backend avoids this Vulkan-only dependency on Macs.
+// Electron's macOS build allows ANGLE/Metal (its normal platform backend),
+// but rejects ANGLE/OpenGL as an unsupported implementation.
 // https://github.com/chromiumembedded/cef/issues/4230
 // https://github.com/google/angle/blob/main/doc/DebuggingTips.md
-const angleBackend = process.env.CI ? (process.platform === 'darwin' ? 'gl' : 'swiftshader') : 'default';
+const angleBackend = process.env.CI ? (process.platform === 'darwin' ? 'metal' : 'swiftshader') : 'default';
 if (angleBackend !== 'default') {
   app.commandLine.appendSwitch('use-gl', 'angle');
   app.commandLine.appendSwitch('use-angle', angleBackend);

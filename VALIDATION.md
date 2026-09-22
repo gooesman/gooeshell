@@ -14,7 +14,7 @@
 
 最终串行 Electron 工作区回归 5 组全部通过，生产编译、Windows 0.4.2 打包及使用隔离配置的成品启动检查通过。成品检查覆盖实际页面、preload、字体目录、本地文件接口与压缩模块。
 
-跨平台回归同时修正测试环境差异：macOS 原生多选使用 Command，避免 Control-click 被系统当成右键；配色测试从完全不透明的字形内部读取完整 RGB 像素，保留精确颜色与粗体字形断言，避免逐通道最大值混合抗锯齿边缘；macOS 的图集专项使用 ANGLE/OpenGL，Windows/Linux CI 使用 SwiftShader，并明确要求真实且未丢失的 WebGL 2 上下文。这些设置只作用于隔离测试，产品渲染配置未改动。
+跨平台回归同时修正测试环境差异：macOS 原生多选使用 Command，避免 Control-click 被系统当成右键；配色测试从完全不透明的字形内部读取完整 RGB 像素，保留精确颜色与粗体字形断言，避免逐通道最大值混合抗锯齿边缘；macOS 的图集专项使用 Electron 支持的 ANGLE/Metal，Windows/Linux CI 使用 SwiftShader，并明确要求真实且未丢失的 WebGL 2 上下文。这些设置只作用于隔离测试，产品渲染配置未改动。
 
 ## 0.4.1：传输校验提速与独立进度
 
