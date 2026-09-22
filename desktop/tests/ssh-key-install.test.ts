@@ -97,7 +97,11 @@ try:
     assert ssh.stat().st_mode & 0o777 == 0o700
     assert other.stat().st_mode & 0o777 == 0o644
     target.write_text('# no newline')
-    children = [multiprocessing.Process(target=install, args=(key,)) for _ in range(6)]
+    # This POSIX-only fixture injects a temporary home and a function via exec.
+    # Explicit fork preserves that isolated scope on macOS, whose default spawn
+    # cannot import the synthetic fixture module. Production does not fork here.
+    context = multiprocessing.get_context('fork')
+    children = [context.Process(target=install, args=(key,)) for _ in range(6)]
     for child in children: child.start()
     for child in children: child.join(); assert child.exitcode == 0
     assert target.read_text() == '# no newline\n' + key + ' gooeshell\n'

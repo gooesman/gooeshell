@@ -1,6 +1,6 @@
 {
   "name": "gooeshell",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "Graphical SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
@@ -125,6 +125,10 @@
       {
         "from": "../VALIDATION.md",
         "to": "VALIDATION.md"
+      },
+      {
+        "from": "../PERFORMANCE.md",
+        "to": "PERFORMANCE.md"
       }
     ]
   }

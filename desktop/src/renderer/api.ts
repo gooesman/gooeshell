@@ -2,6 +2,7 @@ import type {DesktopApi,AppEvent,FileListing,HostProfile,AppSettings,ConnectionH
 import {defaultSettings} from '../shared/defaults';
 import {bundledFontFamilies} from '../shared/fonts';
 import {previewFontCatalog} from './preview-font-catalog';
+import {createAppEventHub} from './app-event-hub';
 export const isPreview=!window.gooeshell;
 const listeners=new Set<(event:AppEvent)=>void>();
 const emit=(event:AppEvent)=>listeners.forEach(fn=>fn(event));
@@ -77,4 +78,5 @@ const preview:DesktopApi={
  fullscreen:async()=>{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();},minimize:()=>{},maximize:()=>{},closeWindow:()=>{},
  terminalInput:()=>{},terminalBinaryInput:()=>{},terminalResize:()=>{},terminalAck:()=>{},pathForFile:()=>'',onEvent:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}
 };
-export const api:DesktopApi=window.gooeshell||preview;
+const backend=window.gooeshell||preview;
+export const api:DesktopApi={...backend,onEvent:createAppEventHub(handler=>backend.onEvent(handler))};

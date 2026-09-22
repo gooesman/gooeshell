@@ -21,6 +21,9 @@
 .file-sort-button:focus-visible { outline:1px solid var(--border-strong); outline-offset:2px; }
 .file-sort-arrow { display:inline-flex; align-items:center; justify-content:center; flex:0 0 12px; width:12px; }
 .file-table .size-col .file-sort-button { justify-content:flex-end; }
+.file-table .file-table-spacer td { padding:0; border:0; }
+.file-table .file-table-spacer:hover { background:transparent; }
+.file-table-wrap { overflow-anchor:none; }
 .transfer-dialog .file-action-location { margin-bottom:12px; }
 .transfer-source-list { list-style:none; max-height:108px; overflow:auto; margin:0 0 20px; padding:8px 11px; border:1px solid var(--border); border-radius:8px; background:var(--surface); }
 .transfer-source-list li { font:11px/1.8 var(--mono); color:var(--text-muted); overflow-wrap:anywhere; padding:2px 0; }

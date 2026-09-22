@@ -24,6 +24,7 @@ test('real SSH/SFTP transfers with verified resume and no overwrite', { skip: re
     });
   });
   const sftp = await sftpCall<SFTPWrapper>(cb => client.sftp(cb));
+  const transferHash = createTransferHash(sftp, client);
   const caseName = randomUUID();
   const local = path.join(values.root, 'local', caseName);
   const remote = path.join(values.root, 'remote', caseName);
@@ -39,7 +40,7 @@ test('real SSH/SFTP transfers with verified resume and no overwrite', { skip: re
         else if (info.bytesPerSecond !== undefined) assert.ok(Number.isFinite(info.bytesPerSecond) && info.bytesPerSecond >= 0);
         options.onProgress?.({ ...info });
         if (options.abortAt !== undefined && info.done >= options.abortAt) abort.abort();
-      }, 'fixture', createTransferHash(sftp, client));
+      }, 'fixture', transferHash);
     } finally { assert.equal(info.bytesPerSecond, undefined); }
     return info;
   };

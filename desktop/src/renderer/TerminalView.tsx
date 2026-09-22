@@ -9,6 +9,7 @@ import {terminalTheme,terminalBackground} from './terminal-theme';
 import {terminalFontFamily,terminalFontLoads} from '../shared/fonts';
 import {loadFontCatalog,acquireTerminalFont,type TerminalFontBundle} from './terminal-font-bundle';
 import {scopedTerminalFontFamily} from './terminal-font-scope';
+import {decodeTerminalBytes} from './terminal-output';
 import './terminal-fonts.css';
 import './fonts.css';
 import {TerminalPasteController,TerminalPastePanel,type PasteState} from './TerminalPaste';
@@ -26,7 +27,6 @@ export function mouseChord(e:MouseEvent){
  if(!key)return'';
  return[e.ctrlKey?'Ctrl':'',e.altKey?'Alt':'',e.shiftKey?'Shift':'',e.metaKey?'Meta':'',key].filter(Boolean).join('+');
 }
-function decode(value:string){const raw=atob(value);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
 export default function TerminalView({session,settings,active,onFontSizeChange,disconnected=false,reconnecting=false,reconnectError='',onReconnect,onCancelReconnect,onSudoPassword,onCommandSender}:{session:SessionInfo;settings:AppSettings;active:boolean;onFontSizeChange?:(size:number)=>void;disconnected?:boolean;reconnecting?:boolean;reconnectError?:string;onReconnect?:()=>void;onCancelReconnect?:()=>void;onSudoPassword?:()=>void;onCommandSender?:(sessionId:string,sender:TerminalCommandSender|null)=>void}){
  const host=useRef<HTMLDivElement>(null);const term=useRef<Terminal|null>(null);const requestFit=useRef<(()=>void)|null>(null);const search=useRef<SearchAddon|null>(null);const current=useRef(settings);const fontCallback=useRef(onFontSizeChange);
  const [searchOpen,setSearchOpen]=useState(false);const [query,setQuery]=useState('');const [background,setBackground]=useState('');const [fontWarning,setFontWarning]=useState('');const activeFont=useRef<TerminalFontBundle|null>(null);
@@ -56,7 +56,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   const input=terminal.onData(data=>{if(online.current){if(!isPreview)api.terminalInput(transport.current,data);paste.input(data);}});
   const binaryInput=terminal.onBinary(data=>{if(!isPreview&&online.current)api.terminalBinaryInput(transport.current,data);});
   const remove=api.onEvent(event=>{
-   if(event.type==='terminal'&&event.sessionId===transport.current)terminal.write(decode(event.data),()=>api.terminalAck(event.sessionId,event.bytes));
+   if(event.type==='terminal'&&event.sessionId===transport.current)terminal.write(decodeTerminalBytes(event.data),()=>api.terminalAck(event.sessionId,event.bytes));
    if(event.type==='sessionClosed'&&event.sessionId===transport.current){online.current=false;paste.cancel();setClosedEvent({id:event.sessionId,message:event.message});terminal.write(disconnectedModes+'\r\n\x1b[90m[连接已断开]\x1b[0m\r\n');}
   });
   const selection=terminal.onSelectionChange(()=>{if(current.current.copyOnSelect&&terminal.hasSelection())void api.writeClipboard(terminal.getSelection());});

@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -8,7 +8,7 @@ if (!url || new URL(url).hostname !== '127.0.0.1' || !report || !userData) throw
 app.setPath('userData', userData); app.commandLine.appendSwitch('force-device-scale-factor', '1');
 // Hosted runners have no physical GPU; still exercise the actual WebGL atlas.
 if (process.env.CI) { app.commandLine.appendSwitch('use-angle', 'swiftshader'); app.commandLine.appendSwitch('enable-unsafe-swiftshader'); }
-const result = { checks: {}, rendererErrors: [] }; let window, phase = 'initial';
+const result = { checks: {}, rendererErrors: [], subscriptions: { calls: 0, active: 0, maximum: 0 } }; let window, phase = 'initial';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = code => window.webContents.executeJavaScript(code);
 const flush = async () => { await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await wait(70); };
@@ -25,6 +25,12 @@ async function capture(label) {
 async function run() {
   await app.whenReady();
   window = new BrowserWindow({ show: false, width: 960, height: 680, webPreferences: { preload: path.resolve('tests/fixtures/terminal-palettes-preload.cjs'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  ipcMain.on('palette-fixture:subscription', (event, action) => {
+    assert.equal(event.sender, window.webContents);
+    if (action === 'add') { result.subscriptions.calls++; result.subscriptions.active++; }
+    else result.subscriptions.active--;
+    result.subscriptions.maximum = Math.max(result.subscriptions.maximum, result.subscriptions.active);
+  });
   window.webContents.on('render-process-gone', (_event, details) => result.rendererErrors.push(details));
   await window.loadURL(url); window.setMenu(null);
   await until(() => evaluate('window.__fixtureTerminals?.length===1&&window.__fixtureTerminals[0].options.fontFamily.includes("GooeshellTerminal")'), 'first composite font');
@@ -57,7 +63,12 @@ async function run() {
   const state = await evaluate(String.raw`(()=>{const terminal=window.__fixtureTerminals[0];return {count:window.__fixtureTerminals.length,type:terminal.buffer.active.type,modes:terminal.modes,text:Array.from({length:terminal.buffer.active.length},(_,i)=>terminal.buffer.active.getLine(i)?.translateToString(true)||'').join('\n'),families:window.__fixtureTerminals.map(item=>item.options.fontFamily),canvas:document.querySelectorAll('canvas').length}})()`);
   assert.equal(state.count, 2); assert.equal(state.type, 'alternate'); assert.equal(state.modes.bracketedPasteMode, true); assert.match(state.text, /FIRST_TERMINAL_0123456789/); assert.match(state.text, /中文甲乙/); result.checks.bufferPreserved = true;
   assert.notEqual(state.families[0], state.families[1]); result.checks.isolatedAtlas = true;
-  assert.ok(state.canvas > 0, 'GPU renderer required for glyph atlas regression'); result.state = state; result.success = true;
+  assert.ok(state.canvas > 0, 'GPU renderer required for glyph atlas regression'); result.state = state;
+  assert.deepEqual(result.subscriptions, { calls: 1, active: 1, maximum: 1 }, 'terminal tabs share one actual contextBridge event subscription');
+  result.checks.singleBridgeSubscription = true;
+  await evaluate('window.__tabsSetCount(0)');
+  await until(() => result.subscriptions.active === 0, 'unsubscribe after last terminal closes');
+  result.checks.bridgeUnsubscribed = true; result.success = true;
 }
 run().catch(async error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); if (window && !window.isDestroyed()) try { await fs.writeFile(report + '.failure.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); } catch {} }).finally(async () => {
   // Closing the last window can terminate Electron before an async write ends.

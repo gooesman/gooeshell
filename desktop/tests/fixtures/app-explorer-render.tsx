@@ -35,6 +35,7 @@ function volume(sessionId: string, side = 'remote') {
 }
 let held: (() => void) | undefined;
 const control = {
+  renderSamples: [] as number[],
   calls, denyNext: '', denyPath: '', holdNext: '', held: false, cwd: {} as Record<string, string>,
   chosenFiles: [] as string[], transfers: [] as TransferInfo[],
   release: () => { held?.(); held = undefined; control.held = false; },
@@ -42,6 +43,14 @@ const control = {
   transferState: (id: string, state: TransferInfo['state'], done = 0, total = 0) => { const transfer = control.transfers.find(item => item.id === id)!; Object.assign(transfer, { state, done, total }); control.emit({ type: 'transfer', transfer: { ...transfer } }); },
   entries: (sessionId: string, side = 'remote') => [...volume(sessionId, side).keys()],
   entry: (sessionId: string, path: string, side = 'remote') => volume(sessionId, side).get(path),
+  populateDirectory: (sessionId: string, count: number, side = 'remote') => {
+    const entries = volume(sessionId, side), base = side === 'local' ? 'C:\\Fixture' : rootFor(sessionId), separator = side === 'local' ? '\\' : '/';
+    entries.clear();
+    for (let index = 0; index < count; index++) {
+      const name = `file-${String(index).padStart(5, '0')}.txt`, path = base + separator + name;
+      entries.set(path, { name, path, type: 'file', size: count - index, modified: 1_789_027_200_000 + index * 1000, mode: 0o100644 });
+    }
+  },
 };
 async function record(method: string, request: Request) {
   calls.push({ method, request: { ...request } });
@@ -97,4 +106,4 @@ Object.assign(api, {
   terminalCwd: async ({ sessionId }: { sessionId: string }) => { calls.push({ method: 'terminalCwd', request: { sessionId } }); return { path: control.cwd[sessionId] || rootFor(sessionId), source: 'shell' }; },
 });
 (window as any).appExplorerFixture = control;
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode><React.Profiler id="explorer-app" onRender={(_id, _phase, duration) => control.renderSamples.push(duration)}><App /></React.Profiler></React.StrictMode>);

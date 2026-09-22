@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('gooeshell',{
   readClipboard:async()=>'',writeClipboard:async()=>{},
   onEvent:callback=>{
     const listener=(_event,value)=>callback(value);ipcRenderer.on('palette-fixture:event',listener);
-    return()=>ipcRenderer.removeListener('palette-fixture:event',listener);
+    ipcRenderer.send('palette-fixture:subscription','add');
+    return()=>{ipcRenderer.removeListener('palette-fixture:event',listener);ipcRenderer.send('palette-fixture:subscription','remove');};
   },
 });

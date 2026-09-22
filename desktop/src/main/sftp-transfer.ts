@@ -8,6 +8,7 @@ import { TransferProgress } from './transfer-speed';
 import type { RemoteTransferHash } from './remote-transfer-hash';
 
 const CHUNK = 64 * 1024;
+const DOWNLOAD_CONCURRENCY = 16;
 const VERIFY_CONCURRENCY = 16;
 const HASH_CHUNK = 1024 * 1024;
 const MAX_ENTRIES = 50_000;
@@ -100,6 +101,52 @@ async function localWrite(handle: FileHandle, buffer: Buffer, position: number, 
     const { bytesWritten } = await handle.write(buffer, written, length - written, position + written);
     if (bytesWritten === 0) throw new Error('本地文件写入没有取得进展');
     written += bytesWritten;
+  }
+}
+
+async function downloadContents(
+  local: FileHandle, sftp: SFTPWrapper, remote: Buffer, offset: number, size: number,
+  signal: AbortSignal, transferred: (bytes: number) => void, committed: (position: number) => void,
+): Promise<void> {
+  type Slot = { position: number; length: number; buffer: Buffer; ready: Promise<void> };
+  const pending: Slot[] = [], stop = new AbortController();
+  const reading = AbortSignal.any([signal, stop.signal]);
+  let next = offset, failure: unknown, failed = false;
+  const fail = (error: unknown) => {
+    if (!failed) { failed = true; failure = error; stop.abort(error); }
+  };
+  const enqueue = (buffer: Buffer) => {
+    const position = next, length = Math.min(CHUNK, size - next);
+    next += length;
+    // Attach the rejection handler immediately: a later read can fail before
+    // an earlier (slower) read has reached the ordered writer.
+    const ready = remoteRead(sftp, remote, buffer, position, length, transferred, reading)
+      .then(count => { if (count !== length) throw new Error('远程源文件提前结束，保留 .part'); })
+      .catch(fail);
+    pending.push({ position, length, buffer, ready });
+  };
+  try {
+    cancelled(signal);
+    // Reuse exactly these slots. A slow first read cannot accumulate an
+    // unbounded reorder queue: new reads wait for an ordered local commit.
+    for (let index = 0; index < DOWNLOAD_CONCURRENCY && next < size; index++) enqueue(Buffer.allocUnsafe(CHUNK));
+    while (pending.length) {
+      const slot = pending.shift()!;
+      await slot.ready;
+      cancelled(signal);
+      if (failed) throw failure;
+      await localWrite(local, slot.buffer, slot.position, slot.length);
+      committed(slot.position + slot.length);
+      cancelled(signal);
+      if (!failed && next < size) enqueue(slot.buffer);
+    }
+    if (failed) throw failure;
+  } catch (error) { fail(error); throw error; }
+  finally {
+    // No local writes happen out of order, including on cancellation or read
+    // failure. The retained .part therefore stays a resumable contiguous prefix.
+    // Drain before closing the remote handle or reusing any in-flight buffer.
+    await Promise.all(pending.map(slot => slot.ready));
   }
 }
 
@@ -364,14 +411,8 @@ async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tr
     await verify(local, sftp, remote, item.source, offset, signal, info, emit, 'resume', remoteHash);
     const completedBefore = info.done;
     info.done += offset; progress.phase('transferring');
-    const buffer = Buffer.allocUnsafe(CHUNK);
-    for (let position = offset; position < before.size;) {
-      cancelled(signal);
-      const count = Math.min(CHUNK, before.size - position);
-      if (await remoteRead(sftp, remote, buffer, position, count, bytes => progress.transferred(bytes), signal) !== count) throw new Error('远程源文件提前结束，保留 .part');
-      await localWrite(local, buffer, position, count);
-      position += count; info.done = completedBefore + position; emit();
-    }
+    await downloadContents(local, sftp, remote, offset, before.size, signal,
+      bytes => progress.transferred(bytes), position => { info.done = completedBefore + position; emit(); });
     progress.phase('checking');
     await local.sync();
     await verify(local, sftp, remote, item.source, before.size, signal, info, emit, 'final', remoteHash);

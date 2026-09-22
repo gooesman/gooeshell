@@ -16,6 +16,7 @@ import {connectionIdentity,connectionConfigurationIdentity} from '../shared/conn
 import {availableFontFamilies,bundledFontFamilies} from '../shared/fonts';
 import {readLocalText,readLocalTextFile,readLocalTextRevision,writeLocalTextFile,renameLocalPath} from './local-files';
 import {createLocalFile,createLocalDirectory,removeLocalFile} from './file-mutations';
+import {listLocalDirectory} from './local-directory';
 import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
@@ -100,9 +101,7 @@ const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
 async function localList(directory:string):Promise<FileListing>{
- const actual=localPath(directory);const entries=await fs.readdir(actual,{withFileTypes:true});
- const result=await Promise.all(entries.map(async e=>{try{const p=path.join(actual,e.name);const s=await fs.lstat(p);return{name:e.name,path:p,type:s.isDirectory()?'directory' as const:s.isSymbolicLink()?'symlink' as const:'file' as const,size:s.size,modified:s.mtimeMs,mode:s.mode};}catch{return null;}}));
- return {path:actual,entries:result.filter((x):x is NonNullable<typeof x>=>x!==null).sort((a,b)=>Number(b.type==='directory')-Number(a.type==='directory')||a.name.localeCompare(b.name,'zh-CN'))};
+ return listLocalDirectory(localPath(directory));
 }
 async function fonts():Promise<string[]>{
  const known=[...bundledFontFamilies];
