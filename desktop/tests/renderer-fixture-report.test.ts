@@ -21,13 +21,23 @@ for (const success of [true, false]) test(`renderer exits only after publishing 
   assert.deepEqual(exits, [success ? 0 : 1]);
 });
 
+test('unavailable renderer capability publishes diagnostics before its dedicated exit marker', async () => {
+  const report = await reportPath(), result = { success: false, status: 'unsupported' }, exits: number[] = [];
+  await finishRendererFixture({ exit(code: number) {
+    assert.deepEqual(JSON.parse(readFileSync(report, 'utf8')), result);
+    assert.equal(existsSync(report + '.tmp'), false);
+    exits.push(code);
+  } }, report, result, 77);
+  assert.deepEqual(exits, [77]);
+});
+
 test('report write failure exits unsuccessfully and preserves the previous complete report', async t => {
   const report = await reportPath(), previous = { success: false, error: 'previous complete diagnostics' };
   await fs.writeFile(report, JSON.stringify(previous));
   await fs.mkdir(report + '.tmp');
   const exits: number[] = [], errors: unknown[][] = [];
   t.mock.method(console, 'error', (...args: unknown[]) => { errors.push(args); });
-  await finishRendererFixture({ exit: (code: number) => exits.push(code) }, report, { success: true });
+  await finishRendererFixture({ exit: (code: number) => exits.push(code) }, report, { success: false, status: 'unsupported' }, 77);
   assert.deepEqual(exits, [1]); assert.equal(errors.length, 1);
   assert.deepEqual(JSON.parse(await fs.readFile(report, 'utf8')), previous);
 });
