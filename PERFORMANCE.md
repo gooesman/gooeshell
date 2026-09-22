@@ -43,6 +43,8 @@
 
 发布还要求每个最终 ZIP、DMG、AppImage 和 deb 提取后启动，验证包内版本、架构及完整应用内容。报告包含实际分发包的 SHA-256；发布再次核对相同字节。此检查使用隔离目录，Linux 不执行系统安装脚本，Mac 临时签名验证不等同于 Apple 公证。
 
+该门禁已在 [最终 CI 35730619568](https://github.com/gooesman/gooeshell/actions/runs/35730619568) 全部通过：源码 `f52410566046851f7c49df1d94f599007ccc7cda`，四个平台、七个最终分发包，均完成提取和实际启动验证。
+
 在 `desktop/` 安装依赖后：
 
 ```powershell
