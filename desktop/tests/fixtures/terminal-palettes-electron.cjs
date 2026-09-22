@@ -10,6 +10,23 @@ const metrics={checks:{},calls:[],rendererErrors:[],console:[]};const started=Da
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const evaluate=code=>window.webContents.executeJavaScript(code);
 const styleRows={blue:2,boldBlue:3,brightBlue:4,boldBrightBlue:5,trueColor:6,boldTrueColor:7};
+function opaqueGlyphColor(data){
+  // Antialiased edges can contain quantized RGB values on a transparent canvas.
+  // Independent channel maxima can even combine three different edge pixels
+  // into a color that was never painted. Sample actual fully covered interiors
+  // instead, and select the most frequent complete RGB triple without tolerance.
+  const counts=new Map(),channelMax=[0,0,0];let opaquePixels=0,edgePixels=0;
+  for(let index=0;index<data.length;index+=4){
+    for(let channel=0;channel<3;channel++)channelMax[channel]=Math.max(channelMax[channel],data[index+channel]);
+    if(!data[index+3])continue;
+    if(data[index+3]!==255){edgePixels++;continue;}
+    const key=`${data[index]},${data[index+1]},${data[index+2]}`;
+    counts.set(key,(counts.get(key)||0)+1);opaquePixels++;
+  }
+  const dominant=[...counts].sort((a,b)=>b[1]-a[1])[0];
+  if(!dominant)throw new Error('No opaque glyph interiors available for exact color sampling');
+  return {color:dominant[0].split(',').map(Number),opaquePixels,edgePixels,channelMax};
+}
 async function until(predicate,label,timeout=8_000){const deadline=Date.now()+timeout;while(!(await predicate())){if(Date.now()>deadline)throw new Error(`Timed out: ${label}`);await delay(20);}}
 const inspect=()=>evaluate(String.raw`(()=>{
   const terminal=window.__fixtureTerminal;if(!terminal)return null;
@@ -34,15 +51,14 @@ async function captureStyles(label){
   await flush();
   const geometry=await evaluate(`(()=>{const terminal=window.__fixtureTerminal,rect=terminal.element.querySelector('.xterm-screen').getBoundingClientRect();return{x:rect.left,y:rect.top,width:rect.width,rowHeight:rect.height/terminal.rows,innerWidth:window.innerWidth};})()`);
   const pixels=await evaluate(`new Promise(resolve=>{
-    const terminal=window.__fixtureTerminal,rows=${JSON.stringify(styleRows)};
+    const terminal=window.__fixtureTerminal,rows=${JSON.stringify(styleRows)},sampleColor=${opaqueGlyphColor.toString()};
     const listener=terminal.onRender(()=>{
       listener.dispose();const gl=[...terminal.element.querySelectorAll('.xterm-screen canvas')].map(canvas=>canvas.getContext('webgl2')).find(Boolean),result={};
       for(const [name,row] of Object.entries(rows)){
         if(gl){
           const width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,rowHeight=height/terminal.rows,top=Math.round(row*rowHeight),bottom=Math.round((row+1)*rowHeight),data=new Uint8Array(width*(bottom-top)*4);
           gl.readPixels(0,height-bottom,width,bottom-top,gl.RGBA,gl.UNSIGNED_BYTE,data);
-          const color=[0,0,0];for(let index=0;index<data.length;index+=4)for(let channel=0;channel<3;channel++)color[channel]=Math.max(color[channel],data[index+channel]);
-          result[name]={color};
+          result[name]=sampleColor(data);
         }else{
           const span=terminal.element.querySelector('.xterm-rows').children[row].querySelector('span'),style=getComputedStyle(span);
           result[name]={color:style.color.match(/\\d+/g).slice(0,3).map(Number),weight:Number(style.fontWeight)};
@@ -76,6 +92,11 @@ function preserved(before,after){
   assert.deepEqual(after.modes,before.modes);
 }
 async function run(){
+  // This reproduces the old sampler's failure: a partly covered green channel
+  // must not replace the exact foreground of the fully covered glyph pixels.
+  assert.deepEqual(opaqueGlyphColor(Uint8Array.from([194,58,235,255,194,58,235,255,193,60,234,250,0,0,0,0])).color,[194,58,235]);
+  assert.throws(()=>opaqueGlyphColor(Uint8Array.from([194,60,235,250])),/No opaque glyph interiors/);
+  metrics.checks.exactInteriorSampling=true;
   await app.whenReady();
   ipcMain.on('palette-fixture:call',(event,method,args)=>{if(event.sender===window.webContents)metrics.calls.push({method,args});});
   window=new BrowserWindow({show:false,width:1280,height:820,webPreferences:{preload:path.resolve('tests/fixtures/terminal-palettes-preload.cjs'),contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
@@ -96,9 +117,9 @@ async function run(){
   const baseline=await inspect();assert.equal(baseline.modes.mouseTrackingMode,'any');assert.equal(baseline.modes.bracketedPasteMode,true);
   phase='program bold changes actual glyphs without changing colors or terminal state';
   assert.equal(baseline.fontWeightBold,400);assert.equal(baseline.settings.terminalBold,false);
-  const regularStyles=await captureStyles('bold-disabled');verifyColors(regularStyles,await inspect());
+  const regularStyles=await captureStyles('bold-disabled');metrics.styles={regular:regularStyles};verifyColors(regularStyles,await inspect());
   await bold(true);const enabled=await inspect();preserved(baseline,enabled);
-  const boldStyles=await captureStyles('bold-enabled');verifyColors(boldStyles,enabled);
+  const boldStyles=await captureStyles('bold-enabled');metrics.styles.bold=boldStyles;verifyColors(boldStyles,enabled);
   for(const name of ['blue','brightBlue','trueColor'])assert.equal(boldStyles[name].hash,regularStyles[name].hash,name+' must not gain weight');
   for(const name of ['boldBlue','boldBrightBlue','boldTrueColor'])assert.notEqual(boldStyles[name].hash,regularStyles[name].hash,name+' must visibly gain weight');
   if(process.env.GOOESHELL_PALETTE_DOM==='1'){assert.equal(regularStyles.boldBlue.weight,400);assert.equal(boldStyles.boldBlue.weight,700);}

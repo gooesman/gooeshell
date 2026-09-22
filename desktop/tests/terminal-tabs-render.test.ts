@@ -25,6 +25,6 @@ test('same-font terminal tabs preserve actual GPU glyph pixels through hidden fo
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error(`No terminal tab report: ${stderr}`); }));
   t.diagnostic(`terminal tab artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true, JSON.stringify(result, null, 2));
-  for (const name of ['glyphsSurviveSiblingReset', 'hiddenFontSettings', 'repeatSwitch', 'bufferPreserved', 'isolatedAtlas', 'singleBridgeSubscription', 'bridgeUnsubscribed']) assert.equal(result.checks[name], true, name);
+  for (const name of ['glyphsSurviveSiblingReset', 'hiddenFontSettings', 'repeatSwitch', 'bufferPreserved', 'isolatedAtlas', 'liveWebglContexts', 'singleBridgeSubscription', 'bridgeUnsubscribed']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.rendererErrors, []);
 });

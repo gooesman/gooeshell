@@ -10,6 +10,9 @@ let window, phase = 'startup';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = script => window.webContents.executeJavaScript(script);
 const fixture = 'window.appExplorerFixture';
+// macOS reserves Control-click for the context menu; additive selection uses
+// Command-click there, matching Finder and FilePane's metaKey handling.
+const selectionModifier = process.platform === 'darwin' ? 'meta' : 'control';
 const pane = side => `.file-pane[data-side="${side}"]`;
 const row = (path, side = 'remote') => `${pane(side)} [data-file-path=${JSON.stringify(path)}]`;
 const visible = selector => `Boolean([...document.querySelectorAll(${JSON.stringify(selector)})].find(value => value.getClientRects().length > 0))`;
@@ -127,7 +130,7 @@ async function run() {
     const base = side === 'local' ? 'C:\\Fixture\\' : '/home/a/', name = side === 'local' ? '本地' : '远程';
     const selectedRows = () => evaluate(`document.querySelectorAll(${JSON.stringify(pane(side) + ' [data-file-path][aria-selected="true"]')}).length`);
     await mouse(row(base + 'alpha.txt', side) + ' .file-symbol');
-    await mouse(row(base + 'beta.txt', side), 'left', ['control']);
+    await mouse(row(base + 'beta.txt', side), 'left', [selectionModifier]);
     assert.equal(await selectedRows(), 2, side + ' row icons and multiselection');
     await mouse(`[aria-label="${name}按名称排序"]`);
     assert.equal(await selectedRows(), 2, side + ' sorting preserves selection');
@@ -176,7 +179,7 @@ async function run() {
   await until(() => evaluate(`document.querySelector('[role=dialog]')?.textContent.includes('/home/a/renamed.txt')`), 'delete exact path');
   await click('取消', '[role=dialog]'); await noDialog(); assert.equal((await mutationCalls('removeFile')).length, 0);
   result.checks.deleteCancellationDoesNotMutate = true;
-  await mouse(row('/home/a/docs')); await mouse(row('/home/a/alpha.txt'), 'left', ['control']);
+  await mouse(row('/home/a/docs')); await mouse(row('/home/a/alpha.txt'), 'left', [selectionModifier]);
   await context(row('/home/a/docs')); await click('删除', '.context-menu');
   const deletionText = await evaluate(`document.querySelector('[role=dialog]').textContent`);
   assert.match(deletionText, /\/home\/a\/docs/); assert.match(deletionText, /\/home\/a\/alpha\.txt/);
@@ -207,7 +210,7 @@ async function run() {
   await host('A'); await pathIs('/home/a');
   const deletesBeforePartial = (await mutationCalls('removeFile')).length;
   await evaluate(`${fixture}.denyNext = 'removeFile'; ${fixture}.denyPath = '/home/a/blank.txt'`);
-  await mouse(row('/home/a/beta.txt')); await mouse(row('/home/a/blank.txt'), 'left', ['control']);
+  await mouse(row('/home/a/beta.txt')); await mouse(row('/home/a/blank.txt'), 'left', [selectionModifier]);
   await context(row('/home/a/beta.txt')); await click('删除', '.context-menu'); await click('确认删除', '[role=dialog]');
   await until(() => evaluate(`Boolean(document.getElementById('sudo-password'))`), 'partial deletion sudo prompt');
   assert.equal(await evaluate(`${fixture}.entries(${JSON.stringify(sessionA)}).includes('/home/a/beta.txt')`), false);
@@ -233,7 +236,7 @@ async function run() {
   result.checks.ordinaryTransferRemainsAvailable = true;
 
   phase = 'packed multi-selection retains its original server and destination';
-  await mouse(row('C:\\Fixture\\docs', 'local')); await mouse(row('C:\\Fixture\\alpha.txt', 'local'), 'left', ['control']);
+  await mouse(row('C:\\Fixture\\docs', 'local')); await mouse(row('C:\\Fixture\\alpha.txt', 'local'), 'left', [selectionModifier]);
   await context(row('C:\\Fixture\\docs', 'local')); await click('上传到远程目录', '.context-menu'); await mouse('input[name="transfer-mode"][value="archive"]');
   await until(() => evaluate(`document.querySelector('input[name="transfer-mode"]:checked').value === 'archive'`), 'archive option selected');
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.transfer-source-list li')].map(item => item.textContent)`), ['C:\\Fixture\\docs', 'C:\\Fixture\\alpha.txt']);
