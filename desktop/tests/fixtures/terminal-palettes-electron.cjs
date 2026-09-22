@@ -3,6 +3,7 @@ const {promises:fs}=require('node:fs');
 const path=require('node:path');
 const {createHash}=require('node:crypto');
 const assert=require('node:assert/strict');
+const {finishRendererFixture}=require('./renderer-fixture-report.cjs');
 const url=process.env.GOOESHELL_PALETTE_RENDER_URL,reportFile=process.env.GOOESHELL_PALETTE_RENDER_REPORT,userData=process.env.GOOESHELL_PALETTE_RENDER_DATA;
 if(!url||new URL(url).hostname!=='127.0.0.1'||!reportFile||!userData)throw new Error('Explicit isolated fixture paths and a loopback URL are required');
 app.setPath('userData',userData);app.commandLine.appendSwitch('force-device-scale-factor','1');
@@ -150,4 +151,4 @@ async function run(){
 }
 run().catch(async error=>{metrics.success=false;metrics.error=error.stack||String(error);metrics.phase=phase;
   if(window&&!window.isDestroyed()){try{metrics.screen=await inspect();await fs.writeFile(reportFile+'.failure.png',(await window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());}catch{}}
-}).finally(async()=>{metrics.elapsedMs=Date.now()-started;if(window&&!window.isDestroyed())window.destroy();await fs.writeFile(reportFile,JSON.stringify(metrics,null,2));app.exit(metrics.success?0:1);});
+}).finally(async()=>{metrics.elapsedMs=Date.now()-started;await finishRendererFixture(app,reportFile,metrics);});

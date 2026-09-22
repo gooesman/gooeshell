@@ -27,6 +27,7 @@ test('connection lifecycle keeps terminal identity and prevents cancelled or ret
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error('No connections flow report: ' + stderr); }));
   t.diagnostic(`connection lifecycle artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
+  assert.equal(result.checks.sessionComparisonPreservesMeaningfulChanges, true);
   for (const name of ['onlineDirectFocusesExisting', 'reconnectKeepsTabAndOneAttempt', 'backgroundReconnectPreservesSelection', 'cancelCleansLateTransport', 'closeCleansPendingReconnect', 'authenticationUsesCompactPrompt', 'sudoRechecksCapturedTargetAfterSaving', 'saveMetadataDoesNotConnect', 'endpointEditDoesNotRetargetOpenSession', 'oldTargetCannotReplaceNewCredentials', 'oldTargetReconnectUsesSeparateProfile']) assert.equal(result.checks[name], true, name);
   for (const name of ['initialHomeBecomesTerminal', 'explicitHomeDoesNotReuseTransport', 'untargetedConnectAppendsTab', 'backgroundHomeDoesNotStealSelection', 'closedHomeCannotResurrect', 'closedHomeRejectsStaleAuthentication', 'homeAuthenticationPreservesTargetAndSelection', 'closeUsesWorkspaceOrder', 'batchedClosePreservesQueuedSelection']) assert.equal(result.checks[name], true, name);
   for (const name of ['jumpPromptSeparatesCredentials', 'agentTargetSupportsJumpAuthAndReconnect']) assert.equal(result.checks[name], true, name);

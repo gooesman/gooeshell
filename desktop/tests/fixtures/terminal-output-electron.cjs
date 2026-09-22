@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { finishRendererFixture } = require('./renderer-fixture-report.cjs');
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -69,5 +70,5 @@ async function run() {
   result.success = true;
 }
 run().catch(error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); }).finally(async () => {
-  await fs.writeFile(report, JSON.stringify(result, null, 2)); app.exit(result.success ? 0 : 1);
+  await finishRendererFixture(app, report, result);
 });

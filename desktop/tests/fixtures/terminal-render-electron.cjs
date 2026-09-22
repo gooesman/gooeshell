@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { finishRendererFixture } = require('./renderer-fixture-report.cjs');
 const { Server } = require('ssh2');
 const { generateKeyPairSync, randomUUID, createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
@@ -290,7 +291,5 @@ run().catch(async error => {
   for (const connection of connections) connection.end();
   if (server) await new Promise(resolve => server.close(() => resolve()));
   if (bridge && bridge.exitCode === null) await Promise.race([new Promise(resolve => bridge.once('close', resolve)), delay(3000)]);
-  if (window && !window.isDestroyed()) window.destroy();
-  await fs.writeFile(reportFile, JSON.stringify(metrics, null, 2));
-  app.exit(metrics.success ? 0 : 1);
+  await finishRendererFixture(app, reportFile, metrics);
 });

@@ -1,4 +1,5 @@
 const {app,BrowserWindow,ipcMain}=require('electron');
+const {finishRendererFixture}=require('./renderer-fixture-report.cjs');
 const {promises:fs}=require('node:fs');
 const path=require('node:path');
 const assert=require('node:assert/strict');
@@ -120,5 +121,5 @@ run().catch(async error=>{
   metrics.success=false;metrics.error=error.stack||String(error);metrics.phase=phase;
   if(window&&!window.isDestroyed()){try{metrics.screen=await inspect();await fs.writeFile(reportFile+'.failure.png',(await window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());}catch{}}
 }).finally(async()=>{
-  metrics.elapsedMs=Date.now()-started;if(window&&!window.isDestroyed())window.destroy();await fs.writeFile(reportFile,JSON.stringify(metrics,null,2));app.exit(metrics.success?0:1);
+  metrics.elapsedMs=Date.now()-started;await finishRendererFixture(app,reportFile,metrics);
 });

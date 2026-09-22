@@ -25,6 +25,14 @@ let window, phase = 'startup';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = script => window.webContents.executeJavaScript(script);
 const state = () => evaluate('window.connectionHarness.state');
+function sessionSnapshot(session) {
+  assert.ok(session, 'the expected live session must still exist');
+  // A post-connect catalog refresh can add an own groupId: undefined to an
+  // ungrouped profile after the session first appears. Compare that optional
+  // metadata consistently without discarding any actual group/identity value.
+  return { ...session, profile: { ...session.profile, groupId: session.profile.groupId } };
+}
+function assertSessionUnchanged(actual, expected) { assert.deepEqual(sessionSnapshot(actual), sessionSnapshot(expected)); }
 async function until(predicate, label) {
   const end = Date.now() + 8_000;
   while (!(await predicate())) { if (Date.now() > end) throw new Error('Timed out: ' + label); await delay(20); }
@@ -73,6 +81,14 @@ function resolvePending() {
   return session.id;
 }
 async function run() {
+  // Guard the normalization itself: omission and undefined are equivalent,
+  // while meaningful session, destination and authentication changes are not.
+  assertSessionUnchanged({ ...first, profile: { ...profile, groupId: undefined } }, first);
+  for (const change of [{ groupId: 'work' }, { username: 'changed-user' }, { host: 'changed.example.test' }, { auth: 'agent' }]) {
+    assert.throws(() => assertSessionUnchanged({ ...first, profile: { ...profile, ...change } }, first), assert.AssertionError);
+  }
+  assert.throws(() => assertSessionUnchanged({ ...first, tabId: 'changed-tab' }, first), assert.AssertionError);
+  result.checks.sessionComparisonPreservesMeaningfulChanges = true;
   await app.whenReady();
   ipcMain.handle('connections-flow:call', async (event, method, value) => {
     assert.equal(event.sender, window.webContents);
@@ -128,7 +144,7 @@ async function run() {
   const duplicateState = await state(), sameName = duplicateState.sessions.find(session => session.id === duplicateState.activeId);
   assert.ok(sameName); assert.notEqual(sameName.id, first.id); assert.notEqual(sameName.tabId, first.tabId);
   assert.equal(sameName.profile.name, first.profile.name);
-  assert.deepEqual(duplicateState.sessions.find(session => session.id === first.id), originalSession);
+  assertSessionUnchanged(duplicateState.sessions.find(session => session.id === first.id), originalSession);
   assert.deepEqual(duplicateState.tabs.slice(0, 2), [first.tabId, second.tabId]);
   assert.equal(backend.calls.filter(call => call.method === 'connect').length, 1);
   await invoke('direct', [profile]);
@@ -294,7 +310,7 @@ async function run() {
   assert.equal(identityReconnectCall.value.profile.id, profile.id); assert.equal(identityReconnectCall.value.profile.loginIdentityId, 'shared-target'); assert.equal(identityReconnectCall.value.profile.username, 'renamed-developer');
   await until(async () => !(await state()).sessions.some(session => session.id === oldLive.id), 'reconnected identity replaces old transport');
   assert.equal((await state()).sessions.find(session => session.tabId === 'identity-live-one').profile.username, 'renamed-developer');
-  assert.deepEqual((await state()).sessions.find(session => session.id === untouchedLive.id), untouchedLive);
+  assertSessionUnchanged((await state()).sessions.find(session => session.id === untouchedLive.id), untouchedLive);
   result.checks.identityUpdateChangesReconnectWithoutRetargetingLiveSession = true;
 
   phase = 'jump authentication collects independent target and gateway credentials';

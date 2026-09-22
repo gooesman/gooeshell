@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { finishRendererFixture } = require('./renderer-fixture-report.cjs');
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -103,8 +104,5 @@ async function run() {
   result.checks.bridgeUnsubscribed = true; result.success = true;
 }
 run().catch(async error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); if (window && !window.isDestroyed()) try { await fs.writeFile(report + '.failure.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); } catch {} }).finally(async () => {
-  // Closing the last window can terminate Electron before an async write ends.
-  // Persist diagnostics first, including the original failure if one occurred.
-  await fs.writeFile(report, JSON.stringify(result, null, 2));
-  app.exit(result.success ? 0 : 1);
+  await finishRendererFixture(app, report, result);
 });
