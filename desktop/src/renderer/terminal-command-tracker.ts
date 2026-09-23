@@ -97,8 +97,12 @@ export class TerminalCommandTracker {
       if(this.prompt){
         this.prompt.input=true;this.prompt.echo?.marker.dispose();
         const marker=this.terminal.registerMarker(0),position=this.cursor();
-        const prefix=this.terminal.buffer.normal.getLine(position.line)?.translateToString(false,0,position.column);
-        this.prompt.echo=marker&&prefix!==undefined?{marker,column:position.column,columns:this.terminal.cols,geometry:this.geometry,prefix}:undefined;
+        const line=this.terminal.buffer.normal.getLine(position.line);
+        const prefix=line?.translateToString(false,0,position.column);
+        // A right prompt or redraw can already occupy the input region. Its
+        // contents cannot later be distinguished from newly echoed input.
+        const emptyInput=line?.translateToString(true,position.column).trim()==='';
+        this.prompt.echo=marker&&prefix!==undefined&&emptyInput?{marker,column:position.column,columns:this.terminal.cols,geometry:this.geometry,prefix}:undefined;
         if(marker&&!this.prompt.echo)marker.dispose();
       }
       return;

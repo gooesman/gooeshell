@@ -73,6 +73,22 @@ test('shell metadata and explicit omission take priority over visible command ec
   ]);
 });
 
+test('right prompts and existing redraw text cannot become inferred commands',async t=>{
+  const terminal=new Terminal({cols:80,rows:12}),tracker=new TerminalCommandTracker(terminal);
+  t.after(()=>{tracker.dispose();terminal.dispose();});
+  const write=(data:string)=>new Promise<void>(resolve=>terminal.write(data,resolve));
+  const prompt='\x1b]133;A\x07$ RIGHT_PROMPT_TEXT\r\x1b[2C\x1b]133;B\x07';
+  const complete='\r\n\x1b]133;C\x07\x1b]133;D;0\x07';
+  await write(prompt+complete);
+  await write(prompt+'pwd'+complete);
+  await write(prompt+'pwd\x1b]633;E;pwd\x07'+complete);
+  assert.deepEqual(tracker.records.map(({command,commandSource})=>({command,commandSource})),[
+    {command:undefined,commandSource:undefined},
+    {command:undefined,commandSource:undefined},
+    {command:'pwd',commandSource:'shell'},
+  ]);
+});
+
 test('echo capture rejects resized input and never pairs an old prompt with a replacement session',async t=>{
   const terminal=new Terminal({cols:80,rows:12}),tracker=new TerminalCommandTracker(terminal);
   t.after(()=>{tracker.dispose();terminal.dispose();});
