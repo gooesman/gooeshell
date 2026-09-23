@@ -5,7 +5,47 @@ import os from 'node:os';
 import path from 'node:path';
 import {Store,cleanProfile,cleanSettings} from '../src/main/store';
 import {defaultSettings} from '../src/shared/defaults';
+import {connectionIdentity,connectionConfigurationIdentity} from '../src/shared/connections';
 const profile={id:'test',name:'test host',host:'example.com',port:22,username:'alice',auth:'password' as const,rememberHost:true,encoding:'utf8' as const};
+test('command mark placement defaults right and persists each display mode',async()=>{
+ assert.equal(cleanSettings({} as any).commandMarks,'right');
+ for(const commandMarks of [undefined,null,true,'',0,'both',{},[]])assert.equal(cleanSettings({...defaultSettings,commandMarks} as any).commandMarks,'right');
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-command-marks-settings-'));
+ try{
+  for(const commandMarks of ['hidden','left','right'] as const){
+   await new Store(root).saveSettings({...defaultSettings,commandMarks});
+   assert.equal((await new Store(root).settings()).commandMarks,commandMarks);
+  }
+ }finally{await fs.unlink(path.join(root,'settings.json'));await fs.rmdir(root);}
+});
+test('command navigation defaults never replace existing custom bindings or explicit unbound choices',()=>{
+ const legacy=structuredClone(defaultSettings) as any;
+ delete legacy.shortcuts.previousCommand;delete legacy.shortcuts.nextCommand;
+ assert.equal(cleanSettings(legacy).shortcuts.previousCommand,'Ctrl+ArrowUp');
+ assert.equal(cleanSettings(legacy).shortcuts.nextCommand,'Ctrl+ArrowDown');
+ legacy.shortcuts.search='ctrl+arrowup';legacy.shortcuts.copy='Ctrl+ArrowDown';
+ const migrated=cleanSettings(legacy);
+ assert.equal(migrated.shortcuts.previousCommand,'');assert.equal(migrated.shortcuts.nextCommand,'');
+ assert.equal(migrated.shortcuts.search,'ctrl+arrowup');assert.equal(migrated.shortcuts.copy,'Ctrl+ArrowDown');
+ const explicit=cleanSettings({...defaultSettings,shortcuts:{...defaultSettings.shortcuts,previousCommand:'F7',nextCommand:''}});
+ assert.equal(explicit.shortcuts.previousCommand,'F7');assert.equal(explicit.shortcuts.nextCommand,'');
+ assert.deepEqual(cleanSettings(migrated).shortcuts,migrated.shortcuts);
+});
+test('Bash integration is opt-in, persists per connection, and does not change credential identity',async()=>{
+ for(const shellIntegration of [undefined,false,null,0,1,'true','false',{},[]])assert.equal(Object.hasOwn(cleanProfile({...profile,shellIntegration} as any),'shellIntegration'),false);
+ const enabled={...profile,shellIntegration:true};
+ assert.equal(cleanProfile(enabled).shellIntegration,true);
+ assert.equal(connectionIdentity(enabled),connectionIdentity(profile));
+ assert.equal(connectionConfigurationIdentity(enabled),connectionConfigurationIdentity(profile));
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-shell-integration-store-'));
+ try{
+  await new Store(root).saveConnection(enabled,true);
+  assert.equal((await new Store(root).profiles())[0].shellIntegration,true);
+  await new Store(root).saveConnection({...profile,shellIntegration:false},true);
+  assert.equal(Object.hasOwn((await new Store(root).profiles())[0],'shellIntegration'),false);
+  assert.equal((await fs.readFile(path.join(root,'connections.json'),'utf8')).includes('shellIntegration'),false);
+ }finally{await fs.unlink(path.join(root,'connections.json'));await fs.rmdir(root);}
+});
 test('terminal palette and bold preferences migrate independently and persist valid values',async()=>{
  const legacy={...defaultSettings,terminalPalette:undefined,terminalBold:undefined,shortcuts:{...defaultSettings.shortcuts,commands:undefined,search:'Ctrl+Shift+M'}} as unknown as typeof defaultSettings;
  assert.equal(cleanSettings(legacy).terminalPalette,'follow-interface');

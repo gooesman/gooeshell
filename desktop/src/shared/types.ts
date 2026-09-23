@@ -24,11 +24,13 @@ export interface HostProfile {
   rememberHost: boolean; encoding: 'utf8' | 'gb18030' | 'big5';
   groupId?: string; icon?: ConnectionIcon;
   jumpHost?: JumpHostProfile;
+  shellIntegration?: boolean;
 }
 export interface AppSettings {
   theme: 'dark' | 'light';
   terminalPalette: string;
   terminalBold: boolean;
+  commandMarks: 'hidden' | 'left' | 'right';
   showConnectionHistory: boolean; filesToggleIconOnly: boolean;
   fontWeight: number; chineseFontWeight: number;
   shortcutSchemaVersion: number;

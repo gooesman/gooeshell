@@ -138,6 +138,7 @@ jobs:
             .build/terminal-tabs-*/result.json*
             .build/explorer-performance-*/result.json*
             .build/terminal-output-*/result.json*
+            .build/terminal-command-marks-*/result.json*
             desktop/test-output/single-instance-*/*.json
           if-no-files-found: ignore
           retention-days: 14

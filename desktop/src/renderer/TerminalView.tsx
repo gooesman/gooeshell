@@ -10,6 +10,8 @@ import {terminalFontFamily,terminalFontLoads} from '../shared/fonts';
 import {loadFontCatalog,acquireTerminalFont,type TerminalFontBundle} from './terminal-font-bundle';
 import {scopedTerminalFontFamily} from './terminal-font-scope';
 import {decodeTerminalBytes} from './terminal-output';
+import {TerminalCommandMarks} from './terminal-command-marks';
+import './terminal-command-marks.css';
 import './terminal-fonts.css';
 import './fonts.css';
 import {TerminalPasteController,TerminalPastePanel,type PasteState} from './TerminalPaste';
@@ -38,11 +40,13 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  const tabId=session.tabId||session.id;
  const fontScope=useRef('');if(!fontScope.current)fontScope.current=crypto.randomUUID();
  const visible=useRef(active);visible.current=active;
+ const commandMarks=useRef<TerminalCommandMarks|null>(null);
  current.current=settings;fontCallback.current=onFontSizeChange;
  useEffect(()=>{
   const terminal=new Terminal({allowTransparency:true,convertEol:false,fontFamily:scopedTerminalFontFamily('monospace',fontScope.current),fontSize:settings.fontSize,fontWeight:400,fontWeightBold:settings.terminalBold?700:400,drawBoldTextInBrightColors:false,lineHeight:settings.lineHeight,cursorBlink:settings.cursorBlink,scrollback:10000,theme:terminalTheme(settings.theme,settings.terminalPalette),macOptionIsMeta:false});
   const element=host.current!;
   term.current=terminal;const fitter=new FitAddon();const finder=new SearchAddon();search.current=finder;terminal.loadAddon(fitter);terminal.loadAddon(finder);terminal.open(element);
+  const marks=new TerminalCommandMarks(terminal,element.parentElement!,text=>api.writeClipboard(text));commandMarks.current=marks;marks.update(current.current.commandMarks,visible.current);
   try{const gpu=new WebglAddon();gpu.onContextLoss(()=>gpu.dispose());terminal.loadAddon(gpu);}catch{/* xterm's standard renderer remains usable when GPU is unavailable. */}
   let disposed=false;let resizeFrame=0;let lastSize='';
   const resize=()=>{resizeFrame=0;if(disposed||element.clientWidth===0||element.clientHeight===0)return;fitter.fit();const size=`${transport.current}:${terminal.cols}x${terminal.rows}`;if(size!==lastSize){lastSize=size;api.terminalResize(transport.current,terminal.cols,terminal.rows);}};
@@ -55,9 +59,10 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   element.addEventListener('paste',nativePaste,true);
   const input=terminal.onData(data=>{if(online.current){if(!isPreview)api.terminalInput(transport.current,data);paste.input(data);}});
   const binaryInput=terminal.onBinary(data=>{if(!isPreview&&online.current)api.terminalBinaryInput(transport.current,data);});
+  let outputTransport=transport.current;
   const remove=api.onEvent(event=>{
-   if(event.type==='terminal'&&event.sessionId===transport.current)terminal.write(decodeTerminalBytes(event.data),()=>api.terminalAck(event.sessionId,event.bytes));
-   if(event.type==='sessionClosed'&&event.sessionId===transport.current){online.current=false;paste.cancel();setClosedEvent({id:event.sessionId,message:event.message});terminal.write(disconnectedModes+'\r\n\x1b[90m[连接已断开]\x1b[0m\r\n');}
+   if(event.type==='terminal'&&event.sessionId===transport.current){if(outputTransport!==event.sessionId){marks.resetSession();outputTransport=event.sessionId;}terminal.write(decodeTerminalBytes(event.data),()=>api.terminalAck(event.sessionId,event.bytes));}
+   if(event.type==='sessionClosed'&&event.sessionId===transport.current){online.current=false;paste.cancel();marks.resetSession();setClosedEvent({id:event.sessionId,message:event.message});terminal.write(disconnectedModes+'\r\n\x1b[90m[连接已断开]\x1b[0m\r\n');}
   });
   const selection=terminal.onSelectionChange(()=>{if(current.current.copyOnSelect&&terminal.hasSelection())void api.writeClipboard(terminal.getSelection());});
   const perform=(chord:string)=>{
@@ -67,6 +72,8 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
    if(chord===keys.copy){if(terminal.hasSelection())void api.writeClipboard(terminal.getSelection());return true;}
    if(chord===keys.paste){offerClipboard();return true;}
    if(chord===keys.search){setSearchOpen(true);return true;}
+   if(chord&&chord===keys.previousCommand)return marks.navigate(-1);
+   if(chord&&chord===keys.nextCommand)return marks.navigate(1);
    if(chord===keys.fontUp||chord===keys.fontDown){const size=Math.max(8,Math.min(40,(terminal.options.fontSize||14)+(chord===keys.fontUp?1:-1)));if(fontCallback.current)fontCallback.current(size);else terminal.options.fontSize=size;scheduleResize();return true;}
    return false;
   };
@@ -82,7 +89,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   const mouse=(event:MouseEvent)=>{const chord=mouseChord(event);if(chord&&perform(chord)){event.preventDefault();event.stopImmediatePropagation();terminal.focus();}};
   const context=(event:MouseEvent)=>{const chord=mouseChord(event);if(Object.values(current.current.shortcuts).includes(chord)){event.preventDefault();return;}if(current.current.rightClickPaste){event.preventDefault();offerClipboard();}};
   element.addEventListener('mousedown',mouse,true);element.addEventListener('contextmenu',context);terminal.focus();
-  return()=>{disposed=true;cancelAnimationFrame(resizeFrame);remove();input.dispose();binaryInput.dispose();selection.dispose();observer.disconnect();element.removeEventListener('paste',nativePaste,true);element.removeEventListener('mousedown',mouse,true);element.removeEventListener('contextmenu',context);pasteController.current=null;terminal.dispose();activeFont.current?.release();activeFont.current=null;term.current=null;search.current=null;requestFit.current=null;};
+  return()=>{disposed=true;cancelAnimationFrame(resizeFrame);remove();input.dispose();binaryInput.dispose();selection.dispose();observer.disconnect();element.removeEventListener('paste',nativePaste,true);element.removeEventListener('mousedown',mouse,true);element.removeEventListener('contextmenu',context);pasteController.current=null;marks.dispose();commandMarks.current=null;terminal.dispose();activeFont.current?.release();activeFont.current=null;term.current=null;search.current=null;requestFit.current=null;};
  },[tabId]);
  useEffect(()=>{
   if(displayedTransport.current===session.id)return;
@@ -93,6 +100,8 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   if(active)term.current?.focus();
  },[session.id,active]);
  useEffect(()=>{if(isDisconnected||reconnecting)pasteController.current?.cancel();},[isDisconnected,reconnecting]);
+ useEffect(()=>{commandMarks.current?.update(settings.commandMarks,active);},[settings.commandMarks,active,tabId]);
+ useEffect(()=>{if(isDisconnected||reconnecting)commandMarks.current?.resetSession();},[isDisconnected,reconnecting]);
  useEffect(()=>{
   const terminal=term.current;if(!terminal)return;let cancelled=false;
   const refresh=()=>{terminal.options.fontSize=settings.fontSize;terminal.options.lineHeight=settings.lineHeight;terminal.clearTextureAtlas();terminal.refresh(0,terminal.rows-1);requestFit.current?.();};

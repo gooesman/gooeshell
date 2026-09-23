@@ -30,16 +30,27 @@ async function run() {
   for (const label of tabs) { await click(label); assert.deepEqual(await evaluate('(() => { const {x,y,width,height}=document.querySelector(".settings-dialog").getBoundingClientRect();return{x,y,width,height};})()'), bounds); }
   result.checks.fixedDialogDimensions = true;
   await click('字体与外观'); assert.equal(await evaluate('Boolean(document.querySelector("[aria-label=光标闪烁]"))'), true); assert.equal(await evaluate('Boolean(document.querySelector("[aria-label=右键粘贴]"))'), false);
+  assert.equal(await evaluate('document.querySelector("#command-marks").value'), 'right');
+  assert.deepEqual(await evaluate('[...document.querySelector("#command-marks").options].map(option => option.value)'), ['hidden', 'left', 'right']);
+  assert.match(await evaluate('document.querySelector("#command-marks-hint").textContent'), /隐藏标记后.*快捷键仍然可用/);
+  await choose('#command-marks', 'hidden'); await click('关于'); await click('字体与外观');
+  assert.equal(await evaluate('document.querySelector("#command-marks").value'), 'hidden');
+  await choose('#command-marks', 'left');
   await click('键盘与鼠标'); assert.equal(await evaluate('Boolean(document.querySelector("[aria-label=光标闪烁]"))'), false);
   const oldPaste = await evaluate('document.querySelector("[aria-label=右键粘贴]").getAttribute("aria-checked")'); await click('右键粘贴');
   await click('关于'); await click('键盘与鼠标'); assert.notEqual(await evaluate('document.querySelector("[aria-label=右键粘贴]").getAttribute("aria-checked")'), oldPaste); result.checks.inputOptionsStayInKeyboard = true;
   phase = 'shortcuts';
+  assert.equal(await evaluate('document.querySelector("[aria-label=录入跳到上一条命令快捷方式]").textContent'), 'Ctrl + ↑');
+  assert.equal(await evaluate('document.querySelector("[aria-label=录入跳到下一条命令快捷方式]").textContent'), 'Ctrl + ↓');
   await click('录入查找终端内容快捷方式'); await keyboard('P', ['control', 'shift']); assert.match(await evaluate('document.querySelector(".form-error").textContent'), /已用于/);
   await keyboard('F8'); assert.equal(await evaluate('document.querySelector("[aria-label=录入查找终端内容快捷方式]").textContent'), 'F8'); result.checks.shortcutConflictAndSingleKey = true;
   await click('选择粘贴的鼠标按钮'); await choose('[aria-label="粘贴鼠标按钮"]', 'MouseMiddle');
   await evaluate('[...document.querySelectorAll(".mouse-binding-modifiers input:checked")].forEach(input => input.click())'); await delay(35);
   await click('应用'); await picture('keyboard');
   await click('保存设置'); assert.equal(await evaluate('window.settingsIdentityFixture.savedSettings.shortcuts.paste'), 'MouseMiddle'); assert.equal(await evaluate('window.settingsIdentityFixture.savedSettings.shortcuts.search'), 'F8'); assert.equal(await evaluate('String(window.settingsIdentityFixture.savedSettings.rightClickPaste)'), oldPaste === 'true' ? 'false' : 'true'); result.checks.mouseMappingPersists = true;
+  assert.equal(await evaluate('window.settingsIdentityFixture.savedSettings.commandMarks'), 'left');
+  assert.equal(await evaluate('document.querySelector("#command-marks").value'), 'left');
+  result.checks.commandMarkPlacementAndNavigation = true;
   phase = 'identity references and edit';
   await click('通用');
   const beforeIdentity = await evaluate('document.querySelector("[aria-label=主页显示最近连接]").getAttribute("aria-checked")'); await click('主页显示最近连接');

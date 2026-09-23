@@ -3,4 +3,5 @@ dist/
 dist-main/
 release/
 test-output/
+.build/
 *.log

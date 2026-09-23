@@ -18,6 +18,7 @@ import { performArchiveTransfer } from './archive-transfer';
 import { canonicalPublicKey, type ResolvedLocalKey } from './local-keys';
 import { installPublicKey } from './ssh-key-install';
 import { createTransferHash } from './transfer-hash-probe';
+import { SHELL_INTEGRATION_COMMAND } from './shell-integration';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -513,11 +514,22 @@ export class SshService {
         const failed=(error:Error)=>{if(!settled){settled=true;cleanup();reject(error);}};
         const closed=()=>failed(new Error('SSH 连接在终端建立前关闭'));
         client.once('close',closed);client.once('error',failed);
-        client.shell({term:'xterm-256color',cols:100,rows:30},(error,stream)=>{
+        const window = {term:'xterm-256color',cols:100,rows:30};
+        const opened = (error: Error | undefined, stream: ClientChannel) => {
           if(settled){stream?.destroy();return;}
           if(error){failed(error);return;}
           settled=true;cleanup();resolve(stream);
-        });
+        };
+        if (profile.shellIntegration === true) {
+          // This is a new SSH exec + PTY request, never typed into a live shell
+          // which could be waiting for a password or running an application.
+          client.exec(SHELL_INTEGRATION_COMMAND, { pty: window }, (error, stream) => {
+            if (error && !settled && !session.closed && !attempt.cancelled) {
+              this.emit({ type: 'notice', message: '服务器不支持命令识别会话，已使用普通终端连接。' });
+              client.shell(window, opened);
+            } else opened(error, stream);
+          });
+        } else client.shell(window, opened);
       });
       if(session.closed||attempt.cancelled){shell.destroy();throw new Error('CONNECTION_CANCELLED: 已取消连接');}
       session.shell = shell;

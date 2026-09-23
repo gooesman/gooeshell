@@ -24,7 +24,7 @@ export function cleanProfile(input:HostProfile):HostProfile {
   return {id:text(input.id)||randomUUID(),name:text(input.name)||host,host,username,port:input.port,
     auth:!loginIdentityId&&(input.auth==='key'||input.auth==='agent')?input.auth:'password',privateKeyPath:loginIdentityId?'':text(input.privateKeyPath,2048),
     rememberHost:input.rememberHost===true,encoding:['utf8','gb18030','big5'].includes(input.encoding)?input.encoding:'utf8',
-    ...(loginIdentityId?{loginIdentityId}:{}),...(groupId?{groupId}:{}),...(input.icon?{icon:input.icon}:{}),...(jumpHost?{jumpHost}:{})};
+    ...(loginIdentityId?{loginIdentityId}:{}),...(groupId?{groupId}:{}),...(input.icon?{icon:input.icon}:{}),...(jumpHost?{jumpHost}:{}),...(input.shellIntegration===true?{shellIntegration:true}:{})};
 }
 export function cleanGroup(input:ConnectionGroup):ConnectionGroup{
   if(!input||typeof input!=='object'||typeof input.name!=='string'||!input.name.trim()||input.name.length>100||/[\0\r\n]/.test(input.name))throw new Error('请填写有效的分组名称');
@@ -36,6 +36,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   if(!input||typeof input!=='object')return result;
   if(input.theme==='dark'||input.theme==='light')result.theme=input.theme;
   result.terminalPalette=normalizeTerminalPalette(input.terminalPalette);
+  if(input.commandMarks==='hidden'||input.commandMarks==='left'||input.commandMarks==='right')result.commandMarks=input.commandMarks;
   if(Number.isInteger(input.fontWeight)&&input.fontWeight>=1&&input.fontWeight<=1000)result.fontWeight=input.fontWeight;
   result.chineseFontWeight=result.fontWeight;
   if(Number.isInteger(input.chineseFontWeight)&&input.chineseFontWeight>=1&&input.chineseFontWeight<=1000)result.chineseFontWeight=input.chineseFontWeight;
@@ -43,7 +44,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['terminalBold','cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly','sudoPasswordSubmit'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
   for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=normalizeShortcut(input.shortcuts[id]);
-  for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword','commands']){
+  for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword','commands','previousCommand','nextCommand']){
     if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)continue;
     const binding=result.shortcuts[id].toLowerCase();
     if(Object.entries(result.shortcuts).some(([other,value])=>other!==id&&value.toLowerCase()===binding))result.shortcuts[id]='';

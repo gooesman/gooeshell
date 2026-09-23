@@ -227,6 +227,9 @@ export default function ConnectionDialog({ profile, saved, groups, hostKeyPrefer
 
           <div className="form-grid">            <div className="form-field"><label htmlFor="host-encoding">终端编码</label><select id="host-encoding" value={draft.encoding} onChange={event => change('encoding', event.target.value as HostProfile['encoding'])}><option value="utf8">UTF-8（推荐）</option><option value="gb18030">GB18030 / GBK</option><option value="big5">Big5</option></select></div>
 </div>
+          <div className="connection-section-label">命令定位</div>
+          <label className="checkbox-row"><input id="host-shell-integration" type="checkbox" checked={draft.shellIntegration === true} onChange={event => change('shellIntegration', event.target.checked || undefined)} aria-describedby="host-shell-integration-hint" />命令识别（Bash）</label>
+          <p id="host-shell-integration-hint" className="connection-inline-note">下次连接使用 Linux Bash，读取 .bashrc，不读取登录 profile，也不永久修改启动文件。标记位置可在“字体与外观”中设置；tmux、Vim 等全屏程序内暂不显示命令标记。</p>
           {onPushKey && <><div className="connection-section-label">SSH 公钥</div><button type="button" className="button secondary" disabled={blocked || statusLoading} onClick={() => void openKeyPush()}>推送 SSH 公钥…</button><p className="connection-inline-note">先保存当前连接设置，再选择或生成本机密钥。安装后可验证密钥登录。</p></>}
           <div className="connection-section-label">sudo 密码</div>
           {draft.loginIdentityId && !sudoUsesLogin && <div className="form-field"><label htmlFor="sudo-remember">sudo 密码保存方式</label><select id="sudo-remember" value={remember} disabled={statusLoading} onChange={event => { rememberTouched.current = true; setRemember(event.target.value as CredentialUpdate['remember']); }}><option value="never">不记住</option><option value="session">仅本次使用期间记住</option><option value="persistent" disabled={!status?.secureStorageAvailable}>长期记住 · 系统加密存储</option></select><p className="connection-inline-note">独立于共享登录身份的密码保存方式。</p></div>}
