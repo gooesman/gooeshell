@@ -3,7 +3,7 @@ import type {AppSettings} from '../shared/types';
 import {TerminalCommandTracker, type CommandRecord} from './terminal-command-tracker';
 
 const labels={running:'执行中',success:'成功',error:'非零退出',unknown:'状态未知'};
-const description=(record:CommandRecord)=>`${labels[record.status]}${record.exitCode===undefined?'':` · 退出码 ${record.exitCode}`}\n${record.command||'命令文本未提供'}`;
+const description=(record:CommandRecord)=>`${labels[record.status]}${record.exitCode===undefined?'':` · 退出码 ${record.exitCode}`}${record.commandSource==='echo'?' · 终端回显':''}\n${record.command||'命令文本未提供'}`;
 
 /** A small DOM overlay in the existing margins, never a second terminal renderer. */
 export class TerminalCommandMarks {

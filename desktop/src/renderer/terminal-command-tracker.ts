@@ -1,9 +1,10 @@
 import type {Terminal, IMarker, IDisposable} from '@xterm/xterm';
 import {registerCommandPositionMarker} from './command-position-marker';
+import {readCommandEcho} from './terminal-command-echo';
 
 export type CommandStatus = 'running' | 'success' | 'error' | 'unknown';
 export interface CommandRecord {
-  id: number; marker: IMarker; command?: string; status: CommandStatus; exitCode?: number;
+  id: number; marker: IMarker; command?: string; commandSource?:'shell'|'echo'; status: CommandStatus; exitCode?: number;
   output: IMarker; outputColumn: number; end?: IMarker; endColumn?: number;
   geometry: number; reflowSafe: boolean;
 }
@@ -43,7 +44,8 @@ export class TerminalCommandTracker {
   private entries:CommandRecord[]=[];
   private disposables:IDisposable[]=[];
   private listeners=new Set<()=>void>();
-  private prompt?:{marker:IMarker;input:boolean;command?:string};
+  private prompt?:{marker:IMarker;input:boolean;command?:string;commandProvided?:boolean;
+    echo?:{marker:IMarker;column:number;columns:number;geometry:number;prefix:string}};
   private running?:CommandRecord;
   private serial=0;
   private geometry=0;
@@ -76,7 +78,7 @@ export class TerminalCommandTracker {
   onChange(listener:()=>void){this.listeners.add(listener);return{dispose:()=>this.listeners.delete(listener)};}
   private changed(){if(!this.disposed)for(const listener of this.listeners)listener();}
   private cursor(){const buffer=this.terminal.buffer.active;return{line:buffer.baseY+buffer.cursorY,column:buffer.cursorX};}
-  private dropPrompt(){this.prompt?.marker.dispose();this.prompt=undefined;}
+  private dropPrompt(){this.prompt?.echo?.marker.dispose();this.prompt?.marker.dispose();this.prompt=undefined;}
   private remove(record:CommandRecord){
     const index=this.entries.indexOf(record);if(index<0)return;
     this.entries.splice(index,1);
@@ -91,14 +93,30 @@ export class TerminalCommandTracker {
       const marker=registerCommandPositionMarker(this.terminal);if(marker)this.prompt={marker,input:false};
       return;
     }
-    if(signal.kind==='B'){if(this.prompt)this.prompt.input=true;return;}
-    if(signal.kind==='E'){if(this.prompt&&!this.running)this.prompt.command=signal.command;return;}
+    if(signal.kind==='B'){
+      if(this.prompt){
+        this.prompt.input=true;this.prompt.echo?.marker.dispose();
+        const marker=this.terminal.registerMarker(0),position=this.cursor();
+        const prefix=this.terminal.buffer.normal.getLine(position.line)?.translateToString(false,0,position.column);
+        this.prompt.echo=marker&&prefix!==undefined?{marker,column:position.column,columns:this.terminal.cols,geometry:this.geometry,prefix}:undefined;
+        if(marker&&!this.prompt.echo)marker.dispose();
+      }
+      return;
+    }
+    if(signal.kind==='E'){
+      if(this.prompt&&!this.running){this.prompt.command=signal.command;this.prompt.commandProvided=true;}
+      return;
+    }
     if(signal.kind==='C'){
       if(this.running||!this.prompt?.input||this.prompt.marker.isDisposed)return;
       const output=this.terminal.registerMarker(0);if(!output)return;
       const position=this.cursor();
-      const record:CommandRecord={id:++this.serial,marker:this.prompt.marker,command:this.prompt.command,status:'running',output,
+      const command=this.prompt.commandProvided?this.prompt.command:
+        this.prompt.echo?.geometry===this.geometry?readCommandEcho(this.terminal,this.prompt.echo,position):undefined;
+      const record:CommandRecord={id:++this.serial,marker:this.prompt.marker,command,
+        ...(command?{commandSource:this.prompt.commandProvided?'shell' as const:'echo' as const}:{}),status:'running',output,
         outputColumn:position.column,geometry:this.geometry,reflowSafe:position.column===0&&!this.terminal.buffer.normal.getLine(position.line)?.isWrapped};
+      this.prompt.echo?.marker.dispose();
       this.prompt=undefined;this.running=record;this.entries.push(record);
       record.marker.onDispose(()=>this.remove(record));
       while(this.entries.length>this.limit)this.remove(this.entries[0]);

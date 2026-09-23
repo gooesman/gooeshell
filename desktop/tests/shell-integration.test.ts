@@ -9,6 +9,28 @@ import test from 'node:test';
 import { BASH_INTEGRATION_INIT, SHELL_INTEGRATION_COMMAND } from '../src/main/shell-integration';
 import { SshService } from '../src/main/ssh-service';
 import { fixtureEd25519Pair } from './fixtures/ssh-key-pairs';
+import { Terminal } from '@xterm/xterm';
+import { TerminalCommandTracker } from '../src/renderer/terminal-command-tracker';
+
+const linuxAvailable = process.platform === 'linux' || process.platform === 'win32' && process.env.GOOESHELL_SHELL_LINUX_TEST === '1';
+
+function runBashFixture(options: Record<string, unknown> = {}) {
+  const exercise = readFileSync(new URL('./fixtures/shell-integration-pty.py', import.meta.url), 'utf8');
+  const command = process.platform === 'win32' ? 'wsl.exe' : 'python3';
+  // WSL's Windows argument forwarding must not reinterpret dollars/backslashes
+  // contained in fixture commands before Python receives them.
+  const source = `import base64;exec(base64.b64decode('${Buffer.from(exercise).toString('base64')}'))`;
+  const args = process.platform === 'win32' ? ['-d', 'Ubuntu-24.04', '--', 'python3', '-c', source] : ['-c', exercise];
+  const result = spawnSync(command, args, { input: JSON.stringify({ command: SHELL_INTEGRATION_COMMAND,
+    ...(process.env.GOOESHELL_TEST_BASH ? { bash: process.env.GOOESHELL_TEST_BASH } : {}),
+    tmux: process.env.GOOESHELL_SHELL_TMUX_TEST === '1', ...options,
+  }), encoding: 'utf8', timeout: 25000 });
+  assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.passed, true);
+  assert.match(report.bashVersion, /^version \d+\.\d+$/);
+  return report;
+}
 
 test('integration bootstrap is static exec code with a private rc descriptor, not typed PTY input', () => {
   assert.match(SHELL_INTEGRATION_COMMAND, /--noprofile --rcfile \/dev\/fd\/3 -i/);
@@ -63,21 +85,34 @@ test('real SSH enables exec PTY only per opted-in connection, never injects shel
 
 test('real Bash PTY preserves prompts/status/hooks and recognizes full commands and interrupts', {
   timeout: 30000,
-  skip: process.platform !== 'linux' && !(process.platform === 'win32' && process.env.GOOESHELL_SHELL_LINUX_TEST === '1'),
+  skip: !linuxAvailable,
 }, () => {
-  const exercise = readFileSync(new URL('./fixtures/shell-integration-pty.py', import.meta.url), 'utf8');
-  const command = process.platform === 'win32' ? 'wsl.exe' : 'python3';
-  // WSL's Windows argument forwarding must not reinterpret dollars/backslashes
-  // contained in fixture commands before Python receives them.
-  const source = `import base64;exec(base64.b64decode('${Buffer.from(exercise).toString('base64')}'))`;
-  const args = process.platform === 'win32' ? ['-d', 'Ubuntu-24.04', '--', 'python3', '-c', source] : ['-c', exercise];
-  const result = spawnSync(command, args, { input: JSON.stringify({ command: SHELL_INTEGRATION_COMMAND,
-    ...(process.env.GOOESHELL_TEST_BASH ? { bash: process.env.GOOESHELL_TEST_BASH } : {}),
-    tmux: process.env.GOOESHELL_SHELL_TMUX_TEST === '1',
-  }), encoding: 'utf8', timeout: 25000 });
-  assert.equal(result.status, 0, result.error?.message || result.stderr || result.stdout);
-  const report = JSON.parse(result.stdout);
-  assert.equal(report.passed, true);
-  assert.match(report.bashVersion, /^version \d+\.\d+$/);
+  const report = runBashFixture();
   assert(report.checks.length >= 8);
+});
+
+test('real Bash PTY transcripts recover duplicate and history-disabled commands through xterm without collecting password input', {
+  timeout: 30000, skip: !linuxAvailable,
+}, async t => {
+  const report = runBashFixture({ captureTranscripts: true });
+  assert.equal(report.replays.length, 4);
+  for (const replay of report.replays) {
+    const terminal = new Terminal({ cols: replay.cols, rows: replay.rows, scrollback: 1000 });
+    const tracker = new TerminalCommandTracker(terminal);
+    try {
+      const transcript = Buffer.from(replay.transcript, 'base64');
+      // Deliberately split OSC and UTF-8 boundaries like real SSH packet delivery.
+      for (let offset = 0; offset < transcript.length; offset += 37) {
+        await new Promise<void>(resolve => terminal.write(transcript.subarray(offset, offset + 37), resolve));
+      }
+      assert.equal(tracker.records.length, replay.expected.length, replay.name);
+      assert.deepEqual(tracker.records.map(record => ({ command: record.command ?? null, source: record.commandSource ?? null })),
+        replay.expected, replay.name);
+      assert(tracker.records.every(record => record.status === 'success' && record.exitCode === 0), replay.name);
+      assert(tracker.records.every(record => !record.command?.includes(replay.secret)), `${replay.name}: synthetic password cannot be a command`);
+      t.diagnostic(`${report.bashVersion}; ${replay.name}: ${tracker.records.length} command boundaries checked with real xterm`);
+    } finally {
+      tracker.dispose(); terminal.dispose();
+    }
+  }
 });

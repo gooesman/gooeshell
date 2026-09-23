@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type {Terminal} from '@xterm/xterm';
+import {Terminal} from '@xterm/xterm';
 import {parseCommandSignal,TerminalCommandTracker} from '../src/renderer/terminal-command-tracker';
 
 function fixture(limit=1000){
@@ -55,4 +55,36 @@ test('copy output excludes the next prompt and rejects ambiguous partial-line ou
   const f=fixture();f.start(0);f.lines.set(1,'中文 output');f.at(2);f.send('D;0');f.lines.set(2,'user@host $ next command');
   assert.equal(f.tracker.outputText(f.tracker.records[0]),'中文 output\n');f.resize(60);assert.equal(f.tracker.outputText(f.tracker.records[0]),'中文 output\n');
   f.start(4,'printf abc');f.lines.set(5,'abcuser@host $ ');f.at(5,3);f.send('D;0');const record=f.tracker.records[1];assert.equal(f.tracker.outputText(record),'abc');f.resize(40);assert.throws(()=>f.tracker.outputText(record),/宽度/);f.tracker.dispose();
+});
+
+test('shell metadata and explicit omission take priority over visible command echo',async t=>{
+  const terminal=new Terminal({cols:80,rows:12}),tracker=new TerminalCommandTracker(terminal);
+  t.after(()=>{tracker.dispose();terminal.dispose();});
+  const write=(data:string)=>new Promise<void>(resolve=>terminal.write(data,resolve));
+  const prompt='\x1b]133;A\x07$ \x1b]133;B\x07';
+  const complete='\r\n\x1b]133;C\x07\x1b]133;D;0\x07';
+  await write(prompt+'echo visible'+complete);
+  await write(prompt+'echo visible\x1b]633;E;echo authoritative\x07'+complete);
+  await write(prompt+'echo omitted\x1b]633;E;\x07'+complete);
+  assert.deepEqual(tracker.records.map(({command,commandSource})=>({command,commandSource})),[
+    {command:'echo visible',commandSource:'echo'},
+    {command:'echo authoritative',commandSource:'shell'},
+    {command:'',commandSource:undefined},
+  ]);
+});
+
+test('echo capture rejects resized input and never pairs an old prompt with a replacement session',async t=>{
+  const terminal=new Terminal({cols:80,rows:12}),tracker=new TerminalCommandTracker(terminal);
+  t.after(()=>{tracker.dispose();terminal.dispose();});
+  const write=(data:string)=>new Promise<void>(resolve=>terminal.write(data,resolve));
+  const prompt='\x1b]133;A\x07$ \x1b]133;B\x07';
+  await write(prompt+'echo resized');terminal.resize(60,12);terminal.resize(80,12);
+  await write('\r\n\x1b]133;C\x07\x1b]133;D;0\x07');
+  assert.equal(tracker.records[0].command,undefined);
+  await write(prompt+'echo stale');tracker.queueSessionReset();
+  await write('\r\n\x1b]133;C\x07\x1b]133;D;0\x07');
+  assert.equal(tracker.records.length,1);
+  await write(prompt+'echo replacement\r\n\x1b]133;C\x07\x1b]133;D;0\x07');
+  assert.equal(tracker.records[1].command,'echo replacement');
+  assert.equal(tracker.records[1].commandSource,'echo');
 });

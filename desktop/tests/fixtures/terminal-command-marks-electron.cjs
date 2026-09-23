@@ -92,7 +92,7 @@ const inspect = () => evaluate(String.raw`(()=>{
     terminalRect:rectangle(root.querySelector('.xterm-screen')),
     containers:[...root.querySelectorAll('[data-command-marks-position]')].filter(visible).map(e=>({position:e.dataset.commandMarksPosition,...rectangle(e)})),
     marks:[...root.querySelectorAll('button[data-command-mark]')].filter(visible).map(e=>({id:e.dataset.commandMark,status:e.dataset.status,
-      line:Number(e.dataset.commandLine),command:e.dataset.command||'',label:e.getAttribute('aria-label')||e.title,
+      line:Number(e.dataset.commandLine),command:e.dataset.command||'',label:e.getAttribute('aria-label')||e.title,title:e.title,
       color:getComputedStyle(e,'::before').backgroundColor,background:getComputedStyle(e).backgroundColor,...rectangle(e)})),
     reconnect:!!root.querySelector('.terminal-reconnect'),
     head:Array.from({length:Math.min(5,buffer.length)},(_,i)=>buffer.getLine(i)?.translateToString(true)||''),
@@ -316,6 +316,91 @@ async function run() {
   await until(async () => { const next = await inspect(); return next.reconnect && next.marks.some(mark => mark.command.includes('QUEUED_RUNNING_COMMAND') && mark.status === 'unknown'); }, 'queued C without D becomes unknown after disconnect');
   assert.equal((await inspect()).marks.find(mark => mark.id === queuedSuccess.id)?.status, 'success', 'later disconnect does not relabel a completed old command');
   metrics.checks.queuedRunningUnknown = true;
+
+  phase = 'missing command metadata restores repeated commands from terminal echo';
+  await evaluate('window.__marksFixture.setConnection({id:"marks-fallback",disconnected:false,reconnecting:false})');
+  await until(async () => (await inspect()).connection.id === 'marks-fallback' && !(await inspect()).reconnect, 'transport for echo fallback cases');
+  // The left gutter avoids overview aggregation hiding adjacent fixture commands.
+  await patchSettings({ commandMarks: 'left' });
+  await evaluate('window.__marksTerminals[0].scrollToBottom()'); await flush();
+  const newMarkAfter = async previousId => {
+    await until(async () => (await inspect()).marks.some(mark => Number(mark.id) > previousId), 'next command marker rendered');
+    return (await inspect()).marks.filter(mark => Number(mark.id) > previousId).sort((left, right) => Number(right.id) - Number(left.id))[0];
+  };
+  const latestId = async () => Math.max(0, ...(await inspect()).marks.map(mark => Number(mark.id)));
+  const echoedCommand = (command, explicitEmpty = false) => osc(133, 'A') + 'fixture$ ' + osc(133, 'B') + command
+    + (explicitEmpty ? osc(633, 'E;') : '') + '\r\n' + osc(133, 'C') + 'ECHO_FIXTURE_OUTPUT\r\n' + osc(133, 'D;0');
+  let echoMenuScreenshotSaved = false;
+  const copyEchoCommand = async (mark, command) => {
+    assert.equal(mark.command, command); assert.match(mark.title, /终端回显/);
+    const clipboardBefore = calls('writeClipboard').length;
+    await nativeClick(markSelector(mark.id), 'right');
+    const description = await evaluate('document.querySelector(".command-mark-menu .command-mark-description").textContent');
+    assert.match(description, /终端回显/); assert.ok(description.includes(command), 'context menu contains the complete echoed command');
+    if (!echoMenuScreenshotSaved) { await screenshot('echo-menu'); echoMenuScreenshotSaved = true; }
+    await menuClick('复制命令');
+    await until(() => calls('writeClipboard').length === clipboardBefore + 1, 'echoed command copied through native menu input');
+    assert.equal(calls('writeClipboard').at(-1).args[0], command);
+  };
+  const refuseEchoCommand = async (mark, forbidden) => {
+    assert.equal(mark.command, ''); assert.doesNotMatch(mark.title, /终端回显/);
+    const clipboardBefore = calls('writeClipboard').length;
+    await nativeClick(markSelector(mark.id), 'right');
+    const menu = await evaluate('(()=>{const menu=document.querySelector(".command-mark-menu"),button=[...menu.querySelectorAll("button")].find(item=>item.textContent==="复制命令");return {description:menu.querySelector(".command-mark-description").textContent,copyDisabled:button?.disabled}})()');
+    assert.equal(menu.copyDisabled, true); assert.match(menu.description, /命令文本未提供/); assert.doesNotMatch(menu.description, /终端回显/);
+    for (const text of forbidden) assert.ok(!menu.description.includes(text), 'uncertain or private input is not included in the command menu');
+    await nativeClick('.command-mark-menu button[role="menuitem"]');
+    assert.equal(calls('writeClipboard').length, clipboardBefore, 'disabled command copy cannot forward guessed input');
+    await key('Escape', [], false); await until(() => evaluate('!document.querySelector(".command-mark-menu")'), 'command menu closed');
+  };
+  const repeatCommand = "printf '%s\\n' 'REPEATED_COMMAND'";
+  const beforeExplicit = await latestId();
+  send('marks-fallback', completeCommand(repeatCommand, 'REPEATED_COMMAND\r\n', 0));
+  let lastEchoMark = await newMarkAfter(beforeExplicit);
+  assert.equal(lastEchoMark.command, repeatCommand); assert.doesNotMatch(lastEchoMark.title, /终端回显/);
+  // Bash HISTCONTROL=ignoredups may omit E for both consecutive repetitions.
+  for (let repeat = 0; repeat < 2; repeat++) {
+    send('marks-fallback', echoedCommand(repeatCommand));
+    const next = await newMarkAfter(Number(lastEchoMark.id));
+    await copyEchoCommand(next, repeatCommand); lastEchoMark = next;
+  }
+  metrics.checks.echoFallbackDuplicates = true;
+
+  phase = 'echo fallback preserves a complete pipeline and Chinese soft wrapping';
+  const echoedPipeline = "printf '%s\\n' '中文管道_" + '中文宽字符'.repeat(22) + "' | sed 's/管道/结果/g' | sort";
+  send('marks-fallback', echoedCommand(echoedPipeline));
+  lastEchoMark = await newMarkAfter(Number(lastEchoMark.id));
+  const hasSoftWrap = await evaluate(`(()=>{const b=window.__marksTerminals[0].buffer.normal;return b.getLine(${lastEchoMark.line}+1)?.isWrapped===true})()`);
+  assert.equal(hasSoftWrap, true, 'the pipeline really crosses a soft-wrapped terminal row');
+  await copyEchoCommand(lastEchoMark, echoedPipeline); metrics.checks.echoFallbackPipeline = true;
+
+  phase = 'an explicit empty metadata event prevents echo fallback';
+  const explicitEmpty = 'echo EXPLICIT_EMPTY_DO_NOT_CAPTURE';
+  send('marks-fallback', echoedCommand(explicitEmpty, true));
+  lastEchoMark = await newMarkAfter(Number(lastEchoMark.id));
+  await refuseEchoCommand(lastEchoMark, [explicitEmpty]); metrics.checks.echoFallbackEmptyMetadata = true;
+
+  phase = 'multiple hard input lines remain unknown instead of guessing a command';
+  send('marks-fallback', echoedCommand('echo FIRST_HARD_INPUT\r\n> echo SECOND_HARD_INPUT'));
+  lastEchoMark = await newMarkAfter(Number(lastEchoMark.id));
+  await refuseEchoCommand(lastEchoMark, ['FIRST_HARD_INPUT', 'SECOND_HARD_INPUT']); metrics.checks.echoFallbackHardLines = true;
+
+  phase = 'leading-space input stays private when metadata is absent';
+  send('marks-fallback', echoedCommand(' echo LEADING_SPACE_PRIVATE_COMMAND'));
+  lastEchoMark = await newMarkAfter(Number(lastEchoMark.id));
+  await refuseEchoCommand(lastEchoMark, ['LEADING_SPACE_PRIVATE_COMMAND']); metrics.checks.echoFallbackLeadingSpace = true;
+
+  phase = 'non-echoed password input is never inferred from terminal input events';
+  send('marks-fallback', osc(133, 'A') + 'Password: ' + osc(133, 'B'));
+  await until(() => bufferContains('Password: '), 'password prompt parsed');
+  const privateInput = 'SYNTHETIC_NO_ECHO_INPUT';
+  await evaluate(`window.__marksTerminals[0].input(${JSON.stringify(privateInput + '\r')},true)`);
+  await until(() => calls('terminalInput').some(call => call.args[0] === 'marks-fallback' && call.args[1] === privateInput + '\r'), 'non-echoed input reaches the isolated transport');
+  send('marks-fallback', '\r\n' + osc(133, 'C') + 'PASSWORD_ACCEPTED\r\n' + osc(133, 'D;0'));
+  lastEchoMark = await newMarkAfter(Number(lastEchoMark.id));
+  await refuseEchoCommand(lastEchoMark, ['Password:', privateInput]);
+  assert.equal(await bufferContains(privateInput), false); metrics.checks.echoFallbackHiddenInput = true;
+  await patchSettings({ commandMarks: 'right' });
 
   await until(() => Object.entries(metrics.expectedAck).every(([id, bytes]) => acked()[id] === bytes), 'final byte acknowledgements');
   metrics.acked = acked(); await screenshot('right'); metrics.final = await inspect();

@@ -11,6 +11,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import base64
+import fcntl
+import struct
+import termios
 
 request = json.load(sys.stdin)
 checks = []
@@ -26,6 +30,7 @@ class Shell:
         pathlib.Path(self.temp.name, '.bashrc').write_text("PS1='fixture> '\nHISTFILE=/dev/null\n" + rc)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
+            fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
             os.environ.update(HOME=self.temp.name, SHELL=default_shell, TERM='xterm-256color', LC_ALL='C.UTF-8')
             for name in ['BASH_ENV', 'ENV', 'PROMPT_COMMAND']:
                 os.environ.pop(name, None)
@@ -58,6 +63,72 @@ class Shell:
         os.waitpid(self.pid, 0)
         os.close(self.fd)
         self.temp.cleanup()
+
+if request.get('captureTranscripts'):
+    replays = []
+    pipeline = 'printf "pipeline\\n" | cat'
+    wrapped = 'printf "%s\\n" "' + 'long-' * 20 + '" | cat'
+    for name, rc, commands in [
+        ('ignoreboth', 'HISTCONTROL=ignoreboth\n', [
+            ('pwd', 'pwd', 'shell'), ('pwd', 'pwd', 'echo'),
+            (pipeline, pipeline, 'shell'), (pipeline, pipeline, 'echo'),
+            (' echo history-filtered', None, None),
+        ]),
+        ('history-disabled', 'set +o history\n', [
+            ('pwd', 'pwd', 'echo'), (pipeline, pipeline, 'echo'),
+            ('for n in a b; do\n printf "%s\\n" "$n"\ndone', None, None),
+            (' echo intentionally-private', None, None),
+        ]),
+        ('histsize-zero', 'HISTSIZE=0\n', [
+            ('pwd', 'pwd', 'echo'), (pipeline, pipeline, 'echo'),
+            (' echo intentionally-private', None, None),
+        ]),
+        ('horizontal-scroll', "HISTCONTROL=ignoreboth\nbind 'set horizontal-scroll-mode on'\n", [
+            (wrapped, wrapped, 'shell'), (wrapped, None, None),
+        ]),
+    ]:
+        shell = Shell(rc)
+        expected = []
+        try:
+            chunks = [shell.until()]
+            for command, text, source in commands:
+                data = shell.run(command)
+                if name == 'horizontal-scroll':
+                    assert b'\r<' in data, 'readline must actually erase the command prefix in this fixture'
+                chunks.append(data)
+                expected.append({'command': text, 'source': source})
+            if name == 'horizontal-scroll':
+                os.write(shell.fd, wrapped.encode())
+                time.sleep(.05)
+                os.write(shell.fd, b'\x01')
+                time.sleep(.05)
+                os.write(shell.fd, b'\n')
+                # Readline may repaint A/B while editing; wait for completion D,
+                # rather than confusing that redraw with the next ready prompt.
+                data = shell.until(b'\x1b]133;D;0\x07') + shell.until()
+                assert b'\x1b]633;E;' not in data
+                assert re.search(rb'\x1b\]133;B\x07printf[^\r\n\x1b]*>', data), 'Home must leave the right end visibly clipped'
+                chunks.append(data)
+                expected.append({'command': None, 'source': None})
+            secret = 'fixture-secret-never-collect-7419'
+            password_command = 'read -rs -p "fixture-password: " password; printf "\\nread-done\\n"'
+            os.write(shell.fd, password_command.encode() + b'\n')
+            chunks.append(shell.until(b'\x1b]133;C\x07'))
+            chunks.append(shell.until(b'fixture-password: '))
+            # Only synthetic secret input; this does not connect to a real server.
+            os.write(shell.fd, secret.encode() + b'\n')
+            chunks.append(shell.until())
+            expected.append({'command': password_command, 'source': 'shell' if name in ('ignoreboth', 'horizontal-scroll') else 'echo'})
+            transcript = b''.join(chunks)
+            assert secret.encode() not in transcript, 'read -rs must not echo the synthetic secret'
+            assert transcript.count(b'\x1b]133;C\x07') == len(expected)
+            replays.append({'name': name, 'cols': 80, 'rows': 24,
+                            'transcript': base64.b64encode(transcript).decode(),
+                            'expected': expected, 'secret': secret})
+        finally:
+            shell.close()
+    print(json.dumps({'passed': True, 'bashVersion': version[0], 'replays': replays}))
+    sys.exit(0)
 
 shell = Shell()
 try:
