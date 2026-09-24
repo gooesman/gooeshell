@@ -14,7 +14,7 @@ const calls: Array<{ method: string; profileId?: string; requestId?: string; dec
 const eventListeners = new Set<(event: AppEvent) => void>();
 let held: (() => void) | null = null;
 const control = {
-  calls, holdConnect: false,
+  calls, holdConnect: false, clipboardText: '',
   releaseConnect: () => { held?.(); held = null; },
   state: () => api.connections(),
   commandLibrary: () => api.commandLibrary(),
@@ -36,6 +36,9 @@ const remoteList = api.remoteList;
 api.remoteList = async request => { calls.push({ method: 'remoteList', sessionId: request.sessionId, path: request.path }); return remoteList(request); };
 const saveConnection = api.saveConnection;
 api.saveConnection = async request => { calls.push({ method: 'save', profileId: request.profile.id }); return saveConnection(request); };
+api.readClipboard = async () => control.clipboardText;
+api.maximize = () => { calls.push({ method: 'maximize' }); };
+api.fullscreen = async () => { calls.push({ method: 'fullscreen' }); };
 const onEvent = api.onEvent;
 api.onEvent = handler => { eventListeners.add(handler); const unsubscribe = onEvent(handler); return () => { eventListeners.delete(handler); unsubscribe(); }; };
 api.confirmHostKey = async (requestId, decision) => { calls.push({ method: 'hostKey', requestId, decision }); };

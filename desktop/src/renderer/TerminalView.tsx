@@ -15,6 +15,7 @@ import './terminal-command-marks.css';
 import './terminal-fonts.css';
 import './fonts.css';
 import {TerminalPasteController,TerminalPastePanel,type PasteState} from './TerminalPaste';
+import {holdPasteEnter} from './terminal-paste-keys';
 import type {AppSettings,SessionInfo,SendCommandRequest} from '../shared/types';
 export type TerminalCommandSender=(request:Omit<SendCommandRequest,'sessionId'|'bracketedPaste'>)=>Promise<void>;
 // Leave alternate-screen/mouse/paste modes without clearing normal scrollback.
@@ -54,6 +55,40 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   requestFit.current=scheduleResize;
   const observer=new ResizeObserver(scheduleResize);observer.observe(element);scheduleResize();
   const paste=new TerminalPasteController(text=>{if(online.current)terminal.paste(text);},setPasteState);pasteController.current=paste;
+  const pasteRoot=element.parentElement!;
+  const pasteKeyboard=(event:KeyboardEvent)=>{
+   if(!visible.current||event.key!=='Enter'||!(event.target instanceof Element))return;
+   const consume=()=>{event.preventDefault();event.stopImmediatePropagation();};
+   const target=event.target;
+   const chooser=target.closest('.terminal-paste-dialog');
+   const queue=paste.state?.mode==='lines'&&(element.contains(target)||!!target.closest('.terminal-paste-queue'));
+   if(!chooser&&!queue)return;
+   const control=event.ctrlKey&&!event.shiftKey&&!event.altKey&&!event.metaKey;
+   const plain=!event.ctrlKey&&!event.shiftKey&&!event.altKey&&!event.metaKey;
+   if(event.isComposing||event.keyCode===229){
+    // The editable draft still receives its IME confirmation; never send it
+    // to the shell or turn it into a paste action.
+    if(!target.matches('[data-paste-editor]'))consume();
+    return;
+   }
+   if(chooser&&paste.state?.mode==='choose'){
+    const choice=control?'lines':plain?target.closest<HTMLElement>('[data-paste-choice]')?.dataset.pasteChoice:undefined;
+    const cancel=plain&&!!target.closest('[data-paste-cancel]');
+    if(!choice&&!cancel)return;
+    consume();if(event.repeat)return;holdPasteEnter();
+    if(cancel)paste.cancel();else paste.choose(choice as 'all'|'lines');
+    if(paste.state?.mode!=='choose')terminal.focus();
+   }else if(queue&&control){
+    consume();if(event.repeat)return;holdPasteEnter();
+    if(online.current)paste.next();terminal.focus();
+   }else if(queue&&plain){
+    if(event.repeat){consume();return;}
+    // Let xterm submit, or a focused queue button activate, exactly once.
+    // Submission/cancellation may remove the queue and focus the terminal.
+    holdPasteEnter();
+   }
+  };
+  pasteRoot.addEventListener('keydown',pasteKeyboard,true);
   const offerClipboard=()=>{const target=transport.current;void api.readClipboard().then(text=>{if(!disposed&&online.current&&visible.current&&transport.current===target)paste.offer(text);}).catch(()=>{});};
   const nativePaste=(event:ClipboardEvent)=>{event.preventDefault();event.stopImmediatePropagation();if(online.current&&paste.state?.mode!=='choose')paste.offer(event.clipboardData?.getData('text/plain')||'');};
   element.addEventListener('paste',nativePaste,true);
@@ -80,6 +115,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   terminal.attachCustomKeyEventHandler(event=>{
    if(paste.state?.mode==='choose'){event.preventDefault();return false;}
    if(event.type!=='keydown'||event.isComposing)return true;
+   if(paste.state?.mode==='lines'&&event.key==='Enter'&&!event.ctrlKey&&!event.shiftKey&&!event.altKey&&!event.metaKey)return true;
    const chord=keyChord(event);if(event.repeat&&((chord===current.current.shortcuts.reconnect&&!online.current)||(chord===current.current.shortcuts.sudoPassword&&online.current)))return false;
    // Returning false only stops xterm; cancel the browser action as well so a
    // handled paste shortcut cannot paste again before the clipboard IPC returns.
@@ -89,7 +125,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   const mouse=(event:MouseEvent)=>{const chord=mouseChord(event);if(chord&&perform(chord)){event.preventDefault();event.stopImmediatePropagation();terminal.focus();}};
   const context=(event:MouseEvent)=>{const chord=mouseChord(event);if(Object.values(current.current.shortcuts).includes(chord)){event.preventDefault();return;}if(current.current.rightClickPaste){event.preventDefault();offerClipboard();}};
   element.addEventListener('mousedown',mouse,true);element.addEventListener('contextmenu',context);terminal.focus();
-  return()=>{disposed=true;cancelAnimationFrame(resizeFrame);remove();input.dispose();binaryInput.dispose();selection.dispose();observer.disconnect();element.removeEventListener('paste',nativePaste,true);element.removeEventListener('mousedown',mouse,true);element.removeEventListener('contextmenu',context);pasteController.current=null;marks.dispose();commandMarks.current=null;terminal.dispose();activeFont.current?.release();activeFont.current=null;term.current=null;search.current=null;requestFit.current=null;};
+  return()=>{disposed=true;cancelAnimationFrame(resizeFrame);remove();input.dispose();binaryInput.dispose();selection.dispose();observer.disconnect();pasteRoot.removeEventListener('keydown',pasteKeyboard,true);element.removeEventListener('paste',nativePaste,true);element.removeEventListener('mousedown',mouse,true);element.removeEventListener('contextmenu',context);pasteController.current=null;marks.dispose();commandMarks.current=null;terminal.dispose();activeFont.current?.release();activeFont.current=null;term.current=null;search.current=null;requestFit.current=null;};
  },[tabId]);
  useEffect(()=>{
   if(displayedTransport.current===session.id)return;
@@ -141,10 +177,13 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  useEffect(()=>{if(active){requestFit.current?.();const frame=requestAnimationFrame(()=>{
   const terminal=term.current;if(!terminal)return;
   terminal.refresh(0,terminal.rows-1);
+  // A newly opened paste dialog may already own focus before this frame runs.
+  // Do not replace its default button or the user's editing position.
+  if(host.current?.parentElement?.contains(document.activeElement))return;
   const chooser=host.current?.parentElement?.querySelector<HTMLTextAreaElement>('.terminal-paste-dialog [data-paste-editor]');
   if(chooser)chooser.focus();else terminal.focus();
  });return()=>cancelAnimationFrame(frame);}},[active]);
- return <div className="terminal-instance" style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:terminalBackground(settings.theme,settings.terminalPalette)}}>
+ return <div className="terminal-instance" data-active={active} style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:terminalBackground(settings.theme,settings.terminalPalette)}}>
   {background&&<div style={{position:'absolute',inset:0,backgroundImage:`url(${background})`,backgroundSize:'cover',backgroundPosition:'center',opacity:settings.backgroundOpacity,pointerEvents:'none'}}/>}
   <div ref={host} style={{position:'absolute',inset:isDisconnected||reconnecting||pasteState?.mode==='lines'?'10px 12px 76px':'10px 12px',minHeight:0}}/>
   {pasteState&&pasteController.current&&<TerminalPastePanel state={pasteState} controller={pasteController.current} terminal={term.current} connectionName={session.profile.name} />}

@@ -31,6 +31,23 @@ test('command navigation defaults never replace existing custom bindings or expl
  assert.equal(explicit.shortcuts.previousCommand,'F7');assert.equal(explicit.shortcuts.nextCommand,'');
  assert.deepEqual(cleanSettings(migrated).shortcuts,migrated.shortcuts);
 });
+test('maximize shortcut upgrades without stealing custom bindings and persists custom or unbound choices',async()=>{
+ const legacy=structuredClone(defaultSettings) as any;delete legacy.shortcuts.maximize;
+ assert.equal(cleanSettings(legacy).shortcuts.maximize,'Ctrl+Shift+F10');
+ assert.equal(cleanSettings(legacy).shortcuts.fullscreen,'F11');
+ legacy.shortcuts.search='ctrl+shift+f10';
+ const migrated=cleanSettings(legacy);
+ assert.equal(migrated.shortcuts.maximize,'');
+ assert.equal(migrated.shortcuts.search,'ctrl+shift+f10');
+ assert.deepEqual(cleanSettings(migrated).shortcuts,migrated.shortcuts);
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-maximize-settings-'));
+ try{
+  for(const maximize of ['Ctrl+Alt+F10','']){
+   await new Store(root).saveSettings({...defaultSettings,shortcuts:{...defaultSettings.shortcuts,maximize}});
+   assert.equal((await new Store(root).settings()).shortcuts.maximize,maximize);
+  }
+ }finally{await fs.unlink(path.join(root,'settings.json'));await fs.rmdir(root);}
+});
 test('Bash integration is opt-in, persists per connection, and does not change credential identity',async()=>{
  for(const shellIntegration of [undefined,false,null,0,1,'true','false',{},[]])assert.equal(Object.hasOwn(cleanProfile({...profile,shellIntegration} as any),'shellIntegration'),false);
  const enabled={...profile,shellIntegration:true};

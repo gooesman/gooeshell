@@ -44,7 +44,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['terminalBold','cursorBlink','copyOnSelect','rightClickPaste','showConnectionHistory','filesToggleIconOnly','sudoPasswordSubmit'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
   for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=normalizeShortcut(input.shortcuts[id]);
-  for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword','commands','previousCommand','nextCommand']){
+  for(const id of ['previousTab','nextTab','sidebar','terminalHeader','reconnect','sudoPassword','commands','previousCommand','nextCommand','maximize']){
     if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)continue;
     const binding=result.shortcuts[id].toLowerCase();
     if(Object.entries(result.shortcuts).some(([other,value])=>other!==id&&value.toLowerCase()===binding))result.shortcuts[id]='';

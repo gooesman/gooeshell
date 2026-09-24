@@ -19,12 +19,18 @@ const inspect = () => evaluate(`(() => ({ state: window.__pasteState, count: win
 const flush = async () => { await evaluate('Promise.resolve()'); await delay(60); };
 async function key(index, keyCode, modifiers = [], focus = true) {
   if (focus) await evaluate(`window.__pasteTerminals[${index}].focus()`);
+  const editorFocused = !focus && await evaluate(`document.activeElement?.matches('[data-paste-editor]') === true`);
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
   // Chromium editable fields insert a newline on the native char event; xterm
-  // sends its Enter byte from keyDown. Emit both only for editor-focused input.
-  if (!focus && keyCode === 'Enter') window.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
+  // sends its Enter byte from keyDown. Ctrl+Enter is an action, not text input.
+  if (editorFocused && keyCode === 'Enter' && !modifiers.includes('control') && !modifiers.includes('meta') && !modifiers.includes('alt')) window.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await delay(60);
 }
+async function syntheticEnter(options = {}) {
+  const prevented = await evaluate(`(() => { const event = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, ...${JSON.stringify(options)} }); document.activeElement.dispatchEvent(event); return event.defaultPrevented; })()`);
+  await flush(); return prevented;
+}
+async function releaseEnter(modifiers = []) { window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers }); await flush(); }
 async function click(index, css) { await evaluate(`document.querySelector(${JSON.stringify(selector(index) + ' ' + css)}).click()`); await flush(); }
 async function native(index, text) {
   await evaluate(`(() => { const data = new DataTransfer(); data.setData('text/plain', ${JSON.stringify(text)}); document.querySelector(${JSON.stringify(selector(index) + ' .xterm-helper-textarea')}).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })); })()`); await flush();
@@ -69,7 +75,7 @@ async function run() {
 
   phase = 'native multi-line chooser'; let before = inputs().length; await offer(0, 'echo one\r\necho two\n');
   assert.equal(inputs().length, before); assert.match((await inspect()).dialogs[0].text, /Fixture 1/);
-  assert.match((await inspect()).focus, /data-paste-editor/); assert.equal((await inspect()).dialogs[0].editorValue, 'echo one\necho two\n');
+  await assertFocused(0, '[data-paste-choice="all"]'); assert.equal((await inspect()).dialogs[0].editorValue, 'echo one\necho two\n');
   await cancel(0); assert.equal(inputs().length, before); metrics.checks.nativeChooser = true;
 
   phase = 'keyboard shortcut uses the same chooser'; clipboard = 'keyboard first\nkeyboard second'; before = inputs().length; await key(0, 'V', ['control', 'shift']);
@@ -88,6 +94,49 @@ async function run() {
   assert.equal(inputs().length, before + 1); assert.deepEqual(inputs().at(-1).args, ['paste-a', '\x1b[200~line one\rline two\r\x1b[201~']); metrics.checks.bracketedWhole = true;
   await bracketed(0, 'paste-a', false); await offer(0, 'plain one\nplain two'); await choose(0, 'all');
   assert.deepEqual(inputs().at(-1).args, ['paste-a', 'plain one\rplain two']); metrics.checks.unbracketedWhole = true;
+
+  phase = 'Enter chooses whole paste from the default button without an extra terminal Enter';
+  await offer(0, 'keyboard whole one\nkeyboard whole two'); before = inputs().length;
+  await assertFocused(0, '[data-paste-choice="all"]'); await key(0, 'Enter', [], false);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'keyboard whole one\rkeyboard whole two']]);
+  assert.equal((await inspect()).dialogs.length, 0); assert.equal((await inspect()).queues.length, 0); metrics.checks.keyboardWhole = true;
+
+  phase = 'holding Enter through chooser dismissal never executes the pasted text';
+  await offer(0, 'held whole one\nheld whole two'); before = inputs().length;
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); await flush();
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'held whole one\rheld whole two']]);
+  await until(() => evaluate(`document.activeElement === document.querySelector('${selector(0)} .xterm-helper-textarea')`), 'terminal focus after keyboard whole paste');
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true });
+  assert.equal(inputs().length, before + 1, 'held chooser Enter must not execute after focus moves to terminal');
+  await releaseEnter(); await key(0, 'Enter');
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'held whole one\rheld whole two'], ['paste-a', '\r']]);
+  metrics.checks.keyboardWholeRepeat = true;
+
+  phase = 'an Enter held through whole paste and a tab switch cannot reach the other terminal';
+  await offer(0, 'held tab one\nheld tab two'); before = inputs().length;
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); await flush();
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'held tab one\rheld tab two']]);
+  await setState('window.__pasteFixture.setActive(1)', state => state.active === 1);
+  await until(() => evaluate(`document.activeElement === document.querySelector('${selector(1)} .xterm-helper-textarea')`), 'second terminal focus while paste Enter is held');
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true });
+  assert.equal(inputs().length, before + 1, 'held chooser Enter must not leak into another terminal');
+  await releaseEnter(); await key(1, 'Enter');
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'held tab one\rheld tab two'], ['paste-b', '\r']]);
+  await setState('window.__pasteFixture.setActive(0)', state => state.active === 0); metrics.checks.keyboardHoldTabIsolation = true;
+
+  phase = 'Ctrl+Enter chooses lines even while the whole-paste button is focused';
+  await offer(0, 'keyboard line one\nkeyboard line two'); before = inputs().length;
+  await assertFocused(0, '[data-paste-choice="all"]');
+  await syntheticEnter({ ctrlKey: true, isComposing: true });
+  assert.equal(inputs().length, before); assert.equal((await inspect()).dialogs.length, 1);
+  await key(0, 'Enter', ['control'], false);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'keyboard line one']]);
+  assert.deepEqual((await inspect()).queues, [{ target: '0', line: '1', nextDisabled: true }]);
+  await click(0, '.terminal-paste-queue button:last-child'); metrics.checks.keyboardLines = true; metrics.checks.chooserImeIgnored = true;
+
+  phase = 'Ctrl+Enter without a paste queue retains normal terminal behavior'; before = inputs().length;
+  await key(0, 'Enter', ['control']);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', '\r']]); metrics.checks.noQueueCtrlEnter = true;
 
   phase = 'editor changes and Enter remain local until whole paste is chosen'; await offer(0, 'original one\noriginal two'); before = inputs().length;
   await fillEditor(0, 'edited one\nedited two'); assert.equal(inputs().length, before);
@@ -115,6 +164,7 @@ async function run() {
     await key(0, 'Tab', modifiers, false); await assertFocused(0, '[data-paste-editor]');
   }
   metrics.checks.disabledChoicesSkipped = true;
+  await key(0, 'Enter', ['control'], false); assert.equal(inputs().length, before); assert.equal((await inspect()).dialogs.length, 1);
   await choose(0, 'all'); await choose(0, 'lines'); assert.equal(inputs().length, before); assert.equal((await inspect()).dialogs.length, 1);
   await cancel(0); assert.equal(inputs().length, before); metrics.checks.emptyEditorBlocked = true;
 
@@ -133,22 +183,71 @@ async function run() {
 
   phase = 'line mode uses edited text and never sends Enter or advances automatically'; await offer(0, 'original first\noriginal second'); before = inputs().length;
   await fillEditor(0, 'first\nsecond\nthird\n'); assert.equal(inputs().length, before); assert.match((await inspect()).dialogs[0].text, /3 行/);
-  await choose(0, 'lines');
+  await key(0, 'Enter', ['control'], false);
   assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'first']]);
   assert.deepEqual((await inspect()).queues, [{ target: '0', line: '1', nextDisabled: true }]);
+  await key(0, 'Enter', ['control']);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'first']], 'Ctrl+Enter must not submit the current unexecuted line');
+  assert.deepEqual((await inspect()).queues, [{ target: '0', line: '1', nextDisabled: true }]); metrics.checks.queuePendingBlocksNext = true;
   await key(0, 'Enter'); await until(async () => (await inspect()).queues[0]?.nextDisabled === false, 'line submitted');
   assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'first'], ['paste-a', '\r']]);
   await delay(200); assert.equal(inputs().length, before + 2);
-  await click(0, '.terminal-paste-queue button'); assert.deepEqual(inputs().at(-1).args, ['paste-a', 'second']);
-  assert.deepEqual((await inspect()).queues, [{ target: '0', line: '2', nextDisabled: true }]); metrics.checks.manualAdvance = true; metrics.checks.editedLines = true;
+  await syntheticEnter({ ctrlKey: true, isComposing: true });
+  assert.equal(inputs().length, before + 2); assert.deepEqual((await inspect()).queues, [{ target: '0', line: '1', nextDisabled: false }]); metrics.checks.queueImeIgnored = true;
+  await key(0, 'Enter', ['control']);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'first'], ['paste-a', '\r'], ['paste-a', 'second']]);
+  assert.deepEqual((await inspect()).queues, [{ target: '0', line: '2', nextDisabled: true }]); metrics.checks.manualAdvance = true; metrics.checks.editedLines = true; metrics.checks.keyboardNext = true; metrics.checks.editorCtrlEnterLines = true;
 
   phase = 'queue belongs to original terminal across tab switches'; const queueInputs = inputs().length;
   await setState('window.__pasteFixture.setActive(1)', state => state.active === 1);
   await native(1, 'only second terminal'); assert.deepEqual(inputs().at(-1).args, ['paste-b', 'only second terminal']);
   assert.equal(inputs().length, queueInputs + 1); assert.equal((await inspect()).queues[0].line, '2');
-  await setState('window.__pasteFixture.setActive(0)', state => state.active === 0); assert.equal(inputs().length, queueInputs + 1);
-  await key(0, 'Enter'); await click(0, '.terminal-paste-queue button'); assert.deepEqual(inputs().at(-1).args, ['paste-a', 'third']);
+  await key(1, 'Enter', ['control']); assert.deepEqual(inputs().at(-1).args, ['paste-b', '\r']); assert.equal((await inspect()).queues[0].line, '2');
+  await setState('window.__pasteFixture.setActive(0)', state => state.active === 0); assert.equal(inputs().length, queueInputs + 2);
+  await key(0, 'Enter'); await key(0, 'Enter', ['control']); assert.deepEqual(inputs().at(-1).args, ['paste-a', 'third']);
   await key(0, 'Enter'); await until(async () => (await inspect()).queues.length === 0, 'last line clears queue'); metrics.checks.tabIsolation = true;
+
+  phase = 'held queue Enter and Ctrl+Enter act only once across state changes';
+  await offer(0, 'held first\nheld last'); await key(0, 'Enter', ['control'], false); before = inputs().length;
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); await flush();
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true });
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', '\r']]);
+  await releaseEnter();
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers: ['control'] }); await flush();
+  await syntheticEnter({ ctrlKey: true, repeat: true }); await syntheticEnter({ ctrlKey: true, repeat: true });
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', '\r'], ['paste-a', 'held last']]);
+  assert.deepEqual((await inspect()).queues, [{ target: '0', line: '2', nextDisabled: true }]); await releaseEnter(['control']);
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); await flush();
+  await until(async () => (await inspect()).queues.length === 0, 'held last Enter clears queue');
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true });
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', '\r'], ['paste-a', 'held last'], ['paste-a', '\r']]);
+  await releaseEnter(); metrics.checks.keyboardRepeat = true;
+
+  phase = 'holding Enter on the next-line button fills once without executing the new line';
+  await offer(0, 'button first\nbutton next'); await choose(0, 'lines'); await key(0, 'Enter'); before = inputs().length;
+  await evaluate(`document.querySelector('${selector(0)} .terminal-paste-queue button').focus()`);
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  // Chromium's native button activation occurs on the Enter char/keypress.
+  window.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); await flush();
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'button next']]);
+  await until(() => evaluate(`document.activeElement === document.querySelector('${selector(0)} .xterm-helper-textarea')`), 'terminal focus after next-line button');
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true });
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'button next']], 'held button Enter must not execute the newly filled line');
+  await releaseEnter(); await key(0, 'Enter');
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'button next'], ['paste-a', '\r']]);
+  assert.equal((await inspect()).queues.length, 0); metrics.checks.keyboardQueueButtonRepeat = true;
+
+  phase = 'holding Enter on cancel never leaks a terminal Enter after the queue disappears';
+  await offer(0, 'cancel button first\nnever fill'); await choose(0, 'lines'); before = inputs().length;
+  await evaluate(`document.querySelector('${selector(0)} .terminal-paste-queue button:last-child').focus()`);
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  window.webContents.sendInputEvent({ type: 'char', keyCode: '\r' }); await flush();
+  assert.equal((await inspect()).queues.length, 0); assert.equal(inputs().length, before);
+  await until(() => evaluate(`document.activeElement === document.querySelector('${selector(0)} .xterm-helper-textarea')`), 'terminal focus after cancel button');
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true });
+  assert.equal(inputs().length, before, 'held cancel Enter must not submit the terminal input');
+  await releaseEnter(); await key(0, 'Enter');
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', '\r']]); metrics.checks.keyboardCancelRepeat = true;
 
   phase = 'cancel button and Ctrl+C clear remaining lines'; await offer(0, 'keep\ncancelled'); await choose(0, 'lines'); before = inputs().length;
   await click(0, '.terminal-paste-queue button:last-child'); assert.equal((await inspect()).queues.length, 0); assert.equal(inputs().length, before);

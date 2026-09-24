@@ -54,7 +54,7 @@ export function TerminalPastePanel({ state, controller, terminal, connectionName
   useEffect(() => {
     if (state.mode !== 'choose') return;
     const dialog = element.current;
-    dialog?.querySelector<HTMLTextAreaElement>('[data-paste-editor]')?.focus();
+    dialog?.querySelector<HTMLButtonElement>('[data-paste-choice="all"]')?.focus();
     const keyboard = (event: KeyboardEvent) => {
       if (event.isComposing) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); }
@@ -69,14 +69,14 @@ export function TerminalPastePanel({ state, controller, terminal, connectionName
     return () => dialog?.removeEventListener('keydown', keyboard);
   }, [state.mode]);
   if (state.mode === 'lines') return <div className="terminal-paste-queue" role="status" data-paste-line={state.index + 1}>
-    <div><strong>逐行粘贴 · {state.index + 1} / {state.lines.length}</strong><span>{state.submitted ? '当前行已提交；终端准备好后，再填入下一行。' : '当前行已填入，按回车执行。Ctrl+C 可取消剩余行。'}</span></div>
-    <button type="button" className="button small secondary" disabled={!state.submitted} onClick={() => { controller.next(); terminal?.focus(); }}>填入下一行</button>
+    <div><strong>逐行粘贴 · {state.index + 1} / {state.lines.length}</strong><span>{state.submitted ? '当前行已提交；终端准备好后，按 Ctrl+Enter 填入下一行。' : 'Enter 执行当前行，Ctrl+Enter 填入下一行。Ctrl+C 取消剩余行。'}</span></div>
+    <button type="button" className="button small secondary" disabled={!state.submitted} aria-keyshortcuts="Control+Enter" onClick={() => { controller.next(); terminal?.focus(); }}>填入下一行<kbd>Ctrl+Enter</kbd></button>
     <button type="button" className="button small secondary" onClick={cancel}>取消剩余</button>
   </div>;
   return <div className="terminal-paste-backdrop"><div ref={element} className="terminal-paste-dialog" role="dialog" aria-modal="true" aria-label="多行粘贴">
     <strong>编辑后，选择粘贴方式</strong><span className="terminal-paste-target">{connectionName} · {state.text ? state.lines.length : 0} 行</span>
     <textarea className="terminal-paste-editor" data-paste-editor aria-label="待粘贴内容" aria-describedby={helpId} value={state.text} onChange={event => controller.edit(event.target.value)} spellCheck={false} autoCapitalize="off" autoCorrect="off" wrap="off" />
-    <p id={helpId}>可直接修改命令，回车换行。整体粘贴可能立即执行；逐行粘贴由你按回车执行，准备好后手动填入下一行。</p>
-    <div className="terminal-paste-buttons"><button type="button" className="button secondary" onClick={cancel}>取消</button><button type="button" className="button secondary" data-paste-choice="all" disabled={!state.text} onClick={() => { controller.choose('all'); terminal?.focus(); }}>整体粘贴</button><button type="button" className="button primary" data-paste-choice="lines" disabled={!state.text} onClick={() => { controller.choose('lines'); terminal?.focus(); }}>逐行粘贴</button></div>
+    <p id={helpId}>Enter 整体粘贴，Ctrl+Enter 逐行粘贴。点击编辑区可修改命令，Enter 换行。整体粘贴可能立即执行；逐行模式每行由你按 Enter 执行。</p>
+    <div className="terminal-paste-buttons"><button type="button" className="button secondary" data-paste-cancel onClick={cancel}>取消</button><button type="button" className="button primary" data-paste-choice="all" aria-keyshortcuts="Enter" disabled={!state.text} onClick={() => { controller.choose('all'); terminal?.focus(); }}>整体粘贴<kbd>Enter</kbd></button><button type="button" className="button secondary" data-paste-choice="lines" aria-keyshortcuts="Control+Enter" disabled={!state.text} onClick={() => { controller.choose('lines'); terminal?.focus(); }}>逐行粘贴<kbd>Ctrl+Enter</kbd></button></div>
   </div></div>;
 }
