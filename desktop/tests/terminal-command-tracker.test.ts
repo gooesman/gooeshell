@@ -4,23 +4,25 @@ import {Terminal} from '@xterm/xterm';
 import {parseCommandSignal,TerminalCommandTracker} from '../src/renderer/terminal-command-tracker';
 
 function fixture(limit=1000){
-  let type='normal',row=0,column=0,scroll:()=>void=()=>{};
+  let type='normal',row=0,column=0,scroll:()=>void=()=>{},input:()=>void=()=>{};
   const resizeHandlers=new Set<(size:{cols:number;rows:number})=>void>();
   const handlers=new Map<number,(data:string)=>boolean|Promise<boolean>>(),markers:ReturnType<typeof marker>[]=[];
   function marker(){let disposed=false;const callbacks=new Set<()=>void>();const value={line:row,id:markers.length,get isDisposed(){return disposed;},dispose(){if(disposed)return;disposed=true;value.line=-1;for(const callback of callbacks)callback();},onDispose(callback:()=>void){callbacks.add(callback);return{dispose:()=>callbacks.delete(callback)};}};markers.push(value);return value;}
   const lines=new Map<number,string>();
   const cell={getWidth:()=>1,getChars:()=>''};
-  const normal={baseY:0,viewportY:0,length:100,getNullCell:()=>cell,get cursorY(){return row;},get cursorX(){return column;},get type(){return type;},getLine(index:number){return{length:80,getCell:()=>cell,isWrapped:false,translateToString(_trim:boolean,start=0,end?:number){return(lines.get(index)||'').slice(start,end);}};}};
+  const normal={baseY:0,viewportY:0,length:100,getNullCell:()=>cell,get cursorY(){return row-normal.baseY;},get cursorX(){return column;},get type(){return type;},getLine(index:number){return{length:80,getCell:()=>cell,isWrapped:false,translateToString(_trim:boolean,start=0,end?:number){return(lines.get(index)||'').slice(start,end);}};}};
   const terminal={cols:80,rows:24,options:{},buffer:{normal,active:normal,onBufferChange:()=>({dispose(){}})},
     parser:{registerOscHandler(id:number,handler:(data:string)=>boolean|Promise<boolean>){handlers.set(id,handler);return{dispose:()=>handlers.delete(id)};}},registerMarker:marker,
     onResize(handler:(size:{cols:number;rows:number})=>void){resizeHandlers.add(handler);return{dispose:()=>resizeHandlers.delete(handler)};},onScroll(handler:()=>void){scroll=handler;return{dispose(){}};},
-    scrollToLine(line:number){normal.viewportY=Math.min(line,76);scroll();},scrollToBottom(){normal.viewportY=76;scroll();},focus(){},
+    onKey(handler:()=>void){input=handler;return{dispose(){}};},
+    scrollToLine(line:number){normal.viewportY=Math.max(0,Math.min(line,normal.baseY));scroll();},scrollToBottom(){normal.viewportY=normal.baseY;scroll();},focus(){},
+    scrollLines(lines:number){normal.viewportY=Math.max(0,Math.min(normal.viewportY+lines,normal.baseY));scroll();},
   };
   const tracker=new TerminalCommandTracker(terminal as unknown as Terminal,limit);
   const send=(data:string,id=133)=>handlers.get(id)?.(data);
   const at=(line:number,col=0)=>{row=line;column=col;};
   const start=(line:number,command='echo fixture')=>{at(line);send('A');send('B');send(`E;${command}`,633);at(line+1);send('C');};
-  return{tracker,send,at,start,markers,lines,normal,mode(value:string){type=value;},resize(cols:number){terminal.cols=cols;for(const handler of resizeHandlers)handler({cols,rows:24});}};
+  return{tracker,send,at,start,markers,lines,normal,notifyScroll(){scroll();},input(){input();},scrollTo(line:number){normal.viewportY=line;scroll();},mode(value:string){type=value;},resize(cols:number){terminal.cols=cols;for(const handler of resizeHandlers)handler({cols,rows:24});}};
 }
 
 test('command metadata preserves escaped multiline text and rejects malformed/control payloads',()=>{
@@ -44,6 +46,47 @@ test('alternate-screen metadata cannot create pane marks or steal navigation',()
   const f=fixture();f.start(0,'tmux');f.mode('alternate');f.send('A');f.send('B');f.send('C');f.send('D;1');
   assert.equal(f.tracker.navigate(-1),false);assert.equal(f.tracker.records.length,1);assert.equal(f.tracker.records[0].status,'running');
   f.mode('normal');f.at(2);f.send('D;0');assert.equal(f.tracker.records[0].status,'success');f.tracker.dispose();
+});
+
+test('navigation traverses each visible command, exposes its target, and stops at the live prompt',()=>{
+  const f=fixture();let changes=0;f.tracker.onChange(()=>changes++);
+  for(const line of [0,2,4]){f.start(line);f.send('D;0');}
+  changes=0;
+  for(const id of [3,2,1,1]){assert.equal(f.tracker.navigate(-1),true);assert.equal(f.tracker.activeCommand?.id,id);assert.equal(f.normal.viewportY,0);}
+  assert.ok(changes>=3,'navigation updates even when all command starts are already on screen');
+  for(const id of [2,3,undefined,undefined]){f.tracker.navigate(1);assert.equal(f.tracker.activeCommand?.id,id);}
+  f.tracker.navigate(-1);f.input();assert.equal(f.tracker.activeCommand,undefined);
+  f.tracker.dispose();
+});
+
+test('background output scroll notifications keep the selected command; manual scroll resets it',async t=>{
+  const terminal=new Terminal({cols:80,rows:12}),tracker=new TerminalCommandTracker(terminal);
+  t.after(()=>{tracker.dispose();terminal.dispose();});
+  const write=(data:string)=>new Promise<void>(resolve=>terminal.write(data,resolve));
+  for(let index=0;index<3;index++)await write(`\x1b]133;A\x07$ \x1b]133;B\x07echo ${index}\r\n\x1b]133;C\x07\r\n\x1b]133;D;0\x07`);
+  await write('\r\n'.repeat(30));
+  tracker.navigate(-1);tracker.navigate(-1);
+  const target=tracker.activeCommand,viewport=terminal.buffer.normal.viewportY;
+  assert.equal(target?.id,2);
+  await write('BACKGROUND_OUTPUT\r\n');
+  assert.equal(terminal.buffer.normal.viewportY,viewport);
+  assert.equal(tracker.activeCommand,target,'buffer growth is not a user scroll');
+  const replies:string[]=[];terminal.onData(data=>replies.push(data));
+  await write('\x1b[6n');
+  assert.ok(replies.some(data=>/^\x1b\[\d+;\d+R$/.test(data)),'real xterm protocol response emitted');
+  assert.equal(tracker.activeCommand,target,'automatic terminal protocol replies are not user input');
+  tracker.navigate(-1);assert.equal(tracker.activeCommand?.id,1);
+  terminal.scrollToBottom();assert.equal(tracker.activeCommand,undefined);
+});
+
+test('a delayed programmatic scroll event does not discard the navigation target',()=>{
+  const f=fixture();f.normal.baseY=76;f.normal.viewportY=76;
+  for(const line of [10,30,80]){f.start(line);f.send('D;0');}
+  f.tracker.navigate(-1);f.notifyScroll();assert.equal(f.tracker.activeCommand?.id,3);
+  f.tracker.navigate(-1);f.notifyScroll();assert.equal(f.tracker.activeCommand?.id,2);assert.equal(f.normal.viewportY,30);
+  f.scrollTo(25);assert.equal(f.tracker.activeCommand,undefined);
+  f.tracker.navigate(-1);assert.equal(f.tracker.activeCommand?.id,1);
+  f.tracker.resetSession();assert.equal(f.tracker.activeCommand,undefined);f.tracker.dispose();
 });
 test('markers have a bounded lifetime and scrollback disposal releases associated metadata',()=>{
   const f=fixture(2);for(let i=0;i<3;i++){f.start(i*3);f.send('D;0');}

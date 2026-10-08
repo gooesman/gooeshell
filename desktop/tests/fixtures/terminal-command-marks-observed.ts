@@ -9,8 +9,15 @@ export class Terminal extends RealTerminal {
     (fixture.__marksTerminals ||= []).push(this);
     fixture.__marksKeyDecisions ||= [];
     fixture.__marksDeferredCallbacks ||= [];
+    fixture.__marksScrollTrace ||= [];
+    this.onScroll(()=>this.trace('scroll'));
     this.onRender(() => { fixture.__marksRenderCount = (fixture.__marksRenderCount || 0) + 1; });
   }
+  private trace(kind:string,line?:number){
+    const fixture=window as any;fixture.__marksScrollTrace.push({kind,line,viewport:this.buffer.normal.viewportY,base:this.buffer.normal.baseY,cols:this.cols,rows:this.rows});
+    fixture.__marksScrollTrace=fixture.__marksScrollTrace.slice(-30);
+  }
+  scrollToLine(line:number){this.trace('jump-before',line);super.scrollToLine(line);this.trace('jump-after',line);}
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
     super.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       const result = handler(event), fixture = window as any;

@@ -54,7 +54,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   const scheduleResize=()=>{if(!disposed&&!resizeFrame)resizeFrame=requestAnimationFrame(resize);};
   requestFit.current=scheduleResize;
   const observer=new ResizeObserver(scheduleResize);observer.observe(element);scheduleResize();
-  const paste=new TerminalPasteController(text=>{if(online.current)terminal.paste(text);},setPasteState);pasteController.current=paste;
+  const paste=new TerminalPasteController(text=>{if(online.current){marks.tracker.clearNavigation();terminal.paste(text);}},setPasteState);pasteController.current=paste;
   const pasteRoot=element.parentElement!;
   const pasteKeyboard=(event:KeyboardEvent)=>{
    if(!visible.current||event.key!=='Enter'||!(event.target instanceof Element))return;

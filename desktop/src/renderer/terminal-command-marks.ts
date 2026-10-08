@@ -9,6 +9,7 @@ const description=(record:CommandRecord)=>`${labels[record.status]}${record.exit
 export class TerminalCommandMarks {
   readonly tracker:TerminalCommandTracker;
   private rail:HTMLDivElement;
+  private highlight:HTMLDivElement;
   private menu?:HTMLDivElement;
   private frame=0;
   private visible=true;
@@ -22,6 +23,8 @@ export class TerminalCommandMarks {
     this.tracker=new TerminalCommandTracker(terminal);
     this.rail=document.createElement('div');this.rail.className='command-marks-rail';
     this.rail.setAttribute('role','group');this.rail.setAttribute('aria-label','命令状态与导航');root.append(this.rail);
+    this.highlight=document.createElement('div');this.highlight.className='command-navigation-highlight';
+    this.highlight.setAttribute('aria-hidden','true');this.highlight.hidden=true;root.append(this.highlight);
     this.disposables.push(this.tracker.onChange(()=>this.schedule()),terminal.onRender(()=>this.schedule()),terminal.onScroll(()=>this.schedule()));
     this.observer=new ResizeObserver(()=>this.schedule());this.observer.observe(root);
     document.addEventListener('pointerdown',this.dismiss,true);document.addEventListener('keydown',this.keyboard,true);
@@ -44,17 +47,33 @@ export class TerminalCommandMarks {
   }
   private schedule(){
     if(this.disposed||this.frame)return;
-    if(!this.visible){this.rail.hidden=true;return;}
+    if(!this.visible){this.rail.hidden=true;this.highlight.hidden=true;return;}
     this.frame=requestAnimationFrame(()=>{this.frame=0;if(!this.disposed)this.render();});
   }
   private render(){
     this.rail.dataset.commandMarksPosition=this.position;
     this.rail.hidden=!this.visible||this.position==='hidden'||!this.tracker.normal;
+    this.highlight.hidden=true;
+    const selected=this.tracker.activeCommand;
+    const screen=this.terminal.element?.querySelector('.xterm-screen');
+    let rect:DOMRect|undefined,root:DOMRect|undefined;
+    if(this.visible&&this.tracker.normal&&selected&&screen){
+      const buffer=this.terminal.buffer.normal,line=selected.marker.line;
+      if(line>=buffer.viewportY&&line<buffer.viewportY+this.terminal.rows){
+        rect=screen.getBoundingClientRect();root=this.root.getBoundingClientRect();
+        if(rect.height>0){
+          const rowHeight=rect.height/this.terminal.rows;
+          this.highlight.dataset.commandNavigation=String(selected.id);this.highlight.dataset.commandLine=String(line);
+          this.highlight.style.left=`${rect.left-root.left}px`;this.highlight.style.top=`${rect.top-root.top+(line-buffer.viewportY)*rowHeight}px`;
+          this.highlight.style.width=`${rect.width}px`;this.highlight.style.height=`${rowHeight}px`;this.highlight.hidden=false;
+        }
+      }
+    }
     if(this.rail.hidden){this.closeMenu();if(this.buttons.size)this.rail.replaceChildren();this.buttons.clear();this.keys='';return;}
     // Ordinary connections with no integration should not measure layout on output.
     if(!this.tracker.records.length){if(this.buttons.size)this.rail.replaceChildren();this.buttons.clear();this.keys='';return;}
-    const screen=this.terminal.element?.querySelector('.xterm-screen');if(!screen)return;
-    const rect=screen.getBoundingClientRect(),root=this.root.getBoundingClientRect();
+    if(!screen)return;
+    rect??=screen.getBoundingClientRect();root??=this.root.getBoundingClientRect();
     if(rect.height<=0)return;
     const buffer=this.terminal.buffer.normal,rowHeight=rect.height/this.terminal.rows;
     const buckets=new Map<number,{record:CommandRecord;count:number}>();
@@ -66,7 +85,8 @@ export class TerminalCommandMarks {
       const bucket=this.position==='left'?Math.round(pixel):Math.floor(pixel/6)*6+3;
       const previous=buckets.get(bucket);
       // Failures remain discoverable even when a long history shares a pixel bucket.
-      const preferred=!previous||record.status==='error'||previous.record.status!=='error'?record:previous.record;
+      const preferred=selected?.id===record.id?record:previous&&previous.record.id===selected?.id?previous.record:
+        !previous||record.status==='error'||previous.record.status!=='error'?record:previous.record;
       buckets.set(bucket,{record:preferred,count:(previous?.count||0)+1});
     }
     const nodes:HTMLButtonElement[]=[],nextButtons=new Map<string,HTMLButtonElement>();
@@ -75,6 +95,7 @@ export class TerminalCommandMarks {
       const button=this.buttons.get(key)||document.createElement('button');
       button.type='button';button.className='command-status-mark';button.dataset.commandMark=String(record.id);
       button.dataset.commandLine=String(record.marker.line);button.dataset.command=(record.command||'').slice(0,512);button.dataset.status=record.status;
+      button.setAttribute('aria-current',String(record.id===selected?.id));
       button.style.top=`${rect.top-root.top+pixel}px`;
       button.title=description(record)+(count>1?`\n附近还有 ${count-1} 条命令，可用上下命令快捷键逐条定位`:'');
       button.setAttribute('aria-label',`${labels[record.status]}：${record.command?.slice(0,120)||'命令'}，定位命令开始`);
@@ -107,6 +128,6 @@ export class TerminalCommandMarks {
   dispose(){
     this.disposed=true;cancelAnimationFrame(this.frame);this.observer.disconnect();
     document.removeEventListener('pointerdown',this.dismiss,true);document.removeEventListener('keydown',this.keyboard,true);
-    for(const disposable of this.disposables)disposable.dispose();this.tracker.dispose();this.closeMenu();this.rail.remove();
+    for(const disposable of this.disposables)disposable.dispose();this.tracker.dispose();this.closeMenu();this.rail.remove();this.highlight.remove();
   }
 }

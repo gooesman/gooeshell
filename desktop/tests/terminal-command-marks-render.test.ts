@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react';
 
 for (const domFallback of [false, true]) test(`command marks use the real terminal buffer, native input and isolated transports (${domFallback ? 'DOM fallback' : 'default renderer'})`, {
   skip: process.env.GOOESHELL_COMMAND_MARKS_TEST === '1' ? false : 'Set GOOESHELL_COMMAND_MARKS_TEST=1 with Electron and a display',
-  timeout: 180_000,
+  timeout: 240_000,
 }, async t => {
   const root = process.cwd(), artifactsRoot = path.resolve('../.build');
   await fs.mkdir(artifactsRoot, { recursive: true });
@@ -28,7 +28,7 @@ for (const domFallback of [false, true]) test(`command marks use the real termin
   const child = spawn(executable, [...(process.platform === 'linux' && process.env.CI ? ['--no-sandbox'] : []), path.join(root, 'tests/fixtures/terminal-command-marks-electron.cjs')],
     { env, cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stderr.on('data', data => { logs += data.toString(); }); child.stdout.on('data', data => { logs += data.toString(); });
-  const timeout = setTimeout(() => child.kill(), 170_000); timeout.unref(); child.once('close', () => clearTimeout(timeout));
+  const timeout = setTimeout(() => child.kill(), 230_000); timeout.unref(); child.once('close', () => clearTimeout(timeout));
   t.after(() => { if (child.exitCode === null) child.kill(); });
   const exit = await new Promise<number | null>((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(async () => {
@@ -39,6 +39,7 @@ for (const domFallback of [false, true]) test(`command marks use the real termin
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + logs);
   assert.equal(result.success, true, JSON.stringify(result, null, 2));
   for (const name of ['plainTerminalPassThrough', 'statusesAndSplitOsc', 'rightOverviewJump', 'copyCommandAndOutput', 'nativeCommandNavigation',
+    'compactCommandNavigation','backgroundOutputPreservesNavigation','navigationEndsAtLivePrompt','manualScrollRestartsNavigation','hiddenMarksStillNavigate',
     'positionChangesPreserveTerminal', 'hiddenTabOutput', 'resizeFontAndChineseWrap', 'softWrappedPromptSurvivesReflow', 'alternateScreenPassThrough',
     'disconnectPendingUnknown', 'reconnectIsolation', 'acknowledgements', 'scrollbackEvictsMarks',
     'boundedOverviewUnderLoad', 'queuedCompletionPreserved', 'queuedRunningUnknown', 'echoFallbackDuplicates', 'echoFallbackPipeline',

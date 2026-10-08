@@ -52,6 +52,7 @@ export class TerminalCommandTracker {
   private columns:number;
   private disposed=false;
   private navigation?:number;
+  private navigationViewport?:number;
   private navigating=false;
   private boundary=`gooeshell-session-boundary:${crypto.randomUUID()}`;
   constructor(private terminal:Terminal,private limit=1000){
@@ -69,19 +70,28 @@ export class TerminalCommandTracker {
     this.disposables.push(terminal.onResize(({cols})=>{
       if(cols!==this.columns){this.geometry++;this.columns=cols;}
       this.changed();
-    }),terminal.buffer.onBufferChange(()=>this.changed()),terminal.onScroll(()=>{
-      if(!this.navigating)this.navigation=undefined;
-    }));
+    }),terminal.buffer.onBufferChange(()=>{this.clearNavigation();this.changed();}),terminal.onScroll(()=>{
+      // A browser scroll notification may arrive after scrollToLine returns.
+      // Only a move away from the requested viewport ends command navigation.
+      if(!this.navigating&&terminal.buffer.normal.viewportY!==this.navigationViewport)this.clearNavigation();
+    }),terminal.onKey(()=>this.clearNavigation()));
   }
   get records():readonly CommandRecord[]{return this.entries;}
+  get activeCommand(){return this.entries.find(record=>record.id===this.navigation);}
   get normal(){return this.terminal.buffer.active.type==='normal';}
   onChange(listener:()=>void){this.listeners.add(listener);return{dispose:()=>this.listeners.delete(listener)};}
   private changed(){if(!this.disposed)for(const listener of this.listeners)listener();}
+  clearNavigation(){
+    const selected=this.navigation!==undefined;
+    this.navigation=undefined;this.navigationViewport=undefined;
+    if(selected)this.changed();
+  }
   private cursor(){const buffer=this.terminal.buffer.active;return{line:buffer.baseY+buffer.cursorY,column:buffer.cursorX};}
   private dropPrompt(){this.prompt?.echo?.marker.dispose();this.prompt?.marker.dispose();this.prompt=undefined;}
   private remove(record:CommandRecord){
     const index=this.entries.indexOf(record);if(index<0)return;
     this.entries.splice(index,1);
+    if(this.navigation===record.id){this.navigation=undefined;this.navigationViewport=undefined;}
     if(this.running===record)this.running=undefined;
     record.marker.dispose();record.output.dispose();record.end?.dispose();this.changed();
   }
@@ -124,7 +134,7 @@ export class TerminalCommandTracker {
       this.prompt=undefined;this.running=record;this.entries.push(record);
       record.marker.onDispose(()=>this.remove(record));
       while(this.entries.length>this.limit)this.remove(this.entries[0]);
-      this.navigation=undefined;this.changed();return;
+      this.navigation=undefined;this.navigationViewport=undefined;this.changed();return;
     }
     if(signal.kind==='D')this.finish(signal.exitCode);
   }
@@ -138,15 +148,26 @@ export class TerminalCommandTracker {
   /** Transport boundaries keep old scrollback but never pair a new D with an old C. */
   resetSession(){
     if(this.running){this.running.status='unknown';this.running=undefined;}
-    this.dropPrompt();this.navigation=undefined;this.changed();
+    this.dropPrompt();this.navigation=undefined;this.navigationViewport=undefined;this.changed();
   }
   /** The boundary is parsed after preceding SSH output, independently of ACK callbacks. */
   queueSessionReset(){this.terminal.write(`\x1b]777;${this.boundary}\x07`);}
+  private scrollTo(line:number){
+    const buffer=this.terminal.buffer.normal,target=Math.max(0,Math.min(line,buffer.baseY));
+    this.terminal.scrollToLine(target);
+    if(buffer.viewportY!==target){
+      // xterm's relative pixel scrolling can retain the old cell height after
+      // a font change. Anchor both positions at the top before retrying.
+      this.terminal.scrollLines(-buffer.length);this.terminal.scrollToLine(target);
+    }
+  }
   jump(record:CommandRecord){
     if(!this.normal||record.marker.isDisposed||!this.entries.includes(record))return false;
+    this.navigation=record.id;
+    this.navigationViewport=Math.max(0,Math.min(record.marker.line,this.terminal.buffer.normal.baseY));
     this.navigating=true;
-    try{this.terminal.scrollToLine(record.marker.line);}finally{this.navigating=false;}
-    this.navigation=record.id;this.terminal.focus();return true;
+    try{this.scrollTo(record.marker.line);}finally{this.navigating=false;}
+    this.terminal.focus();this.changed();return true;
   }
   navigate(direction:-1|1){
     if(!this.normal||!this.entries.length)return false;
@@ -156,10 +177,11 @@ export class TerminalCommandTracker {
     else{
       const buffer=this.terminal.buffer.normal;
       const boundary=direction<0&&buffer.viewportY===buffer.baseY?buffer.length:buffer.viewportY;
-      record=direction<0?[...this.entries].reverse().find(item=>item.marker.line<boundary):this.entries.find(item=>item.marker.line>boundary);
+      record=direction<0?[...this.entries].reverse().find(item=>item.marker.line<boundary):
+        buffer.viewportY<buffer.baseY?this.entries.find(item=>item.marker.line>boundary):undefined;
     }
     if(record)this.jump(record);
-    else if(direction>0){this.navigation=undefined;this.terminal.scrollToBottom();}
+    else if(direction>0){this.clearNavigation();this.scrollTo(this.terminal.buffer.normal.baseY);}
     return true;
   }
   outputText(record:CommandRecord){

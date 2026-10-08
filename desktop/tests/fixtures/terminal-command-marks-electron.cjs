@@ -88,6 +88,9 @@ const inspect = () => evaluate(String.raw`(()=>{
     active:window.__marksFixture.active,connection:window.__marksFixture.connection,position:window.__marksFixture.settings.commandMarks,
     type:t.buffer.active.type,viewport:t.buffer.active.viewportY,base:buffer.baseY,length:buffer.length,cols:t.cols,rows:t.rows,fontSize:t.options.fontSize,
     pendingCallbacks:window.__marksDeferredCallbacks.length,renderCount:window.__marksRenderCount||0,
+    scrollTrace:window.__marksScrollTrace,
+    navigation:[...root.querySelectorAll('[data-command-navigation]')].filter(visible).map(e=>({id:e.dataset.commandNavigation,
+      line:Number(e.dataset.commandLine),text:buffer.getLine(Number(e.dataset.commandLine))?.translateToString(true)||'',...rectangle(e)})),
     keyDecisions:window.__marksKeyDecisions.slice(-12),canvas:root.querySelectorAll('canvas').length,
     terminalRect:rectangle(root.querySelector('.xterm-screen')),
     containers:[...root.querySelectorAll('[data-command-marks-position]')].filter(visible).map(e=>({position:e.dataset.commandMarksPosition,...rectangle(e)})),
@@ -168,6 +171,43 @@ async function run() {
   assert.equal((await inspect()).keyDecisions.findLast(event => event.type === 'keydown').result, false);
   assert.equal(calls('terminalInput').length, inputsBeforeClick); metrics.checks.nativeCommandNavigation = true;
 
+  phase = 'consecutive short commands have distinct native navigation targets';
+  send('marks-old', osc(133, 'D;0') + Array.from({length:5},(_,i)=>completeCommand(`echo SHORT_NAV_${i+1}`, 'short\r\n')).join(''));
+  await until(() => bufferContains('SHORT_NAV_5'), 'compact command history parsed');
+  await evaluate('window.__marksTerminals[0].scrollToBottom()'); await flush();
+  const inputsBeforeCompact = calls('terminalInput').length;
+  metrics.compactNavigation = [];
+  for (let index=5;index>=1;index--) {
+    await key('Up',['control']); await flush(); state=await inspect();
+    assert.equal(state.navigation.length,1);
+    assert.ok(state.navigation[0].text.includes(`SHORT_NAV_${index}`),'each key locates a different short command');
+    assert.equal(state.viewport,state.base,'short commands remain in the last screen');
+    const selected=state.marks.find(mark=>mark.id===state.navigation[0].id);
+    assert.ok(selected,'selected command remains discoverable even in an overview pixel bucket');
+    const rowHeight=state.terminalRect.height/state.rows;
+    assert.ok(Math.abs(state.navigation[0].y-(state.terminalRect.y+(state.navigation[0].line-state.viewport)*rowHeight))<2,'highlight aligns with the command row');
+    metrics.compactNavigation.push({command:state.navigation[0].text,viewport:state.viewport,line:state.navigation[0].line});
+  }
+  await screenshot('compact-navigation'); metrics.checks.compactCommandNavigation = true;
+  await key('Up',['control']); await key('Up',['control']); await flush();
+  state=await inspect(); assert.ok(state.navigation[0].text.includes('COMMAND_FAILED')); assert.equal(state.viewport,failed.line);
+  const backgroundTarget=state.navigation[0].id;
+  send('marks-old','BACKGROUND_DURING_NAVIGATION\r\n');
+  await until(() => bufferContains('BACKGROUND_DURING_NAVIGATION'), 'background output parsed'); await flush();
+  assert.equal((await inspect()).navigation[0]?.id,backgroundTarget,'background output does not interrupt command navigation');
+  await key('Up',['control']); await flush(); assert.equal((await inspect()).navigation[0]?.id,success.id);
+  metrics.checks.backgroundOutputPreservesNavigation = true;
+  // Reach the live prompt and remain there on repeated Ctrl+Down.
+  for(let index=0;index<10;index++)await key('Down',['control']); await flush();
+  state=await inspect(); assert.equal(state.viewport,state.base);assert.equal(state.navigation.length,0);
+  assert.equal(calls('terminalInput').length,inputsBeforeCompact);metrics.checks.navigationEndsAtLivePrompt=true;
+  await nativeClick(markSelector(success.id));
+  await evaluate(`window.__marksTerminals[0].scrollToLine(${failed.line+1})`);await flush();
+  assert.equal((await inspect()).navigation.length,0,'manual scroll clears the previous target');
+  await key('Up',['control']);await flush();assert.equal((await inspect()).navigation[0]?.id,failed.id);
+  metrics.checks.manualScrollRestartsNavigation=true;
+  await nativeClick(markSelector(success.id));
+
   phase = 'left gutter and hidden marks preserve the terminal and scrollback';
   await patchSettings({ commandMarks: 'left' });
   state = await inspect(); assert.equal(state.containers[0].position, 'left'); assert.ok(state.marks.length > 0);
@@ -177,6 +217,9 @@ async function run() {
   await patchSettings({ commandMarks: 'hidden' }); state = await inspect();
   assert.equal(state.marks.length, 0); assert.equal(state.containers.length, 0); assert.equal(state.sameTerminal, true); assert.equal(state.count, 2);
   assert.equal(await bufferContains('COPY_OUTPUT_ONE'), true);
+  await key('Down',['control']);await flush();state=await inspect();
+  assert.equal(state.navigation.length,1);assert.ok(state.navigation[0].text.includes('COMMAND_FAILED'));
+  assert.equal(state.marks.length,0);metrics.checks.hiddenMarksStillNavigate=true;
   await patchSettings({ commandMarks: 'right' });
   await until(async () => (await inspect()).marks.some(mark => mark.id === success.id), 'marks return after hiding');
   assert.equal((await inspect()).sameTerminal, true); metrics.checks.positionChangesPreserveTerminal = true;
@@ -229,6 +272,7 @@ async function run() {
   send('marks-old', '\x1b[?1049h\x1b[?1003h\x1b[?1006h' + 'ALTERNATE_SCREEN\r\n' + completeCommand('echo ALT_FAKE_COMMAND', 'ALT_FAKE_OUTPUT\r\n', 9));
   await until(async () => (await inspect()).type === 'alternate', 'alternate buffer'); await flush();
   assert.equal((await inspect()).marks.length, 0); assert.equal((await inspect()).containers.length, 0);
+  assert.equal((await inspect()).navigation.length,0);
   const altInputs = calls('terminalInput').length; await key('Up', ['control']); await key('Down', ['control']);
   await until(() => calls('terminalInput').length >= altInputs + 2, 'alternate screen navigation forwarded');
   assert.ok((await inspect()).keyDecisions.filter(event => event.type === 'keydown').slice(-2).every(event => event.result === true));
