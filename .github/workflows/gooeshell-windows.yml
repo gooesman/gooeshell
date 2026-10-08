@@ -140,5 +140,7 @@ jobs:
             .build/terminal-output-*/result.json*
             .build/terminal-command-marks-*/result.json*
             desktop/test-output/single-instance-*/*.json
+            desktop/test-output/local-pty-native-*/result.json
+            .build/local-terminal-app-*/result.json*
           if-no-files-found: ignore
           retention-days: 14

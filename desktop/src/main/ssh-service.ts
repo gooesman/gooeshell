@@ -6,7 +6,7 @@ import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper, type 
 import iconv from 'iconv-lite';
 import type {
   AppEvent, CommandResult, ConnectRequest, FileListing, HostKeyDecision, HostProfile, JumpHostProfile,
-  EditableTextFile, EditorEncoding, RemoteRequest, SessionInfo, TextFile, TextWriteResult, TransferInfo, TransferRequest,
+  EditableTextFile, EditorEncoding, RemoteRequest, SshSessionInfo, TextFile, TextWriteResult, TransferInfo, TransferRequest,
 } from '../shared/types';
 import { runRemoteOperation } from './remote-helper';
 import { isSftpClosed, performSftpTransfer, remoteClose, remoteStat, sftpCall, trackSftp } from './sftp-transfer';
@@ -378,7 +378,7 @@ export class SshService {
     } catch (error) { client.destroy(); stream?.destroy(); throw error; }
   }
 
-  async connect(request: ConnectRequest): Promise<SessionInfo> {
+  async connect(request: ConnectRequest): Promise<SshSessionInfo> {
     const id=request.attemptId;
     if(id!==undefined&&(typeof id!=='string'||!id||id.length>255))throw new Error('连接请求编号无效');
     if(id&&this.attempts.has(id))throw new Error('此连接正在建立，请稍候');
@@ -475,7 +475,7 @@ export class SshService {
     throw new Error('不支持的认证方式');
   }
 
-  private async connectAttempt(request:ConnectRequest,attempt:ConnectAttempt):Promise<SessionInfo>{
+  private async connectAttempt(request:ConnectRequest,attempt:ConnectAttempt):Promise<SshSessionInfo>{
     if (this.stopped) throw new Error('应用正在退出');
     const profile = { ...request.profile, ...(request.profile.jumpHost ? { jumpHost: { ...request.profile.jumpHost } } : {}) };
     if (!profile.host?.trim() || !profile.username?.trim() || !Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) throw new Error('请填写服务器地址、用户名和有效端口');

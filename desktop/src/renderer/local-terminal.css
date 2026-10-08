@@ -1,0 +1,14 @@
+.local-terminal-launcher { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(210px, 1.4fr); gap: 14px; width: min(560px, 100%); padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: left; }
+.local-terminal-heading { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; }
+.local-terminal-heading strong { font-size: 14px; font-weight: 600; }
+.local-terminal-heading > span { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+.local-shell-field, .local-cwd-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; color: var(--text-muted); font-size: 11px; }
+.local-shell-field select, .local-directory-controls input { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); padding: 0 9px; font-size: 12px; }
+.local-directory-controls { display: flex; gap: 4px; align-items: center; }
+.local-directory-controls .icon-button { flex-shrink: 0; }
+.local-terminal-open, .local-terminal-launcher > .form-error { grid-column: 1 / -1; }
+.local-terminal-open { justify-content: center; gap: 8px; }
+.connection-home .local-terminal-launcher { margin-top: 22px; }
+.local-terminal-modal .local-terminal-launcher { width: 100%; border: 0; padding: 2px; background: transparent; }
+.local-terminal-entry { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+@media (max-width: 650px) { .local-terminal-launcher { grid-template-columns: 1fr; padding: 16px; } .local-terminal-heading > span { display: none; } .local-terminal-entry > span { display: none; } }

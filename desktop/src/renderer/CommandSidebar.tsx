@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Copy, FolderPlus, Pencil, Play, Plus, Search, Terminal, Trash2, X } from 'lucide-react';
 import type { CommandGroup, CommandLibrary, HostProfile, SavedCommand, SessionInfo } from '../shared/types';
 import { api } from './api';
+import { isSshSession, sessionAddress, sessionName } from '../shared/sessions';
 import './command-library.css';
 
 export interface CommandSidebarProps {
@@ -22,7 +23,7 @@ type Dispatch = { command: SavedCommand; group: CommandGroup; sourceLabel: strin
 const scopeCurrent = '@current', scopeGlobal = '@global';
 const byOrder = <T extends { order: number; name: string }>(a: T, b: T) => a.order - b.order || a.name.localeCompare(b.name);
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
-const endpoint = (session: SessionInfo) => `${session.profile.username}@${session.profile.host}:${session.profile.port}`;
+const endpoint = (session: SessionInfo) => sessionAddress(session);
 
 function CommandModal({ title, children, footer, busy, onClose }: { title: string; children: ReactNode; footer: ReactNode; busy: boolean; onClose: () => void }) {
   const dialog = useRef<HTMLElement>(null);
@@ -49,7 +50,8 @@ function CommandModal({ title, children, footer, busy, onClose }: { title: strin
 
 export default function CommandSidebar(props: CommandSidebarProps) {
   const { library, connections, activeSession, connected } = props;
-  const effectiveConnectionId = props.scopeConnectionId ?? activeSession?.profile.id;
+  const activeSsh = activeSession && isSshSession(activeSession) ? activeSession : undefined;
+  const effectiveConnectionId = props.scopeConnectionId ?? activeSsh?.profile.id;
   const [scope, setScope] = useState(scopeCurrent);
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -83,10 +85,10 @@ export default function CommandSidebar(props: CommandSidebarProps) {
 
   const connectionOptions = useMemo(() => {
     const options = new Map(connections.map(profile => [profile.id, { id: profile.id, name: profile.name, missing: false }]));
-    if (activeSession && !options.has(activeSession.profile.id)) options.set(activeSession.profile.id, { id: activeSession.profile.id, name: activeSession.profile.name, missing: false });
+    if (activeSsh && !options.has(activeSsh.profile.id)) options.set(activeSsh.profile.id, { id: activeSsh.profile.id, name: activeSsh.profile.name, missing: false });
     for (const group of library.groups) if (group.connectionId && !options.has(group.connectionId)) options.set(group.connectionId, { id: group.connectionId, name: group.connectionName || '已删除的连接', missing: true });
     return [...options.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [connections, library.groups, activeSession?.profile.id, activeSession?.profile.name]);
+  }, [connections, library.groups, activeSsh?.profile.id, activeSsh?.profile.name]);
   const sourceName = (group: CommandGroup) => group.connectionId ? (connectionOptions.find(option => option.id === group.connectionId)?.name || group.connectionName || '已删除的连接') : '全局';
   const groups = useMemo(() => [...library.groups].sort(byOrder), [library.groups]);
   const commandsByGroup = useMemo(() => {
@@ -161,6 +163,7 @@ export default function CommandSidebar(props: CommandSidebarProps) {
     if (!current.session || !current.connected || busyRef.current) return;
     const group = library.groups.find(item => item.id === command.groupId);
     if (!group) { setError('此命令的分组已不存在，请刷新后重试。'); return; }
+    if (group.connectionId && !isSshSession(current.session)) { setError('连接专属命令只能发送到 SSH 终端。本地终端可使用全局命令。'); return; }
     const borrowed = !!group.connectionId && group.connectionId !== current.effectiveConnectionId;
     setError(''); setNotice('');
     if (borrowed || (mode === 'execute' && command.confirmBeforeRun)) {
@@ -197,12 +200,13 @@ export default function CommandSidebar(props: CommandSidebarProps) {
         {connectionOptions.length > 0 && <optgroup label="按连接查看与借用">{connectionOptions.map(option => <option key={option.id} value={option.id}>{option.name}{option.missing ? '（连接已删除）' : ''}</option>)}</optgroup>}
       </select>
       <div className="command-search"><Search size={15} /><input aria-label="搜索命令" placeholder="搜索名称或命令内容" value={search} onChange={event => setSearch(event.target.value)} />{search && <button className="icon-button" type="button" aria-label="清除命令搜索" onClick={() => setSearch('')}><X size={13} /></button>}</div>
-      {selectedOther && <p className="command-scope-hint">正在查看其他连接的命令。填入或运行前会核对当前终端。</p>}
+      {selectedOther && <p className="command-scope-hint">{activeSession && !activeSsh ? '本地终端可使用全局命令；连接专属命令可查看与复制。' : '正在查看其他连接的命令。填入或运行前会核对当前终端。'}</p>}
     </div>
     <div className="command-groups">
       {visibleGroups.map(({ group, commands }) => {
         const isCollapsed = !query && !!collapsed[group.id];
         const borrowed = !!group.connectionId && group.connectionId !== effectiveConnectionId;
+        const canSend = connected && !!activeSession && (!group.connectionId || !!activeSsh);
         return <section className="command-group" key={group.id} aria-label={`${group.name}命令分组`}>
           <div className="command-group-header"><button type="button" className="command-group-toggle" aria-expanded={!isCollapsed} aria-controls={`command-group-${group.id}`} onClick={() => setCollapsed(previous => ({ ...previous, [group.id]: !previous[group.id] }))}>
             {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}<span title={group.name}>{group.name}</span><small>{commands.length}</small>
@@ -213,7 +217,7 @@ export default function CommandSidebar(props: CommandSidebarProps) {
               <div className="command-card-heading"><button type="button" className="command-card-name" title={`编辑“${command.name}”`} onClick={() => openEditor({ type: 'command', value: { ...command }, fresh: false })}>{command.name}</button><div><button type="button" className="icon-button" aria-label={`复制${command.name}`} title="复制命令" onClick={() => void copy(command)}><Copy size={13} /></button><button type="button" className="icon-button" aria-label={`删除${command.name}`} title="删除命令" onClick={() => { setError(''); setDeletion({ type: 'command', value: command }); }}><Trash2 size={13} /></button></div></div>
               {command.description && <p className="command-description">{command.description}</p>}
               <pre className="command-card-code" title={command.command}>{command.command}</pre>
-              <div className="command-card-actions"><span>{command.mode === 'execute' ? '默认运行' : '默认填入'}{command.confirmBeforeRun ? ' · 运行前确认' : ''}</span><button type="button" className={`button command-action${command.mode === 'insert' ? ' preferred' : ''}`} disabled={!connected || !activeSession || busy} title={connected ? '填入当前终端，不追加回车' : '连接服务器后可填入'} aria-label={`填入${command.name}`} onClick={() => void send(command, 'insert')}>填入</button><button type="button" className={`button command-action${command.mode === 'execute' ? ' preferred' : ''}`} disabled={!connected || !activeSession || busy} title={connected ? '发送到当前终端并回车' : '连接服务器后可运行'} aria-label={`运行${command.name}`} onClick={() => void send(command, 'execute')}><Play size={11} />运行</button></div>
+              <div className="command-card-actions"><span>{command.mode === 'execute' ? '默认运行' : '默认填入'}{command.confirmBeforeRun ? ' · 运行前确认' : ''}</span><button type="button" className={`button command-action${command.mode === 'insert' ? ' preferred' : ''}`} disabled={!canSend || busy} title={canSend ? '填入当前终端，不追加回车' : '此命令需要可用的目标终端'} aria-label={`填入${command.name}`} onClick={() => void send(command, 'insert')}>填入</button><button type="button" className={`button command-action${command.mode === 'execute' ? ' preferred' : ''}`} disabled={!canSend || busy} title={canSend ? '发送到当前终端并回车' : '此命令需要可用的目标终端'} aria-label={`运行${command.name}`} onClick={() => void send(command, 'execute')}><Play size={11} />运行</button></div>
             </article>)}
             {!commands.length && <button type="button" className="command-group-empty" onClick={() => newCommand(group)}>添加第一条命令</button>}
           </div>
@@ -223,7 +227,7 @@ export default function CommandSidebar(props: CommandSidebarProps) {
     </div>
     {(error && !modalOpen) && <div className="command-feedback form-error" role="alert">{error}</div>}
     {notice && !modalOpen && <div className="command-feedback" role="status">{notice}</div>}
-    <footer className="command-sidebar-footer"><span>{visibleCount} 条命令</span><span title={activeSession ? endpoint(activeSession) : undefined}>{connected && activeSession ? `目标 · ${activeSession.profile.name}` : '未连接 · 可编辑与复制'}</span></footer>
+    <footer className="command-sidebar-footer"><span>{visibleCount} 条命令</span><span title={activeSession ? endpoint(activeSession) : undefined}>{connected && activeSession ? `目标 · ${sessionName(activeSession)}` : '未连接 · 可编辑与复制'}</span></footer>
 
     {editor && <CommandModal title={editor.type === 'group' ? editor.fresh ? '新建命令分组' : '编辑命令分组' : editor.fresh ? '新建命令' : '编辑命令'} busy={busy} onClose={closeEditor} footer={<>{cancelButton(closeEditor)}<button type="button" className="button primary" disabled={busy || discard} onClick={() => void save()}>{busy ? '保存中…' : '保存'}</button></>}>
       <fieldset disabled={busy || discard} className="command-editor-fields">
@@ -244,7 +248,7 @@ export default function CommandSidebar(props: CommandSidebarProps) {
     </CommandModal>}
 
     {dispatch && <CommandModal title={dispatch.borrowed ? '借用其他连接的命令' : '运行前确认'} busy={busy} onClose={() => { if (!busy) { setDispatch(null); setError(''); } }} footer={<>{cancelButton(() => { setDispatch(null); setError(''); })}<button type="button" className="button primary" disabled={busy || !!dispatch.invalidated || !connected || activeSession?.id !== dispatch.target.id} onClick={() => void confirmSend()}>{busy ? '发送中…' : dispatch.mode === 'execute' ? '确认运行' : '确认填入'}</button></>}>
-      <dl className="command-target"><div><dt>来源</dt><dd>{dispatch.sourceLabel} / {dispatch.command.name}</dd></div><div><dt>目标终端</dt><dd><strong>{dispatch.target.profile.name}</strong><span>{endpoint(dispatch.target)}</span></dd></div></dl>
+      <dl className="command-target"><div><dt>来源</dt><dd>{dispatch.sourceLabel} / {dispatch.command.name}</dd></div><div><dt>目标终端</dt><dd><strong>{sessionName(dispatch.target)}</strong><span>{endpoint(dispatch.target)}</span></dd></div></dl>
       <pre className="command-preview" tabIndex={0}>{dispatch.command.command}</pre><p className="command-help">{dispatch.mode === 'execute' ? '将以上完整内容发送到这个终端并回车。' : '将以上完整内容填入这个终端，不追加回车。'}</p>
       {dispatch.invalidated && <div className="form-error" role="alert">{dispatch.invalidated}</div>}{error && <div className="form-error" role="alert">{error}</div>}
     </CommandModal>}

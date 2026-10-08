@@ -19,8 +19,9 @@ import {createLocalFile,createLocalDirectory,removeLocalFile} from './file-mutat
 import {listLocalDirectory} from './local-directory';
 import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
+import {LocalPtyService} from './local-pty-service';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
-let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let shuttingDown=false;let workerAvailable=false;
+let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
 let identityWrites:Promise<unknown>=Promise.resolve();
 function identityMutation<T>(operation:()=>Promise<T>):Promise<T>{const next=identityWrites.catch(()=>{}).then(operation);identityWrites=next;return next;}
 const sessionLoginPasswords=new Map<string,string>();
@@ -96,7 +97,7 @@ function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
  return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
 }
-function shutdown(){if(shuttingDown)return;shuttingDown=true;credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{void worker?.terminate();app.exit(0);},300);}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();if(worker)worker.postMessage({method:'shutdown',args:[]});void localStop.finally(()=>setTimeout(()=>{void worker?.terminate();app.exit(0);},300));}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
@@ -108,7 +109,7 @@ async function fonts():Promise<string[]>{
  if(process.platform!=='win32')return availableFontFamilies((await systemFontCatalog()).map(font=>font.family));
  return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve(availableFontFamilies(Array.isArray(data)?data:typeof data==='string'?[data]:[]));}catch{resolve(known);}}));
 }
-const remoteMethods=new Set(['disconnect','confirmHostKey','remoteList','terminalCwd','transfer','cancelTransfer','chmod','runFile']);
+const remoteMethods=new Set(['confirmHostKey','remoteList','terminalCwd','transfer','cancelTransfer','chmod','runFile']);
 if(primaryInstance)app.whenReady().then(async()=>{
  configureApplicationMenu();
  void systemFontCatalog().catch(()=>{});
@@ -125,6 +126,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
  localKeys=new LocalKeyStore(path.join(app.getPath('userData'),'keys'));
  const sendEvent=(event:AppEvent)=>{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',event);};
  const trackClosed=(id:string)=>{sessionProfiles.delete(id);sessionLoginPasswords.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
+ localPty=new LocalPtyService(event=>{if(event.type==='sessionClosed')trackClosed(event.sessionId);sendEvent(event);});
  const hostQuestions=new Set<string>();
  let restarts:number[]=[];
  const startWorker=()=>{
@@ -154,9 +156,14 @@ if(primaryInstance)app.whenReady().then(async()=>{
  const trusted=(event:Electron.IpcMainEvent|Electron.IpcMainInvokeEvent)=>event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;
  ipcMain.handle('gooeshell:call',async(event,method,args:unknown[])=>{
   if(!trusted(event)||!Array.isArray(args))throw new Error('调用来源无效');
+  const request:any=args[0];
+  if(localPty.has(request?.sessionId)&&(remoteMethods.has(method)||method==='sendSudoPassword'||request.side==='remote'&&['readFile','readTextFile','writeFile','writeTextFile','mkdir','createFile','removeFile','rename'].includes(method)))throw new Error('本地终端不支持 SSH、远程目录或 sudo 密码操作');
   if(remoteMethods.has(method)){const result=await remote(method,...args);if(method==='confirmHostKey')hostQuestions.delete(args[0] as string);return result;}
   const value:any=args[0];
   switch(method){
+   case 'listLocalShells':return localPty.listLocalShells();
+   case 'createLocalSession':return localPty.createLocalSession(value);
+   case 'disconnect':if(localPty.has(value)){localPty.disconnect(value);return;}return remote('disconnect',value);
    case 'initial':return{profiles:await resolveIdentityMetadata(identities,await store.profiles()),connections:await resolveIdentityMetadata(identities,await store.connections()),groups:await store.groups(),settings:await store.settings(),connectionHistory:await resolvedHistory(),hostKeyPreferences:await store.hostKeyPreferences(),localHome:os.homedir(),version:app.getVersion()};
    case 'connections':return{profiles:await resolveIdentityMetadata(identities,await store.profiles()),connections:await resolveIdentityMetadata(identities,await store.connections()),history:await resolvedHistory(),groups:await store.groups()};
    case 'listLoginIdentities':return identities.list(await store.connections());
@@ -220,6 +227,11 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'deleteCommand':return commands.deleteCommand(value);
    case 'sendCommand':{
     if(!value||typeof value.sessionId!=='string')throw new Error('命令发送请求无效');
+    if(localPty.has(value.sessionId)){
+     if(value.expectedConnectionId)throw new Error('此命令属于 SSH 连接，请在对应的 SSH 终端中使用');
+     const command=await commands.commandForSend({...value,allowOtherConnection:false},'local:'+value.sessionId);
+     return localPty.terminalCommandInput(value.sessionId,command.command,value.mode,value.bracketedPaste);
+    }
     const profile=sessionProfiles.get(value.sessionId);if(!profile)throw new Error('此 SSH 会话已断开，请先连接服务器');
     const effectiveConnectionId=async()=>{
      const saved=(await resolveIdentityMetadata(identities,await store.connections())).find(candidate=>candidate.id===profile.id);
@@ -380,7 +392,13 @@ if(primaryInstance)app.whenReady().then(async()=>{
    default:throw new Error('不支持的操作');
   }
  });
- ipcMain.on('gooeshell:terminal',(event,method,args)=>{if(!trusted(event)||!['terminalInput','terminalBinaryInput','terminalResize','terminalAck'].includes(method)||!Array.isArray(args))return;worker.postMessage({method,args});});
+ ipcMain.on('gooeshell:terminal',(event,method,args)=>{
+  if(!trusted(event)||!['terminalInput','terminalBinaryInput','terminalResize','terminalAck'].includes(method)||!Array.isArray(args))return;
+  try{
+   if(localPty.has(args[0]))(localPty as any)[method](...args);
+   else if(workerAvailable&&sessionProfiles.has(args[0]))worker.postMessage({method,args});
+  }catch(error){sendEvent({type:'notice',message:error instanceof Error?error.message:String(error)});}
+ });
  ipcMain.on('gooeshell:window',(event,action)=>{if(!trusted(event))return;if(action==='minimize')win.minimize();if(action==='maximize')win.isMaximized()?win.unmaximize():win.maximize();if(action==='close')win.close();});
  ipcMain.on('gooeshell:editor-state',(event,state)=>{if(trusted(event)&&typeof state?.dirty==='boolean'&&typeof state?.busy==='boolean')editorState={dirty:state.dirty,busy:state.busy};});
  const dev=process.env.GOOESHELL_DEV_URL;

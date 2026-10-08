@@ -156,6 +156,47 @@ try {
   assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:false,followInPathBar:true,remoteDisabled:true});
   assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
   assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
+  phase('exercise packaged local terminal through IPC');
+  const localTerminal = await call('Runtime.evaluate', {
+    expression: `(async()=>{
+      const api=window.gooeshell, shells=await api.listLocalShells();
+      const selected=shells.find(item=>item.available && ${JSON.stringify(target)}==='win' && item.id==='cmd') || shells.find(item=>item.available && item.isDefault);
+      if(!selected)throw new Error('No installed local shell');
+      const decoder=new TextDecoder(), events=[], sessions=[];let text='',bytes=0;
+      const unsubscribe=api.onEvent(event=>{
+        events.push(event);
+        if(event.type==='terminal'){
+          const raw=Uint8Array.from(atob(event.data),char=>char.charCodeAt(0));
+          text+=decoder.decode(raw,{stream:true});bytes+=event.bytes;api.terminalAck(event.sessionId,event.bytes);
+        }
+      });
+      const until=async(check,label)=>{const limit=Date.now()+10000;while(!check()){if(Date.now()>limit)throw new Error('Local terminal timeout: '+label);await new Promise(resolve=>setTimeout(resolve,30));}};
+      try{
+        const session=await api.createLocalSession({shell:selected.id,cwd:${JSON.stringify(fileRoot)},cols:80,rows:24});sessions.push(session.id);
+        if(session.kind!=='local'||session.cwd!==${JSON.stringify(fileRoot)})throw new Error('Incorrect local session');
+        let remoteRejected=false;try{await api.remoteList({sessionId:session.id,path:'/'});}catch{remoteRejected=true;}
+        if(!remoteRejected)throw new Error('Local terminal exposed remote directory operations');
+        api.terminalResize(session.id,120,40);
+        const cmd=selected.id==='cmd';
+        api.terminalInput(session.id,cmd?'echo GOOPKG_中文\\r':"printf 'GOOPKG_%s\\\\n' '中文'\\r");
+        await until(()=>cmd?(text.match(/GOOPKG_中文/g)||[]).length>=2:text.includes('GOOPKG_中文'),'Chinese output');
+        api.terminalInput(session.id,cmd?'ping -t 127.0.0.1\\r':'sleep 30\\r');
+        await new Promise(resolve=>setTimeout(resolve,200));api.terminalInput(session.id,'\\x03');
+        await new Promise(resolve=>setTimeout(resolve,200));
+        api.terminalInput(session.id,cmd?'echo GOOPKG_CANCEL_OK\\r':"printf 'GOOPKG_CANCEL_%s\\\\n' OK\\r");
+        await until(()=>cmd?(text.match(/GOOPKG_CANCEL_OK/g)||[]).length>=2:text.includes('GOOPKG_CANCEL_OK'),'Ctrl+C');
+        api.terminalResize(session.id,97,31);api.terminalInput(session.id,'exit\\r');
+        await until(()=>events.some(event=>event.type==='sessionClosed'&&event.sessionId===session.id),'exit');
+        const early=await api.createLocalSession({shell:selected.id,cwd:${JSON.stringify(fileRoot)}});sessions.push(early.id);
+        if(early.id===session.id)throw new Error('Local process reused a stale session id');
+        await api.disconnect(early.id);
+        await until(()=>events.some(event=>event.type==='sessionClosed'&&event.sessionId===early.id),'early close');
+        return {shell:selected.id,chinese:true,ctrlC:true,resize:true,exit:true,earlyClose:true,remoteRejected,bytes};
+      }finally{for(const id of sessions)await api.disconnect(id).catch(()=>{});unsubscribe();}
+    })()`, returnByValue:true,awaitPromise:true,
+  });
+  assert.equal(localTerminal.exceptionDetails,undefined,'Packaged native local terminal IPC failed');
+  assert.ok(localTerminal.result.value.bytes>0,'Packaged local terminal returned no output');
   const resources = target === 'mac' ? path.resolve(path.dirname(nodeExecutable), '../Resources') : path.join(path.dirname(nodeExecutable), 'resources');
   // Load the library from the packaged ASAR with the packaged Node runtime.
   // This catches production dependencies accidentally left in devDependencies.
@@ -181,7 +222,7 @@ try {
     { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 },
     (error, stdout, stderr) => error ? reject(new Error(`Packaged archive smoke failed: ${stderr || error.message}`)) : resolve(JSON.parse(stdout.trim()))));
   phase('complete');
-  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value, archive:archiveResult, elapsedMs: Date.now() - started, diagnostics }, null, 2) + '\n');
+  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value, localTerminal:localTerminal.result.value, archive:archiveResult, elapsedMs: Date.now() - started, diagnostics }, null, 2) + '\n');
   console.log(`Packaged application smoke passed: ${target}-${arch} ${version}`);
 } catch (error) {
   clearTimeout(watchdog);

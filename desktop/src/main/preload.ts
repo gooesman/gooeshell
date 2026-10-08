@@ -14,6 +14,7 @@ const api: DesktopApi = {
   connectionHistory:()=>call('connectionHistory'),clearConnectionHistory:()=>call('clearConnectionHistory'),
   setHostKeyPreference:p=>call('setHostKeyPreference',p),
   saveSettings:s=>call('saveSettings',s),connect:r=>call('connect',r),disconnect:id=>call('disconnect',id),
+  listLocalShells:()=>call('listLocalShells'),createLocalSession:r=>call('createLocalSession',r),
   confirmHostKey:(id,d)=>call('confirmHostKey',id,d),localList:p=>call('localList',p),remoteList:r=>call('remoteList',r),
   terminalCwd:r=>call('terminalCwd',r),
   chooseFiles:o=>call('chooseFiles',o),showInFolder:p=>call('showInFolder',p),transfer:r=>call('transfer',r),

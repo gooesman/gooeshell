@@ -6,6 +6,8 @@ The graphical application does not run or repackage the WezTerm executables. Its
 
 Compressed file transfers use the [node-tar](https://github.com/isaacs/node-tar) library (BlueOak-1.0.0 license) and Node.js streaming gzip locally; the remote helper uses Python's standard-library `tarfile` and `gzip`. Archive validation and the transfer workflow are independent gooeshell code. No remote service is installed.
 
+Local terminals use [microsoft/node-pty](https://github.com/microsoft/node-pty), pinned to 1.1.0 (MIT), with Windows ConPTY and POSIX pseudo-terminals. The complete module is unpacked beside the application ASAR so native helpers and worker scripts use real filesystem paths. Its license remains in the distributed dependency. Local terminal session routing, flow control and workspace integration are independent gooeshell code.
+
 - Upstream: https://github.com/wezterm/wezterm
 - Imported revision: `9fa147c9532c7b175335f6453a4dd7ad7e6473b2`
 - Original license and third-party notices: `LICENSE.md`, `licenses/`, and per-component notices.

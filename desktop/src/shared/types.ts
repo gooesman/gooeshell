@@ -48,7 +48,11 @@ export interface InitialState {
 export interface ConnectionsState { profiles: HostProfile[]; connections: HostProfile[]; history: ConnectionHistoryEntry[]; groups: ConnectionGroup[]; }
 export interface ConnectionHistoryEntry { profile: HostProfile; connectedAt: number; }
 export interface HostKeyPreference { host: string; port: number; skipVerification: boolean; }
-export interface SessionInfo { id: string; profile: HostProfile; tabId?: string; }
+export interface SshSessionInfo { kind?: 'ssh'; id: string; profile: HostProfile; tabId?: string; }
+export interface LocalSessionInfo { kind: 'local'; id: string; tabId?: string; name: string; shell: string; cwd: string; }
+export type SessionInfo = SshSessionInfo | LocalSessionInfo;
+export interface LocalShellInfo { id: string; name: string; path?: string; available: boolean; isDefault: boolean; }
+export interface CreateLocalSessionRequest { shell?: string; cwd?: string; cols?: number; rows?: number; }
 export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; jumpPassword?: string; jumpPassphrase?: string; skipJumpHostKeyVerification?: boolean; }
 export interface FileEntry {
   name: string; path: string; type: 'directory' | 'file' | 'symlink';
@@ -127,7 +131,9 @@ export interface DesktopApi {
   clearConnectionHistory(): Promise<void>;
   setHostKeyPreference(preference: HostKeyPreference): Promise<void>;
   saveSettings(settings: AppSettings): Promise<void>;
-  connect(request: ConnectRequest): Promise<SessionInfo>;
+  connect(request: ConnectRequest): Promise<SshSessionInfo>;
+  listLocalShells(): Promise<LocalShellInfo[]>;
+  createLocalSession(request?: CreateLocalSessionRequest): Promise<LocalSessionInfo>;
   cancelConnect(attemptId: string): Promise<void>;
   disconnect(sessionId: string): Promise<void>;
   confirmHostKey(requestId: string, decision: HostKeyDecision): Promise<void>;

@@ -1,8 +1,8 @@
 {
   "name": "gooeshell",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "private": true,
-  "description": "Graphical SSH and SFTP workspace for Windows, macOS and Linux",
+  "description": "Local terminal, SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
   "repository": {
     "type": "git",
@@ -43,6 +43,7 @@
     "@xterm/xterm": "6.0.0",
     "iconv-lite": "latest",
     "lucide-react": "latest",
+    "node-pty": "1.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "ssh2": "1.17.0",
@@ -74,6 +75,9 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
     "npmRebuild": false,
     "win": {
       "target": "dir",

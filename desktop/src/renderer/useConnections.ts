@@ -1,8 +1,9 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api, isPreview } from './api';
 import { sameConnection, sameConnectionConfiguration } from '../shared/connections';
+import { isSshSession } from '../shared/sessions';
 import { connectionErrorText, isMissingCredentials } from './connection-errors';
-import type { ConnectionGroup, ConnectionHistoryEntry, CredentialUpdate, HostProfile, SessionInfo } from '../shared/types';
+import type { ConnectionGroup, ConnectionHistoryEntry, CredentialUpdate, HostProfile, SessionInfo, SshSessionInfo } from '../shared/types';
 
 type AuthPrompt = { profile: HostProfile; mode: 'connect' | 'sudo'; tabId?: string; sessionId?: string };
 type Attempt = { id: string; cancelled: boolean; tabId?: string; profile: HostProfile };
@@ -37,6 +38,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     if (generation !== refreshGeneration.current) return;
     setProfiles(state.profiles); setCatalog(state.connections); setHistory(state.history); setGroups(state.groups);
     setSessions(previous => previous.map(session => {
+      if (!isSshSession(session)) return session;
       const profile = state.connections.find(value => sameConnection(value, session.profile));
       return profile ? { ...session, profile: { ...session.profile, name: profile.name, icon: profile.icon, groupId: profile.groupId } } : session;
     }));
@@ -46,7 +48,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
   };
   const establish = async (profile: HostProfile, credentials?: CredentialUpdate, tabId?: string) => {
     // A home tab is a real target even though it has no SSH transport yet.
-    if (tabId && !hasTab(tabId)) return false;
+    if (tabId && (!hasTab(tabId) || current.current.sessions.some(session => (session.tabId || session.id) === tabId && !isSshSession(session)))) return false;
     const key = tabId || profile.id;
     if (attempts.current.has(key)) return false;
     const attempt: Attempt = { id: crypto.randomUUID(), cancelled: false, tabId, profile };
@@ -55,7 +57,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
     try {
       const connected = await api.connect({ profile, credentials, attemptId: attempt.id });
       const previous = tabId ? current.current.sessions.find(session => (session.tabId || session.id) === tabId) : undefined;
-      if (attempt.cancelled || (tabId && !hasTab(tabId))) { await api.disconnect(connected.id); return false; }
+      if (attempt.cancelled || (tabId && (!hasTab(tabId) || (previous && !isSshSession(previous))))) { await api.disconnect(connected.id); return false; }
       const session = { ...connected, tabId: tabId || connected.id };
       setSessions(items => previous ? items.map(item => (item.tabId || item.id) === tabId ? session : item) : [...items, session]);
       if (!tabId) setTabs?.(items => [...items, session.tabId]);
@@ -92,7 +94,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
   const showAuth = (prompt: AuthPrompt, error = '') => { setAuthError(error); setAuthPrompt(prompt); };
   const direct = async (supplied: HostProfile, newTab = false, targetTabId?: string) => {
     const profile = catalog.find(value => value.id === supplied.id) || supplied;
-    const matches = current.current.sessions.filter(session => sameConnection(session.profile, profile));
+    const matches = current.current.sessions.filter(isSshSession).filter(session => sameConnection(session.profile, profile));
     const existing = !targetTabId && !newTab && (matches.find(session => session.id === current.current.activeId && !current.current.closed[session.id]) || matches.find(session => !current.current.closed[session.id]));
     if (existing) { setActiveId(existing.id); return; }
     const offline = !targetTabId && !newTab && (matches.find(session => session.id === current.current.activeId && current.current.closed[session.id]) || matches.find(session => current.current.closed[session.id]));
@@ -107,7 +109,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
       else notify(message(error), true);
     }
   };
-  const sessionProfile = (session: SessionInfo) => {
+  const sessionProfile = (session: SshSessionInfo) => {
     // A changed endpoint is a new connection; the old terminal keeps its original identity.
     const configured = current.current.catalog.find(profile => profile.id === session.profile.id);
     return configured && !sameConnectionConfiguration(configured, session.profile)
@@ -115,10 +117,12 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
       : configured || session.profile;
   };
   const duplicate = async (session: SessionInfo) => {
+    if (!isSshSession(session)) return;
     if (!current.current.sessions.some(item => item.id === session.id)) return;
     await direct(sessionProfile(session), true);
   };
   const reconnect = async (session: SessionInfo) => {
+    if (!isSshSession(session)) return;
     if (!current.current.closed[session.id]) return;
     const latest = sessionProfile(session);
     const tabId = session.tabId || session.id;
@@ -149,6 +153,7 @@ export default function useConnections({ sessions, setSessions, tabs, setTabs, a
   };
   const sudoPending = useRef(false);
   const sudo = async (session: SessionInfo) => {
+    if (!isSshSession(session)) return;
     if (sudoPending.current || current.current.activeId !== session.id || current.current.closed[session.id]) return;
     sudoPending.current = true;
     try { await api.sendSudoPassword({ sessionId: session.id, submit: sudoSubmit }); }

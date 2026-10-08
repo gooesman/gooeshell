@@ -10,6 +10,7 @@ type FilePaneProps = {
   load: (path: string) => void; select: (entries: string[]) => void; context: (event: React.MouseEvent, entry?: FileEntry) => void;
   open: (entry: FileEntry) => void; drop: (event: React.DragEvent) => void; chooseFolder?: () => void; chooseUpload?: () => void;
   following?: boolean; toggleFollow?: () => void; followStatus?: string; refresh: () => void;
+  unavailableMessage?: string;
 };
 
 const dragMime = 'application/x-gooeshell-files';
@@ -54,7 +55,7 @@ const FileRows = memo(function FileRows({ rows, start, end, selected, side, sess
   </tbody>;
 });
 
-export default function FilePane({ side, sessionId, listing, loading, error, selected, connected, load, select, context, open, drop, chooseFolder, chooseUpload, following, toggleFollow, followStatus, refresh }: FilePaneProps) {
+export default function FilePane({ side, sessionId, listing, loading, error, selected, connected, load, select, context, open, drop, chooseFolder, chooseUpload, following, toggleFollow, followStatus, refresh, unavailableMessage }: FilePaneProps) {
   const [collapsed, setCollapsed] = useState(side === 'local'); const paneName = side === 'local' ? '本地' : '远程';
   const [sort, setSort] = useState<{ key: FileSortKey; direction: FileSortDirection }>({ key: 'name', direction: 'ascending' });
   const [path, setPath] = useState(listing.path), [dragging, setDragging] = useState(false);
@@ -123,7 +124,7 @@ export default function FilePane({ side, sessionId, listing, loading, error, sel
     <div ref={wrap} className="file-table-wrap" onScroll={updateViewport}
       onClick={event => { if (event.button === 0 && blankListPoint(event)) { anchor.current = ''; select([]); } }}
       onContextMenu={event => { event.preventDefault(); if (blankListPoint(event) && connected && !loading && listing.path) { anchor.current = ''; select([]); context(event); } }}>
-      {!connected ? <div className="pane-message"><span>连接服务器后查看远程目录</span><span>支持上传、下载与断点续传</span></div> : loading && rows.length === 0 ? <div className="pane-message"><span className="loading-spin" />正在读取目录…</div> : <table className="file-table" aria-rowcount={rows.length + 1}>
+      {!connected ? <div className="pane-message"><span>{unavailableMessage || '连接服务器后查看远程目录'}</span>{!unavailableMessage && <span>支持上传、下载与断点续传</span>}</div> : loading && rows.length === 0 ? <div className="pane-message"><span className="loading-spin" />正在读取目录…</div> : <table className="file-table" aria-rowcount={rows.length + 1}>
         <thead><tr aria-rowindex={1}>{column('name', '名称')}{column('size', '大小', 'size-col')}{side === 'remote' && column('mode', '权限', 'perm-col')}{column('modified', '修改时间', 'date-col')}</tr></thead>
         <FileRows rows={rows} start={start} end={end} selected={selected} side={side} sessionId={sessionId} actions={actions} />
       </table>}

@@ -5,6 +5,7 @@ import {SearchAddon} from '@xterm/addon-search';
 import {WebglAddon} from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import {api,isPreview} from './api';
+import {isLocalSession,sessionName} from '../shared/sessions';
 import {terminalTheme,terminalBackground} from './terminal-theme';
 import {terminalFontFamily,terminalFontLoads} from '../shared/fonts';
 import {loadFontCatalog,acquireTerminalFont,type TerminalFontBundle} from './terminal-font-bundle';
@@ -39,6 +40,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  const isDisconnected=disconnected||closedEvent?.id===session.id;
  transport.current=session.id;online.current=!isDisconnected&&!reconnecting;callbacks.current={onReconnect,onCancelReconnect,onSudoPassword};
  const tabId=session.tabId||session.id;
+ const local=isLocalSession(session);
  const fontScope=useRef('');if(!fontScope.current)fontScope.current=crypto.randomUUID();
  const visible=useRef(active);visible.current=active;
  const commandMarks=useRef<TerminalCommandMarks|null>(null);
@@ -97,7 +99,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   let outputTransport=transport.current;
   const remove=api.onEvent(event=>{
    if(event.type==='terminal'&&event.sessionId===transport.current){if(outputTransport!==event.sessionId){marks.resetSession();outputTransport=event.sessionId;}terminal.write(decodeTerminalBytes(event.data),()=>api.terminalAck(event.sessionId,event.bytes));}
-   if(event.type==='sessionClosed'&&event.sessionId===transport.current){online.current=false;paste.cancel();marks.resetSession();setClosedEvent({id:event.sessionId,message:event.message});terminal.write(disconnectedModes+'\r\n\x1b[90m[连接已断开]\x1b[0m\r\n');}
+   if(event.type==='sessionClosed'&&event.sessionId===transport.current){online.current=false;paste.cancel();marks.resetSession();setClosedEvent({id:event.sessionId,message:event.message});terminal.write(disconnectedModes+`\r\n\x1b[90m[${local?'本地进程已退出':'连接已断开'}]\x1b[0m\r\n`);}
   });
   const selection=terminal.onSelectionChange(()=>{if(current.current.copyOnSelect&&terminal.hasSelection())void api.writeClipboard(terminal.getSelection());});
   const perform=(chord:string)=>{
@@ -131,7 +133,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   if(displayedTransport.current===session.id)return;
   displayedTransport.current=session.id;
   pasteController.current?.cancel();
-  term.current?.write(disconnectedModes+'\r\n\x1b[90m──────── 已重新连接 ────────\x1b[0m\r\n');
+  term.current?.write(disconnectedModes+`\r\n\x1b[90m──────── ${local?'已重新打开本地终端':'已重新连接'} ────────\x1b[0m\r\n`);
   requestFit.current?.();
   if(active)term.current?.focus();
  },[session.id,active]);
@@ -167,7 +169,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  useEffect(()=>{
   const target=session.id;
   onCommandSender?.(target,async request=>{
-   if(!online.current||transport.current!==target||!term.current)throw new Error('目标终端已断开，请重新连接后再发送命令。');
+   if(!online.current||transport.current!==target||!term.current)throw new Error(local?'本地进程已退出，请重新打开后再发送命令。':'目标终端已断开，请重新连接后再发送命令。');
    await api.sendCommand({...request,sessionId:target,bracketedPaste:term.current.modes.bracketedPasteMode});
    if(visible.current&&transport.current===target)term.current?.focus();
   });
@@ -186,8 +188,8 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
  return <div className="terminal-instance" data-active={active} style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:terminalBackground(settings.theme,settings.terminalPalette)}}>
   {background&&<div style={{position:'absolute',inset:0,backgroundImage:`url(${background})`,backgroundSize:'cover',backgroundPosition:'center',opacity:settings.backgroundOpacity,pointerEvents:'none'}}/>}
   <div ref={host} style={{position:'absolute',inset:isDisconnected||reconnecting||pasteState?.mode==='lines'?'10px 12px 76px':'10px 12px',minHeight:0}}/>
-  {pasteState&&pasteController.current&&<TerminalPastePanel state={pasteState} controller={pasteController.current} terminal={term.current} connectionName={session.profile.name} />}
-  {(isDisconnected||reconnecting)&&onReconnect&&<div className="terminal-reconnect" role="status"><div><strong>{reconnecting?'正在重新连接…':'连接已断开'}</strong><span>{reconnectError||closedEvent?.message||'原终端内容已保留'}</span></div>{reconnecting?<button className="button secondary small" onClick={onCancelReconnect}>取消重连</button>:<button className="button secondary small" onClick={onReconnect}>重新连接{settings.shortcuts.reconnect&&<kbd>{settings.shortcuts.reconnect.replaceAll('+',' + ')}</kbd>}</button>}</div>}
+  {pasteState&&pasteController.current&&<TerminalPastePanel state={pasteState} controller={pasteController.current} terminal={term.current} connectionName={sessionName(session)} />}
+  {(isDisconnected||reconnecting)&&onReconnect&&<div className="terminal-reconnect" role="status"><div><strong>{local?(reconnecting?'正在重新打开…':'本地进程已退出'):(reconnecting?'正在重新连接…':'连接已断开')}</strong><span>{reconnectError||closedEvent?.message||'原终端内容已保留'}</span></div>{reconnecting?<button className="button secondary small" onClick={onCancelReconnect}>{local?'取消打开':'取消重连'}</button>:<button className="button secondary small" onClick={onReconnect}>{local?'重新打开':'重新连接'}{settings.shortcuts.reconnect&&<kbd>{settings.shortcuts.reconnect.replaceAll('+',' + ')}</kbd>}</button>}</div>}
   {fontWarning&&<div className="terminal-font-warning" role="status">{fontWarning}</div>}
   {searchOpen&&<div className="terminal-search" style={{position:'absolute',right:20,top:12,display:'flex',gap:6,padding:8,background:'var(--surface-raised)',border:'1px solid var(--border)',borderRadius:10,zIndex:5}}><input autoFocus placeholder="搜索终端输出" value={query} onChange={e=>{setQuery(e.target.value);search.current?.findNext(e.target.value);}} onKeyDown={e=>{e.stopPropagation();if(e.key==='Escape'){setSearchOpen(false);term.current?.focus();}if(e.key==='Enter')e.shiftKey?search.current?.findPrevious(query):search.current?.findNext(query);}}/><button onClick={()=>search.current?.findPrevious(query)}>↑</button><button onClick={()=>search.current?.findNext(query)}>↓</button><button onClick={()=>{setSearchOpen(false);term.current?.focus();}}>×</button></div>}
  </div>;

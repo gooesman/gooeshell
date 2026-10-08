@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronLeft, ChevronRight, Cloud, Database, FileCode2, Folder, FolderPlus, Plus, Router, Server } from 'lucide-react';
 import type { ConnectionGroup, HostProfile, SessionInfo } from '../shared/types';
 import { sameConnection } from '../shared/connections';
+import { isSshSession } from '../shared/sessions';
 import './connection-manager.css';
 
 export const connectionIcons = [
@@ -71,8 +72,8 @@ export default function ConnectionSidebar(props: ConnectionSidebarProps) {
     setMenu({ group, x: Math.max(5, Math.min(x, window.innerWidth - 205)), y: Math.max(5, Math.min(y, window.innerHeight - 215)) });
   };
   const hosts = (items: HostProfile[]) => items.map(profile => {
-    const online = sessions.some(session => sameConnection(session.profile, profile) && !closed[session.id]);
-    const selected = !!active && sameConnection(active.profile, profile);
+    const online = sessions.some(session => isSshSession(session) && sameConnection(session.profile, profile) && !closed[session.id]);
+    const selected = !!active && isSshSession(active) && sameConnection(active.profile, profile);
     return <button type="button" key={profile.id} className={`host${selected ? ' active' : ''}`} aria-current={selected ? 'page' : undefined}
       aria-label={`${profile.name}，${profile.username}@${profile.host}:${profile.port}`}
       title={`${profile.name}\n${profile.username}@${profile.host}:${profile.port}\n${online ? '点击切换到终端' : '点击连接'} · 右键打开连接设置`}
