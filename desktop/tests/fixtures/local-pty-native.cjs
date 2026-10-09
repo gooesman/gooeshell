@@ -8,10 +8,17 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate, message, timeout = 10000) { const deadline = Date.now() + timeout; while (!await predicate()) { if (Date.now() > deadline) throw new Error('Timeout: ' + message); await delay(20); } }
 const report = {success: false, versions: process.versions, checks: {}, shells: []};
 const events = [], ptys = [];
+const protocolTails=new Map();
 let ack = true;
 const ptyModule = require('node-pty');
 const service = new LocalPtyService(event => {
   events.push(event);
+  if(event.type==='terminal'){
+    const text=(protocolTails.get(event.sessionId)||'')+Buffer.from(event.data,'base64').toString('latin1');
+    let rest=text.replace(/\x1b\[6n/g,()=>{queueMicrotask(()=>service.terminalInput(event.sessionId,'\x1b[1;1R'));return '';});
+    rest=rest.replace(/\x1b\[c/g,()=>{queueMicrotask(()=>service.terminalInput(event.sessionId,'\x1b[?1;2c'));return '';});
+    protocolTails.set(event.sessionId,rest.slice(-16));
+  }
   if (ack && event.type === 'terminal') queueMicrotask(() => service.terminalAck(event.sessionId, event.bytes));
 }, (file, args, options) => {
   const name = path.basename(file).toLowerCase();
@@ -29,6 +36,7 @@ async function run() {
     const session = await service.createLocalSession({shell: option.id, cwd: artifacts});
     await delay(200); assert.equal(events.filter(event => event.type === 'terminal' && event.sessionId === session.id).length, 0);
     service.terminalResize(session.id, 120, 40);
+    await until(()=>output(session.id).length>0,option.id+' startup',20000);
     const cmd = option.id === 'cmd';
     const send = text => service.terminalInput(session.id, text + '\r');
     send(cmd ? 'echo LOCAL_中文' : process.platform === 'win32' ? "[Console]::WriteLine('LOCAL_'+'中文')" : "printf 'LOCAL_%s\\n' '中文'");
@@ -86,4 +94,4 @@ async function run() {
   await service.shutdown(); await until(() => !processAlive(freshPid), 'shutdown tree'); report.checks.shutdown = true;
   report.success = true;
 }
-run().catch(error => { report.error = error.stack || String(error); }).finally(async () => { await service.shutdown(); await fs.writeFile(path.join(artifacts, 'result.json'), JSON.stringify(report, null, 2)); process.exit(report.success ? 0 : 1); });
+run().catch(error => { report.error = error.stack || String(error); report.lastOutput=events.filter(event=>event.type==='terminal').slice(-8).map(event=>({id:event.sessionId,bytes:event.bytes,text:Buffer.from(event.data,'base64').toString('utf8').slice(-2048)})); }).finally(async () => { await service.shutdown(); await fs.writeFile(path.join(artifacts, 'result.json'), JSON.stringify(report, null, 2)); process.exit(report.success ? 0 : 1); });

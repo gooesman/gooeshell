@@ -24,6 +24,10 @@ export interface ConnectionDialogProps {
   onPushKey?: (profile: HostProfile, credentials: CredentialUpdate, favorite: boolean) => Promise<void>;
   onManageIdentities?: () => void;
   onClose: () => void;
+  connectionType?: 'ssh' | 'local';
+  onConnectionTypeChange?: (type: 'ssh' | 'local') => void;
+  localContent?: React.ReactNode;
+  localTerminalBusy?: boolean;
 }
 
 function normalizedHost(value: string) { return value.trim().replace(/^\[|\]$/g, '').toLowerCase(); }
@@ -32,7 +36,7 @@ function sameIdentity(a: HostProfile | JumpHostProfile, b: HostProfile | JumpHos
 }
 const errorMessage = connectionErrorText;
 
-export default function ConnectionDialog({ profile, saved, groups, hostKeyPreferences, busy, error, onSave, onConnect, onCancelConnect, onHostKeyPreference, onDelete, onDuplicate, onPushKey, onManageIdentities, onClose }: ConnectionDialogProps) {
+export default function ConnectionDialog({ profile, saved, groups, hostKeyPreferences, busy, error, onSave, onConnect, onCancelConnect, onHostKeyPreference, onDelete, onDuplicate, onPushKey, onManageIdentities, onClose, connectionType = 'ssh', onConnectionTypeChange, localContent, localTerminalBusy }: ConnectionDialogProps) {
   const [draft, setDraft] = useState<HostProfile>(() => profile ? { ...profile } : { id: crypto.randomUUID(), name: '', host: '', port: 22, username: 'root', auth: 'password', rememberHost: true, encoding: 'utf8', icon: 'server' });
   const [favorite, setFavorite] = useState(saved);
   const [password, setPassword] = useState('');
@@ -186,11 +190,15 @@ export default function ConnectionDialog({ profile, saved, groups, hostKeyPrefer
     finally { setLocalBusy(false); }
   };
   const hasStored = !!status && !identityChanged && (status.hasPassword || status.hasPassphrase || status.hasSudoPassword);
+  const quick = !profile && !!onConnectionTypeChange;
+  const local = quick && connectionType === 'local';
+  const title = profile ? '连接设置' : quick ? '快速连接' : '新建 SSH 连接';
 
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeRef.current(); }}>
-    <section className="modal connection-manager-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-label={profile ? '连接设置' : '新建 SSH 连接'}>
-      <header className="modal-header"><span className="modal-title">{profile ? '连接设置' : '新建 SSH 连接'}</span><button type="button" className="icon-button" aria-label="关闭连接设置" disabled={blocked} onClick={onClose}><X size={16} /></button></header>
-      <form id="connect-form" className="modal-body connection-form" onSubmit={event => { event.preventDefault(); void submit(true); }}>
+    <section className="modal connection-manager-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-label={title}>
+      <header className="modal-header"><span className="modal-title">{title}</span><button type="button" className="icon-button" aria-label="关闭连接设置" disabled={blocked} onClick={onClose}><X size={16} /></button></header>
+      {quick && <div className="quick-connect-type" role="group" aria-label="连接类型"><button type="button" aria-pressed={!local} disabled={blocked || localTerminalBusy} onClick={() => onConnectionTypeChange('ssh')}>SSH 连接</button><button type="button" aria-pressed={local} disabled={blocked || localTerminalBusy} onClick={() => onConnectionTypeChange('local')}>本地终端</button></div>}
+      <form id="connect-form" className="modal-body connection-form" hidden={local} onSubmit={event => { event.preventDefault(); if (!local) void submit(true); }}>
         <fieldset className="connection-fields" disabled={blocked}>
           <div className="connection-section-label">{jump ? '目标服务器' : '连接信息'}</div>
           <div className="form-grid">
@@ -262,7 +270,8 @@ export default function ConnectionDialog({ profile, saved, groups, hostKeyPrefer
           {(localError || error) && <div className="form-error" role="alert">{localError || error}</div>}
         </fieldset>
       </form>
-      <footer className="modal-footer"><span className="footer-note">保存设置不会建立连接</span>{busy && onCancelConnect && <button type="button" className="button secondary" onClick={onCancelConnect}>取消连接</button>}<button type="button" className="button secondary" disabled={blocked || statusLoading} onClick={() => void submit(false)}>保存</button><button type="submit" className="button primary" form="connect-form" disabled={blocked || statusLoading}>{blocked ? <><span className="loading-spin" />处理中…</> : '连接'}</button></footer>
+      {quick && <div className="modal-body quick-connect-local" hidden={!local}>{localContent}</div>}
+      {!local && <footer className="modal-footer"><span className="footer-note">保存设置不会建立连接</span>{busy && onCancelConnect && <button type="button" className="button secondary" onClick={onCancelConnect}>取消连接</button>}<button type="button" className="button secondary" disabled={blocked || statusLoading} onClick={() => void submit(false)}>保存</button><button type="submit" className="button primary" form="connect-form" disabled={blocked || statusLoading}>{blocked ? <><span className="loading-spin" />处理中…</> : '连接'}</button></footer>}
     </section>
   </div>;
 }

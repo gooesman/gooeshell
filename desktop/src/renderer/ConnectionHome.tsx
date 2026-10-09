@@ -3,23 +3,19 @@ import { Clock3, ArrowUpRight } from 'lucide-react';
 import { ConnectionIcon } from './ConnectionSidebar';
 import type { ConnectionHistoryEntry, HostProfile } from '../shared/types';
 import './connection-home.css';
-import LocalTerminalLauncher from './LocalTerminalLauncher';
-import type { CreateLocalSessionRequest, LocalShellInfo } from '../shared/types';
 
-export default function ConnectionHome({ history, showHistory, connectShortcut, onCreate, onSettings, onPick, onContextMenu, localShells = [], localHome = '', localBusy, localError, onLocal }: {
+export default function ConnectionHome({ history, showHistory, connectShortcut, onCreate, onSettings, onPick, onContextMenu }: {
   history: ConnectionHistoryEntry[]; showHistory: boolean; connectShortcut: string;
   onCreate: () => void; onSettings: () => void; onPick: (profile: HostProfile) => void; onContextMenu: (event:MouseEvent, profile:HostProfile) => void;
-  localShells?: LocalShellInfo[]; localHome?: string; localBusy?: boolean; localError?: string; onLocal?: (request: CreateLocalSessionRequest) => void;
 }) {
   const hasHistory = showHistory && history.length > 0;
   return <div className={`connection-home${hasHistory ? ' with-history' : ''}`}>
     <div className="home-intro">
       <img className="home-icon" src="./gooeshell-icon.png" alt="gooeshell" draggable={false} />
       <h1>打开终端，开始工作。</h1>
-      <p>使用本地终端，或从最近连接与侧边栏选择服务器。</p>
+      <p>选择最近连接，或打开快速连接。</p>
       <div className="empty-actions"><button className="button primary" onClick={onCreate}>+ 快速连接</button><button className="button secondary" onClick={onSettings}>字体与快捷键</button></div>
       <span className="home-shortcut">{connectShortcut} 快速连接 · F11 全屏</span>
-      {onLocal && <LocalTerminalLauncher shells={localShells} defaultCwd={localHome} busy={localBusy} error={localError} onOpen={onLocal} />}
     </div>
     {hasHistory && <section className="recent-connections" aria-label="最近连接">
       <div className="recent-heading"><span><Clock3 size={15} />最近连接</span><span>点击重新连接</span></div>

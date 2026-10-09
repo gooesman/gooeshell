@@ -41,14 +41,23 @@ async function run() {
   window = new BrowserWindow({ show: false, width: 1280, height: 860, webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } }); window.setMenu(null);
   window.webContents.on('console-message', (...args) => { const details = args[0], message = typeof args[2] === 'string' ? args[2] : details.message, level = typeof args[1] === 'number' ? args[1] : details.level; if (level >= 3 || level === 'error') result.errors.push(message); });
   await window.loadURL(url);
-  await until(() => evaluate(`Boolean(document.querySelector('.connection-home select option[value="cmd"]'))`), 'home');
+  await until(() => evaluate(`Boolean(document.querySelector('.connection-home'))`), 'home');
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 1);
   assert.equal(await evaluate(`document.querySelectorAll('.recent-connection').length`), 1);
-  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.connection-home select option')].map(option => option.value)`), ['pwsh', 'powershell', 'cmd']);
+  assert.equal(await evaluate(`Boolean(document.querySelector('.connection-home .local-terminal-launcher, .titlebar .local-terminal-entry'))`), false);
   await picture('dark-home'); await click('切换为白色主题'); await picture('light-home'); await click('切换为黑色主题');
-  result.checks.homeRetainsHistoryAndShellChoices = true;
+  result.checks.cleanHomeAndToolbar = true;
 
   phase = 'home shell and graphical directory choice';
+  await click('+ 快速连接');
+  await until(() => evaluate(`document.querySelector('[role="dialog"]').getAttribute('aria-label') === '快速连接'`), 'quick connect');
+  await value('#host-name', '保留 SSH 草稿');
+  await click('本地终端');
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('[aria-label="本地终端 Shell"] option')].map(option => option.value)`), ['pwsh', 'powershell', 'cmd']);
+  assert.equal(await evaluate(`document.querySelector('#host-address').getClientRects().length`), 0);
+  await click('SSH 连接'); assert.equal(await evaluate(`document.querySelector('#host-name').value`), '保留 SSH 草稿');
+  await click('本地终端'); await picture('quick-local');
+  result.checks.quickConnectTypeSelection = true;
   await click('选择本地终端启动目录');
   assert.equal(await evaluate(`document.querySelector('[aria-label="本地终端启动目录"]').value`), 'C:\\Fixture\\工作项目');
   await click('使用默认启动目录');
@@ -93,7 +102,7 @@ async function run() {
   result.checks.sshAndLocalTabsIndependent = true;
 
   phase = 'local entry from a live SSH terminal';
-  await click('打开本地终端设置'); await value('[role="dialog"] [aria-label="本地终端 Shell"]', 'powershell', true);
+  await key('P', ['control', 'shift']); await click('本地终端'); await value('[role="dialog"] [aria-label="本地终端 Shell"]', 'powershell', true);
   await click('打开本地终端'); await until(async () => await active() === 'local-2', 'new local tab from SSH');
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 3);
   assert.equal(await count('disconnect'), 0); assert.equal(await count('connect'), 1);
@@ -125,8 +134,9 @@ async function run() {
   result.checks.localExitAndReopen = true;
 
   phase = 'cancelling a pending local tab';
-  await evaluate(`window.localTerminalFixture.holdLocal = true;`); await click('新建标签页'); await click('打开本地终端');
-  await until(() => evaluate(`document.body.textContent.includes('正在打开本地终端…')`), 'local launch pending');
+  await evaluate(`window.localTerminalFixture.holdLocal = true;`); await click('新建标签页'); await click('+ 快速连接'); await click('本地终端'); await click('打开本地终端');
+  await until(() => evaluate(`document.querySelector('.local-terminal-open').disabled`), 'local launch pending');
+  await click('关闭连接设置');
   await evaluate(`document.querySelector('.terminal-tab.active .tab-close').click(); window.localTerminalFixture.holdLocal = false; window.localTerminalFixture.releaseLocal();`);
   await until(() => evaluate(`window.localTerminalFixture.calls.some(call => call.method === 'disconnect' && call.id === 'local-4')`), 'late process stopped');
   assert.equal(await evaluate(`document.querySelectorAll('.terminal-tab').length`), 3);

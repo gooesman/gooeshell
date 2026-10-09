@@ -23,6 +23,8 @@ const listing = (path: string, remote = false): FileListing => ({ path, entries:
 const mock: Partial<DesktopApi> = {
   initial: async () => ({ profiles: [profile], connections: [profile], groups: [], connectionHistory: history, hostKeyPreferences: [], settings: structuredClone(defaultSettings), localHome: 'C:\\Fixture', version: '本地终端模拟测试' }),
   connections: async () => ({ profiles: [profile], connections: [profile], groups: [], history }),
+  credentialStatus: async () => ({ remember:'session', sudoUsesLogin:true, hasPassword:false, hasPassphrase:false, hasSudoPassword:false, secureStorageAvailable:true }),
+  listLoginIdentities: async () => ({identities:[],secureStorageAvailable:true}),
   listLocalShells: async () => [{ id: 'pwsh', name: 'PowerShell 7', available: true, isDefault: true }, { id: 'powershell', name: 'Windows PowerShell', available: true, isDefault: false }, { id: 'cmd', name: '命令提示符 (CMD)', available: true, isDefault: false }],
   createLocalSession: async (request = {}) => {
     control.calls.push({ method: 'createLocalSession', request });

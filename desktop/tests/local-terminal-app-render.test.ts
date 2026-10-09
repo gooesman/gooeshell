@@ -21,6 +21,6 @@ test('local and SSH terminals keep independent tabs, output, lifecycle and file 
   const exit = await new Promise<number | null>((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error('No local terminal report: ' + stderr); }));
   t.diagnostic(`local terminal UI artifacts: ${artifacts}`); assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
-  for (const check of ['homeRetainsHistoryAndShellChoices', 'homeLaunchInPlace', 'localFilesEnabledRemoteDisabled', 'inputAndUnicodeOutput', 'sshAndLocalTabsIndependent', 'launchFromSshCreatesTab', 'localGlobalCommandsOnly', 'localExitAndReopen', 'cancelLateLocalLaunch', 'closingLocalPreservesSsh']) assert.equal(result.checks[check], true, check);
+  for (const check of ['cleanHomeAndToolbar', 'quickConnectTypeSelection', 'homeLaunchInPlace', 'localFilesEnabledRemoteDisabled', 'inputAndUnicodeOutput', 'sshAndLocalTabsIndependent', 'launchFromSshCreatesTab', 'localGlobalCommandsOnly', 'localExitAndReopen', 'cancelLateLocalLaunch', 'closingLocalPreservesSsh']) assert.equal(result.checks[check], true, check);
   assert.deepEqual(result.errors, []);
 });

@@ -133,6 +133,28 @@ try {
   assert.equal(state.profiles, 0, 'Smoke launch must use its isolated settings directory');
   assert.equal(state.theme, 'dark');
   assert.ok(state.fonts > 0, 'Font catalog must provide usable font choices');
+  phase('inspect packaged quick connection choices');
+  const quickConnection = await call('Runtime.evaluate', {
+    expression: `(async()=>{
+      const visible=node=>!!node && node.getClientRects().length>0;
+      const home=document.querySelector('.connection-home');
+      if(!home || home.querySelector('.local-terminal-launcher') || document.querySelector('[aria-label="新建本地终端"]'))throw new Error('Unexpected standalone local launcher');
+      const quick=[...document.querySelectorAll('button')].find(button=>visible(button) && button.textContent.trim()==='快速连接');
+      if(!quick)throw new Error('Missing quick connection entry');quick.click();
+      await new Promise(resolve=>setTimeout(resolve,100));
+      const dialog=document.querySelector('[role="dialog"][aria-label="快速连接"]');
+      const local=[...dialog.querySelectorAll('.quick-connect-type button')].find(button=>button.textContent==='本地终端');
+      if(!local || !visible(dialog.querySelector('#host-address')))throw new Error('SSH default type unavailable');local.click();
+      await new Promise(resolve=>setTimeout(resolve,100));
+      if(!visible(dialog.querySelector('.local-terminal-launcher')) || visible(dialog.querySelector('#host-address')))throw new Error('Local type did not replace SSH fields');
+      if(!dialog.querySelector('[aria-label="本地终端 Shell"] option:not(:disabled)'))throw new Error('Local Shell catalog missing');
+      dialog.querySelector('[aria-label="关闭连接设置"]').click();
+      await new Promise(resolve=>setTimeout(resolve,50));
+      if(document.querySelector('[role="dialog"]'))throw new Error('Quick connection did not close');
+      return {cleanHome:true,sshDefault:true,localChoice:true,cancel:true};
+    })()`, returnByValue:true,awaitPromise:true,
+  });
+  assert.equal(quickConnection.exceptionDetails,undefined,'Packaged quick connection interface failed');
   const fileRoot = await fs.mkdtemp(path.join(output, 'smoke-files-'));
   const selected = path.join(fileRoot, 'selected'), leaf = path.join(selected, 'new.txt');
   const keep = path.join(fileRoot, 'keep.txt'); await fs.writeFile(keep, 'outside selected tree');
@@ -222,7 +244,7 @@ try {
     { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 },
     (error, stdout, stderr) => error ? reject(new Error(`Packaged archive smoke failed: ${stderr || error.message}`)) : resolve(JSON.parse(stdout.trim()))));
   phase('complete');
-  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, files:files.result.value, localTerminal:localTerminal.result.value, archive:archiveResult, elapsedMs: Date.now() - started, diagnostics }, null, 2) + '\n');
+  await fs.writeFile(reportFile, JSON.stringify({ success: true, target, arch, ...state, quickConnection:quickConnection.result.value, files:files.result.value, localTerminal:localTerminal.result.value, archive:archiveResult, elapsedMs: Date.now() - started, diagnostics }, null, 2) + '\n');
   console.log(`Packaged application smoke passed: ${target}-${arch} ${version}`);
 } catch (error) {
   clearTimeout(watchdog);

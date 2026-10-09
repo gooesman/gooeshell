@@ -1,14 +1,12 @@
-.local-terminal-launcher { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(210px, 1.4fr); gap: 14px; width: min(560px, 100%); padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); text-align: left; }
-.local-terminal-heading { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; }
-.local-terminal-heading strong { font-size: 14px; font-weight: 600; }
-.local-terminal-heading > span { margin-left: auto; font-size: 11px; color: var(--text-muted); }
-.local-shell-field, .local-cwd-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; color: var(--text-muted); font-size: 11px; }
-.local-shell-field select, .local-directory-controls input { width: 100%; min-width: 0; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); padding: 0 9px; font-size: 12px; }
-.local-directory-controls { display: flex; gap: 4px; align-items: center; }
+
+.quick-connect-type { display: flex; gap: 4px; margin: 22px 24px 0; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.quick-connect-type button { flex: 1; padding: 10px 16px; border: 0; border-radius: 7px; color: var(--text-muted); background: transparent; font: inherit; cursor: pointer; }
+.quick-connect-type button[aria-pressed="true"] { color: var(--text); background: var(--surface-raised); }
+.quick-connect-type button:disabled { cursor: default; }
+.connection-form[hidden], .quick-connect-local[hidden] { display: none !important; }
+.local-terminal-launcher { display: grid; gap: 20px; width: 100%; text-align: left; }
+.local-shell-field, .local-cwd-field { display: flex; flex-direction: column; gap: 9px; min-width: 0; color: var(--text); font-size: 13px; }
+.local-shell-field select, .local-directory-controls input { width: 100%; min-width: 0; height: 42px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 0 12px; font: inherit; }
+.local-directory-controls { display: flex; gap: 6px; align-items: center; }
 .local-directory-controls .icon-button { flex-shrink: 0; }
-.local-terminal-open, .local-terminal-launcher > .form-error { grid-column: 1 / -1; }
-.local-terminal-open { justify-content: center; gap: 8px; }
-.connection-home .local-terminal-launcher { margin-top: 22px; }
-.local-terminal-modal .local-terminal-launcher { width: 100%; border: 0; padding: 2px; background: transparent; }
-.local-terminal-entry { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
-@media (max-width: 650px) { .local-terminal-launcher { grid-template-columns: 1fr; padding: 16px; } .local-terminal-heading > span { display: none; } .local-terminal-entry > span { display: none; } }
+.local-terminal-open { justify-self: end; margin-top: 8px; }
