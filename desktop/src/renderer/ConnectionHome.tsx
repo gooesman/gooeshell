@@ -11,7 +11,7 @@ export default function ConnectionHome({ history, showHistory, connectShortcut, 
   const hasHistory = showHistory && history.length > 0;
   return <div className={`connection-home${hasHistory ? ' with-history' : ''}`}>
     <div className="home-intro">
-      <img className="home-icon" src="./gooeshell-icon.png" alt="gooeshell" draggable={false} />
+      <img className="home-icon" src="./gooeshell-icon.png" alt="GooeShell" draggable={false} />
       <h1>打开终端，开始工作。</h1>
       <p>选择最近连接，或打开快速连接。</p>
       <div className="empty-actions"><button className="button primary" onClick={onCreate}>+ 快速连接</button><button className="button secondary" onClick={onSettings}>字体与快捷键</button></div>

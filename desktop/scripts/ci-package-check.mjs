@@ -39,7 +39,7 @@ async function smoke({ executable, runtimeExecutable = executable, label }) {
 }
 async function windowsPackages() {
   assert.equal(arch, 'x64');
-  const name = `gooeshell-${version}-win-${arch}.zip`, source = path.join(release, name);
+  const name = `GooeShell-${version}-win-${arch}.zip`, source = path.join(release, name);
   const destination = path.join(work, 'zip'); await fs.mkdir(destination);
   // Paths travel as environment data, never as PowerShell source text.
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
@@ -47,7 +47,7 @@ async function windowsPackages() {
     env: { ...process.env, GOOESHELL_PACKAGE_SOURCE: source, GOOESHELL_PACKAGE_DESTINATION: destination },
     windowsHide: true, timeout: 120_000, stdio: 'pipe',
   });
-  const executable = path.join(destination, 'gooeshell.exe');
+  const executable = path.join(destination, 'GooeShell.exe');
   const handle = await fs.open(executable, 'r');
   const header = Buffer.alloc(4096);
   try { await handle.read(header, 0, header.length, 0); } finally { await handle.close(); }

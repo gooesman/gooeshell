@@ -1,4 +1,4 @@
-name: gooeshell Desktop
+name: GooeShell Desktop
 on:
   workflow_dispatch:
   push:
@@ -97,7 +97,7 @@ jobs:
         run: |
           $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
           git rev-parse HEAD | Set-Content -LiteralPath release/win-unpacked/BUILD.txt
-          Compress-Archive -Path release/win-unpacked/* -DestinationPath "release/gooeshell-$version-win-x64.zip"
+          Compress-Archive -Path release/win-unpacked/* -DestinationPath "release/GooeShell-$version-win-x64.zip"
       - name: Extract and launch every distribution package
         if: runner.os != 'Linux'
         run: node scripts/ci-package-check.mjs ${{ matrix.target }} ${{ matrix.arch }}

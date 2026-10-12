@@ -42,17 +42,19 @@ async function bundleFile(app, relative) {
 async function verifyApplication(application, version, arch, expectedAsar) {
   assert.ok((await fs.lstat(application)).isDirectory(), `Expected an extracted application directory: ${application}`);
   const app = await fs.realpath(application);
-  const executable = await bundleFile(app, 'Contents/MacOS/gooeshell');
+  const executable = await bundleFile(app, 'Contents/MacOS/GooeShell');
   const plist = await bundleFile(app, 'Contents/Info.plist');
   const readProperty = key => command('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', plist]);
-  const [shortVersion, bundleVersion, bundleExecutable, identifier, architectures] = await Promise.all([
+  const [shortVersion, bundleVersion, bundleExecutable, identifier, architectures, displayName] = await Promise.all([
     readProperty('CFBundleShortVersionString'), readProperty('CFBundleVersion'),
     readProperty('CFBundleExecutable'), readProperty('CFBundleIdentifier'),
     command('/usr/bin/lipo', ['-archs', executable]),
+    readProperty('CFBundleDisplayName'),
   ]);
   assert.equal(shortVersion, version, 'Extracted application release version differs from the package version');
   assert.equal(bundleVersion, version, 'Extracted application build version differs from the package version');
-  assert.equal(bundleExecutable, 'gooeshell', 'Unexpected executable declared in the packaged Info.plist');
+  assert.equal(bundleExecutable, 'GooeShell', 'Unexpected executable declared in the packaged Info.plist');
+  assert.equal(displayName, 'GooeShell', 'Unexpected display name declared in the packaged Info.plist');
   assert.equal(identifier, 'com.gooesman.gooeshell', 'Unexpected packaged application identifier');
   assert.deepEqual(architectures.split(/\s+/).sort(), [arch === 'x64' ? 'x86_64' : 'arm64'], 'Packaged Mach-O architecture does not match its filename');
   await fs.access(executable, constants.X_OK);
@@ -83,19 +85,19 @@ export async function verifyMacPackages({ release, version, arch, work, smoke })
   const zipDirectory = path.join(isolated, 'zip'), dmgDirectory = path.join(isolated, 'dmg'), mount = path.join(isolated, 'mount');
   for (const directory of [zipDirectory, dmgDirectory, mount]) await fs.mkdir(directory);
   assert.ok((await fs.realpath(mount)).startsWith(isolated + path.sep), 'DMG mount must remain within its private validation directory');
-  const originalAsar = path.join(releaseRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', 'gooeshell.app/Contents/Resources/app.asar');
+  const originalAsar = path.join(releaseRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', 'GooeShell.app/Contents/Resources/app.asar');
   await regularFile(originalAsar);
   const expectedAsar = await sha256(originalAsar);
   const results = [];
 
   for (const format of ['zip', 'dmg']) {
-    const name = `gooeshell-${version}-mac-${arch}.${format}`, source = path.join(releaseRoot, name);
+    const name = `GooeShell-${version}-mac-${arch}.${format}`, source = path.join(releaseRoot, name);
     const information = await regularFile(source);
     const packageHash = await sha256(source);
     let application;
     if (format === 'zip') {
       await command('/usr/bin/ditto', ['-x', '-k', source, zipDirectory]);
-      application = path.join(zipDirectory, 'gooeshell.app');
+      application = path.join(zipDirectory, 'GooeShell.app');
     } else {
       await command('/usr/bin/hdiutil', ['verify', source]);
       let originalError;
@@ -103,9 +105,9 @@ export async function verifyMacPackages({ release, version, arch, work, smoke })
         // Even if attach fails after creating the volume, the finally block
         // attempts to detach only this freshly created, controlled mount path.
         await command('/usr/bin/hdiutil', ['attach', '-readonly', '-nobrowse', '-noautoopen', '-mountpoint', mount, source]);
-        const mountedApp = path.join(mount, 'gooeshell.app');
-        assert.ok((await fs.lstat(mountedApp)).isDirectory(), 'DMG must contain a real gooeshell.app directory');
-        application = path.join(dmgDirectory, 'gooeshell.app');
+        const mountedApp = path.join(mount, 'GooeShell.app');
+        assert.ok((await fs.lstat(mountedApp)).isDirectory(), 'DMG must contain a real GooeShell.app directory');
+        application = path.join(dmgDirectory, 'GooeShell.app');
         await command('/usr/bin/ditto', [mountedApp, application]);
       } catch (error) {
         originalError = error;

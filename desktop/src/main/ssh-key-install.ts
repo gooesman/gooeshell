@@ -78,7 +78,7 @@ def install(public_key):
             raise ValueError('授权文件在操作期间被替换，请重试')
         os.fchmod(target, 0o600)
         if not duplicate:
-            suffix = (b'\n' if data and not data.endswith(b'\n') else b'') + public_key.encode('ascii') + b' gooeshell\n'
+            suffix = (b'\n' if data and not data.endswith(b'\n') else b'') + public_key.encode('ascii') + b' GooeShell\n'
             if os.write(target, suffix) != len(suffix):
                 raise ValueError('公钥追加未完成，请检查授权文件后重试')
             os.fsync(target)

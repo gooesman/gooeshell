@@ -74,7 +74,7 @@ try {
     await gh(['run', 'download', runId, '--repo', repository, '--name', `gooeshell-${target}-${arch}`, '--dir', directory]);
     const manifestName = `BUILD-${target}-${arch}.json`;
     const checksumName = `SHA256-${target}-${arch}.txt`;
-    const filenames = extensions.map(extension => `gooeshell-${version}-${target}-${arch}.${extension}`);
+    const filenames = extensions.map(extension => `GooeShell-${version}-${target}-${arch}.${extension}`);
     const allowed = [...filenames, manifestName, checksumName];
     assert.deepEqual((await fs.readdir(directory)).sort(), [...allowed].sort(), `Unexpected files in ${target}-${arch} artifact`);
     const manifest = JSON.parse(await readMetadata(path.join(directory, manifestName)));
@@ -104,7 +104,7 @@ try {
       assert.equal(verified[0].bytes, item.bytes);
       const extension = filename.slice(filename.lastIndexOf('.') + 1);
       const sourceArch = target === 'linux' ? { AppImage: 'x86_64', deb: 'amd64' }[extension] : arch;
-      assert.equal(item.sourceFilename, `gooeshell-${version}-${target}-${sourceArch}.${extension}`);
+      assert.equal(item.sourceFilename, `GooeShell-${version}-${target}-${sourceArch}.${extension}`);
       const file = path.join(directory, filename);
       const stat = await fs.lstat(file);
       assert.ok(stat.isFile(), `Package must be a regular file: ${filename}`);

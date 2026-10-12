@@ -104,7 +104,7 @@ try:
     children = [context.Process(target=install, args=(key,)) for _ in range(6)]
     for child in children: child.start()
     for child in children: child.join(); assert child.exitcode == 0
-    assert target.read_text() == '# no newline\n' + key + ' gooeshell\n'
+    assert target.read_text() == '# no newline\n' + key + ' GooeShell\n'
     target.unlink()
     outside = pathlib.Path(home) / 'outside'
     outside.write_text('untouched')

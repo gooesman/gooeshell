@@ -83,7 +83,7 @@ for (const [target, arch] of platforms) {
   assert.equal(manifest.packageValidation.version, version);
   assert.equal(manifest.packageValidation.target, target); assert.equal(manifest.packageValidation.arch, arch);
   const extensions = target === 'win' ? ['zip'] : target === 'mac' ? ['zip', 'dmg'] : ['AppImage', 'deb'];
-  assert.deepEqual(manifest.artifacts.map(item => item.filename).sort(), extensions.map(ext => `gooeshell-${version}-${target}-${arch}.${ext}`).sort());
+  assert.deepEqual(manifest.artifacts.map(item => item.filename).sort(), extensions.map(ext => `GooeShell-${version}-${target}-${arch}.${ext}`).sort());
   assert.equal(manifest.packageValidation.packages.length, extensions.length);
   for (const item of manifest.artifacts) {
     const verified = manifest.packageValidation.packages.filter(entry => entry.name === item.sourceFilename);
@@ -117,7 +117,7 @@ if (existing) {
   assert.equal(existing.draft, true, 'Refusing to change a published release');
   assert.equal(existing.target_commitish, revision, 'Draft belongs to a different source');
 } else {
-  gh(['release', 'create', tag, '-R', repository, '--target', revision, '--title', `gooeshell ${version}`, '--notes-file', notes, '--draft']);
+  gh(['release', 'create', tag, '-R', repository, '--target', revision, '--title', `GooeShell ${version}`, '--notes-file', notes, '--draft']);
 }
 gh(['release', 'upload', tag, ...files, '-R', repository, '--clobber']);
 const draft = findRelease();
@@ -131,7 +131,7 @@ for (const asset of draft.assets) {
   assert.equal(asset.size, expected.size);
   if (asset.digest) assert.equal(asset.digest, expected.digest);
 }
-gh(['release', 'edit', tag, '-R', repository, '--notes-file', notes, '--draft=false', '--prerelease=false', '--latest']);
+gh(['release', 'edit', tag, '-R', repository, '--title', `GooeShell ${version}`, '--notes-file', notes, '--draft=false', '--prerelease=false', '--latest']);
 const published = api(`releases/tags/${tag}`);
 assert.equal(published.draft, false);
 assert.equal(published.prerelease, false);

@@ -10,7 +10,17 @@ export function configureApplicationMenu(): void {
   }
   // macOS needs native edit roles for standard text-field clipboard/undo actions.
   const template: MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
+    { label: 'GooeShell', submenu: [
+      { role: 'about', label: '关于 GooeShell' },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide', label: '隐藏 GooeShell' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit', label: '退出 GooeShell' },
+    ] },
     { role: 'editMenu' },
     { label: '窗口', submenu: [{ role: 'minimize' }, { type: 'separator' }, { role: 'front' }] },
   ];

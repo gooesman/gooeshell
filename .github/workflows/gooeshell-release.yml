@@ -1,9 +1,9 @@
-name: Publish gooeshell release
+name: Publish GooeShell release
 on:
   workflow_dispatch:
     inputs:
       source_run:
-        description: Successful gooeshell Desktop build run ID
+        description: Successful GooeShell Desktop build run ID
         required: true
         type: string
       version:

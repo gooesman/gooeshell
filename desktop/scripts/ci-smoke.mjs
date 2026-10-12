@@ -9,8 +9,8 @@ const platform = { win: 'win32', mac: 'darwin', linux: 'linux' }[target];
 assert.equal(process.platform, platform, 'Smoke tests must use a native runner');
 assert.equal(process.arch, arch, 'Smoke tests must use the native architecture');
 const release = path.resolve(process.env.GOOESHELL_SMOKE_RELEASE || 'release');
-const defaultExecutable = target === 'win' ? path.join(release, 'win-unpacked/gooeshell.exe')
-  : target === 'mac' ? path.join(release, arch === 'arm64' ? 'mac-arm64' : 'mac', 'gooeshell.app/Contents/MacOS/gooeshell')
+const defaultExecutable = target === 'win' ? path.join(release, 'win-unpacked/GooeShell.exe')
+  : target === 'mac' ? path.join(release, arch === 'arm64' ? 'mac-arm64' : 'mac', 'GooeShell.app/Contents/MacOS/GooeShell')
   : path.join(release, 'linux-unpacked/gooeshell');
 const executable = process.env.GOOESHELL_SMOKE_EXECUTABLE ? path.resolve(process.env.GOOESHELL_SMOKE_EXECUTABLE) : defaultExecutable;
 const nodeExecutable = process.env.GOOESHELL_SMOKE_NODE_EXECUTABLE ? path.resolve(process.env.GOOESHELL_SMOKE_NODE_EXECUTABLE) : executable;
@@ -130,6 +130,7 @@ try {
   state.fonts = fontResult.result.value;
   const { version } = JSON.parse(await fs.readFile('package.json', 'utf8'));
   assert.equal(state.version, version);
+  assert.equal(state.title, 'GooeShell', 'The packaged home window must use the product display name');
   assert.equal(state.profiles, 0, 'Smoke launch must use its isolated settings directory');
   assert.equal(state.theme, 'dark');
   assert.ok(state.fonts > 0, 'Font catalog must provide usable font choices');

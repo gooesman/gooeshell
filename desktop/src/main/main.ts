@@ -29,6 +29,8 @@ const keyAttempts=new Map<string,{cancelled:boolean;started:boolean;profileId:st
 const verifiedKeys=new Map<string,{profile:HostProfile;keyId:string;expires:number;wasKnown:boolean;identityVersion?:number;jumpIdentityVersion?:number}>();
 // Electron scopes this lock to userData. Different test/portable data directories
 // stay independent, while two copies using the same catalog cannot lose writes.
+// Keep the established application identity for userData, single-instance locking
+// and OS credential encryption; the public product name is GooeShell.
 app.setName('gooeshell');
 const primaryInstance=app.requestSingleInstanceLock();
 let activateWhenReady=false;
@@ -111,6 +113,7 @@ async function fonts():Promise<string[]>{
 }
 const remoteMethods=new Set(['confirmHostKey','remoteList','terminalCwd','transfer','cancelTransfer','chmod','runFile']);
 if(primaryInstance)app.whenReady().then(async()=>{
+ app.setAboutPanelOptions({applicationName:'GooeShell'});
  configureApplicationMenu();
  void systemFontCatalog().catch(()=>{});
  app.setName('gooeshell');if(process.platform==='win32')app.setAppUserModelId('com.gooesman.gooeshell');store=new Store(app.getPath('userData'));
@@ -147,7 +150,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
  startWorker();
  const windowIcon=app.isPackaged?path.join(process.resourcesPath,'icon.png'):path.join(app.getAppPath(),'assets','icon.png');
  const initialTheme=(await store.settings()).theme;
- win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'gooeshell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
+ win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'GooeShell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
  win.on('close',event=>{discardEditorApproved=false;if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}});
  win.webContents.on('will-prevent-unload',event=>{if(discardEditorApproved||confirmEditorClose()){discardEditorApproved=false;event.preventDefault();}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));

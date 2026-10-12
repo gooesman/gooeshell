@@ -79,8 +79,10 @@ async function inspectDebDesktopEntry(root) {
     entries.set(key, line.slice(separator + 1).trim());
   }
   assert.equal(entries.get('Type'), 'Application', 'Debian desktop entry must launch an application');
-  assert.equal(entries.get('Exec'), '/opt/gooeshell/gooeshell %U', 'Debian desktop entry must target the packaged executable');
+  assert.equal(entries.get('Name'), 'GooeShell', 'Debian desktop entry must use the product display name');
+  assert.equal(entries.get('Exec'), '/opt/GooeShell/gooeshell %U', 'Debian desktop entry must target the packaged executable');
   assert.equal(entries.get('Icon'), 'gooeshell', 'Debian desktop entry must use its packaged application icon');
+  assert.equal(entries.get('StartupWMClass'), 'gooeshell', 'The desktop entry must remain associated with the running application');
 }
 
 /** Validate the actual Linux distributables without installing them or using FUSE.
@@ -109,7 +111,7 @@ export async function verifyLinuxPackages({ release, version, arch, work, smoke 
   const commandOptions = { env, encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true };
   const results = [];
 
-  const appImageName = `gooeshell-${version}-linux-x86_64.AppImage`;
+  const appImageName = `GooeShell-${version}-linux-x86_64.AppImage`;
   const { file: appImage, stat: appImageStat } = await fileWithin(releaseRoot, appImageName);
   const appImageHeader = await requireElfX64(appImage);
   assert.equal(appImageHeader.subarray(8, 11).toString('hex'), '414902', 'Expected a type-2 AppImage');
@@ -132,7 +134,7 @@ export async function verifyLinuxPackages({ release, version, arch, work, smoke 
   results.push({ name: appImageName, bytes: appImageStat.size, sha256: appImageSha256,
     checks: { extractedWithoutFuse: true, appRun: true, elfX64: true, versionMetadata: true, payloadMatchesUnpacked: true, payloadSha256: image.payloadSha256, isolatedLaunch: true } });
 
-  const debName = `gooeshell-${version}-linux-amd64.deb`;
+  const debName = `GooeShell-${version}-linux-amd64.deb`;
   const { file: deb, stat: debStat } = await fileWithin(releaseRoot, debName);
   const debSha256 = await sha256(deb);
   const fields = await Promise.all(['Package', 'Version', 'Architecture'].map(async field => {
@@ -144,7 +146,7 @@ export async function verifyLinuxPackages({ release, version, arch, work, smoke 
   await execute('dpkg-deb', ['-x', deb, debWork], commandOptions);
   const debRoot = await fs.realpath(debWork);
   assert.ok(isWithin(extracted, debRoot), 'Debian extraction root escapes verification work');
-  const debApplication = await inspectApplication(debRoot, 'opt/gooeshell/gooeshell', version, expectedAsar);
+  const debApplication = await inspectApplication(debRoot, 'opt/GooeShell/gooeshell', version, expectedAsar);
   await inspectDebDesktopEntry(debRoot);
   await smoke({ executable: debApplication.executable, label: 'deb' });
   results.push({ name: debName, bytes: debStat.size, sha256: debSha256,

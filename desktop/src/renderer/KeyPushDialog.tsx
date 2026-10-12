@@ -13,7 +13,7 @@ export default function KeyPushDialog({ profile, credentials, onClose, onApplied
 }) {
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [path, setPath] = useState(profile.privateKeyPath || '');
-  const [name, setName] = useState('gooeshell');
+  const [name, setName] = useState('GooeShell');
   const [passphrase, setPassphrase] = useState('');
   const [key, setKey] = useState<KeyInfo | null>(null);
   const [result, setResult] = useState<PushResult | null>(null);

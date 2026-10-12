@@ -1,4 +1,4 @@
-name: Prepare gooeshell draft release
+name: Prepare GooeShell draft release
 on:
   workflow_dispatch:
     inputs:

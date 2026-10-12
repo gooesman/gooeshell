@@ -532,7 +532,7 @@ export async function runRemoteOperation(
         return new Error('服务器 sudo 要求交互终端（requiretty），当前按次提权不支持此配置');
       }
       if (/python3[^\n]*(not found|command not found)|(?:not found|command not found)[^\n]*python3/i.test(stderr)) {
-        return new Error('服务器未安装 Python 3；文件操作需要 python3，无需安装 gooeshell 服务');
+        return new Error('服务器未安装 Python 3；文件操作需要 python3，无需安装 GooeShell 服务');
       }
       if (options.elevated && /sudo[^\n]*(not found|command not found)/i.test(stderr)) return new Error('服务器未安装 sudo');
       if (options.elevated && !sentRequest) return new Error('sudo 提权失败：请核对密码及当前用户的 sudo 权限');

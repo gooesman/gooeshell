@@ -10,7 +10,7 @@ __gooeshell_install_integration() {
         $PS1 == *']133;'* || $PS1 == *']633;'* ]] || shopt -q extdebug ||
      [[ $(declare -p PROMPT_COMMAND 2>/dev/null) =~ ^declare\ -[^[:space:]]*[rAiIn] ]] ||
      [[ $(declare -p PS1 2>/dev/null) =~ ^declare\ -[^[:space:]]*[raAiIn] ]]; then
-    printf '\r\n[gooeshell] Command markers unavailable: existing shell hooks are preserved.\r\n' >&2
+    printf '\r\n[GooeShell] Command markers unavailable: existing shell hooks are preserved.\r\n' >&2
     return
   fi
   __gooeshell_ready=0
@@ -92,7 +92,7 @@ if [ "$(uname -s 2>/dev/null)" = Linux ] && [ "@@{SHELL##*/}" = bash ] && [ -x "
 ${BASH_INTEGRATION_INIT}
 GOOESHELL_BASH_INIT_42B18A
 else
-  printf '\r\n[gooeshell] Command markers require Linux Bash; using the normal login shell.\r\n' >&2
+  printf '\r\n[GooeShell] Command markers require Linux Bash; using the normal login shell.\r\n' >&2
   exec "@@{SHELL:-/bin/sh}" -l
 fi
 `.replaceAll('@@{', '${');

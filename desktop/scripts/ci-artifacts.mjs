@@ -31,12 +31,12 @@ if (mode === 'verify') {
   await fs.mkdir(destination, { recursive: true });
   const artifacts = [];
   for (const extension of extensions) {
-    const filename = `gooeshell-${version}-${target}-${arch}.${extension}`;
+    const filename = `GooeShell-${version}-${target}-${arch}.${extension}`;
     // electron-builder uses each Linux package format's architecture spelling.
     // Match that exact versioned file; keep the public download names consistent.
     const sourceArch = target === 'linux' && arch === 'x64'
       ? { AppImage: 'x86_64', deb: 'amd64' }[extension] : arch;
-    const sourceFilename = `gooeshell-${version}-${target}-${sourceArch}.${extension}`;
+    const sourceFilename = `GooeShell-${version}-${target}-${sourceArch}.${extension}`;
     const source = path.resolve('release', sourceFilename);
     const size = (await fs.stat(source)).size;
     if (size === 0) throw new Error(`Empty artifact: ${filename}`);

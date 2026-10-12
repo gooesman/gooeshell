@@ -1,4 +1,4 @@
-# gooeshell
+# GooeShell
 
 Windows 优先的本地终端、图形 SSH 终端与文件工作区，同时提供 macOS 和 Linux 构建。当前源码版本为 **1.1.0**，各平台可下载版本以发布页为准。默认黑色主题，也可切换白色；文件区默认收起，展开后在终端下方显示远程资源管理器，本地栏和传输队列默认折叠。
 
@@ -22,14 +22,14 @@ Windows 优先的本地终端、图形 SSH 终端与文件工作区，同时提�
 
 | 平台 | 下载与打开方式 |
 | --- | --- |
-| Windows x64 | `win-x64.zip`，完整解压后打开 `gooeshell.exe`。 |
+| Windows x64 | `win-x64.zip`，完整解压后打开 `GooeShell.exe`。 |
 | Mac Apple Silicon（M 系列） | `mac-arm64.dmg`，拖入“应用程序”；也提供 ZIP。 |
 | Mac Intel | `mac-x64.dmg`，拖入“应用程序”；也提供 ZIP。 |
 | Linux x64 | Ubuntu / Debian 可安装 `linux-x64.deb`；另提供 `linux-x64.AppImage`，赋予执行权限后运行。 |
 
 Mac 版本要求 macOS 13 或更新版本，与所用 [Electron 44 的系统要求](https://www.electronjs.org/zh/docs/latest/breaking-changes)一致。目前采用本地临时签名，尚未完成 Apple Developer ID 签名与公证；首次打开可能需要按 [Apple 的说明](https://support.apple.com/guide/mac-help/mh40616/mac)，在“系统设置 → 隐私与安全性”中允许打开。Linux 版本在 Ubuntu 24.04 构建与验证，其他发行版的完整桌面兼容性仍待实机验证。
 
-开发构建可从 **Actions → gooeshell Desktop** 下载对应平台的构建产物。
+开发构建可从 **Actions → GooeShell Desktop** 下载对应平台的构建产物。
 
 点击“新建连接”，填写主机、端口、用户名，选择密码、私钥或 SSH Agent。默认首次连接会显示 SHA-256 指纹，可仅信任本次或保存。密码与私钥口令按所选方式保存，长期记住使用系统加密，不写入明文连接配置；取消“允许保存服务器指纹”后仍需确认，但不读取或保存旧指纹记录。
 
@@ -69,7 +69,7 @@ Mac 版本要求 macOS 13 或更新版本，与所用 [Electron 44 的系统要�
 
 ## 配置与备份
 
-配置保存在当前用户的应用数据目录，独立于程序安装目录：Windows 为 `%APPDATA%\gooeshell`，macOS 为 `~/Library/Application Support/gooeshell`，Linux 为 `${XDG_CONFIG_HOME:-~/.config}/gooeshell`。
+正式名称统一为 **GooeShell**；沿用原有应用标识与配置目录，已保存的连接、设置和加密凭据继续使用。配置保存在当前用户的应用数据目录，独立于程序安装目录：Windows 为 `%APPDATA%\gooeshell`，macOS 为 `~/Library/Application Support/gooeshell`，Linux 为 `${XDG_CONFIG_HOME:-~/.config}/gooeshell`。
 
 | 文件 | 内容 |
 | --- | --- |

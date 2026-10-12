@@ -1,5 +1,6 @@
 {
   "name": "gooeshell",
+  "desktopName": "gooeshell.desktop",
   "version": "1.1.0",
   "private": true,
   "description": "Local terminal, SSH and SFTP workspace for Windows, macOS and Linux",
@@ -63,8 +64,8 @@
   },
   "build": {
     "appId": "com.gooesman.gooeshell",
-    "productName": "gooeshell",
-    "artifactName": "gooeshell-${version}-${os}-${arch}.${ext}",
+    "productName": "GooeShell",
+    "artifactName": "GooeShell-${version}-${os}-${arch}.${ext}",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
@@ -97,6 +98,8 @@
       "notarize": false
     },
     "linux": {
+      "executableName": "gooeshell",
+      "syncDesktopName": true,
       "target": [
         "AppImage",
         "deb"

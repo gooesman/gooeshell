@@ -16,7 +16,7 @@ const generatePair: KeyGenerator = options => new Promise((resolve, reject) => u
 /** ssh2 1.17 may truncate an Ed25519 leading zero. Never write an invalid generated key pair. */
 export async function generateVerifiedEd25519KeyPair(passphrase?: string, generate: KeyGenerator = generatePair): Promise<utils.KeyPairReturn> {
   for (let attempt = 0; attempt < 8; attempt++) {
-    const pair = await generate({ comment: 'gooeshell', ...(passphrase ? { passphrase, cipher: 'aes256-ctr', rounds: 64 } : {}) });
+    const pair = await generate({ comment: 'GooeShell', ...(passphrase ? { passphrase, cipher: 'aes256-ctr', rounds: 64 } : {}) });
     const privateKey = utils.parseKey(pair.private, passphrase), publicKey = utils.parseKey(pair.public);
     if (privateKey instanceof Error || publicKey instanceof Error || Array.isArray(privateKey) || Array.isArray(publicKey)) continue;
     if (privateKey.type !== 'ssh-ed25519' || publicKey.type !== 'ssh-ed25519' || !privateKey.isPrivateKey() || publicKey.isPrivateKey()) continue;
