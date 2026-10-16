@@ -118,7 +118,7 @@ try {
   });
   phase('read initial settings through packaged IPC');
   const result = await call('Runtime.evaluate', {
-    expression: '(async () => { const state = await window.gooeshell.initial(); return { version: state.version, profiles: state.profiles.length, theme: state.settings.theme, title: document.title }; })()',
+    expression: '(async () => { const state = await window.gooeshell.initial(); return { version: state.version, profiles: state.profiles.length, theme: state.settings.theme, title: document.title, paste: { keyboard: state.settings.shortcuts.paste, mouse: state.settings.shortcuts.pasteMouse, legacySwitch: Object.hasOwn(state.settings, "rightClickPaste") } }; })()',
     returnByValue: true, awaitPromise: true,
   });
   assert.equal(result.exceptionDetails, undefined, 'Packaged preload or main IPC failed');
@@ -133,6 +133,7 @@ try {
   assert.equal(state.title, 'GooeShell', 'The packaged home window must use the product display name');
   assert.equal(state.profiles, 0, 'Smoke launch must use its isolated settings directory');
   assert.equal(state.theme, 'dark');
+  assert.deepEqual(state.paste, { keyboard: 'Ctrl+Shift+V', mouse: '', legacySwitch: false }, 'Keyboard and mouse paste settings must be independent');
   assert.ok(state.fonts > 0, 'Font catalog must provide usable font choices');
   phase('inspect packaged quick connection choices');
   const quickConnection = await call('Runtime.evaluate', {
@@ -140,6 +141,7 @@ try {
       const visible=node=>!!node && node.getClientRects().length>0;
       const home=document.querySelector('.connection-home');
       if(!home || home.querySelector('.local-terminal-launcher') || document.querySelector('[aria-label="新建本地终端"]'))throw new Error('Unexpected standalone local launcher');
+      if(home.querySelectorAll('.empty-actions button').length!==1)throw new Error('Home settings entry must not duplicate the toolbar');
       const quick=[...document.querySelectorAll('button')].find(button=>visible(button) && button.textContent.trim()==='快速连接');
       if(!quick)throw new Error('Missing quick connection entry');quick.click();
       await new Promise(resolve=>setTimeout(resolve,100));

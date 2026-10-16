@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import TerminalView from '../../src/renderer/TerminalView';
 import TerminalColorSettings from '../../src/renderer/TerminalColorSettings';
+import FontSettings from '../../src/renderer/FontSettings';
 import { defaultSettings } from '../../src/shared/defaults';
 import type { AppSettings } from '../../src/shared/types';
 import '../../src/renderer/styles.css';
@@ -17,6 +18,7 @@ function Fixture() {
       <button id="interface-light" onClick={() => setSettings(value => ({ ...value, theme: 'light' }))}>白色界面</button>
       <button id="background-on" onClick={() => setSettings(value => ({ ...value, backgroundImage: 'fixture-only', backgroundOpacity: .2 }))}>背景图片</button>
       <TerminalColorSettings settings={settings} onChange={partial => setSettings(value => ({ ...value, ...partial }))} />
+      <FontSettings settings={settings} onChange={partial => setSettings(value => ({ ...value, ...partial }))} />
     </div>
   </div>;
 }

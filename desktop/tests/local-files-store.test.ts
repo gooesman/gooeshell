@@ -82,7 +82,7 @@ test('theme settings migrate older files and persist without resetting fonts or 
     assert.equal(settings.fontFamily, legacy.fontFamily);
     assert.equal(settings.chineseFont, legacy.chineseFont);
     assert.equal(settings.fontSize, legacy.fontSize);
-    assert.deepEqual(settings.shortcuts, legacy.shortcuts);
+    assert.deepEqual(settings.shortcuts, { ...legacy.shortcuts, paste: 'Ctrl+Shift+V', pasteMouse: 'MouseMiddle' });
   }
   const store = new Store(directory);
   const settings = await store.settings();

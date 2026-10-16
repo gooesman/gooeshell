@@ -201,8 +201,9 @@ test('new shortcut defaults migrate once while custom bindings and existing conf
   assert.equal(migrated.shortcuts.terminalHeader,'Ctrl+Shift+]');
   assert.equal(migrated.shortcuts.previousTab,'Ctrl+Shift+ArrowLeft');
   assert.equal(migrated.shortcuts.nextTab,'Ctrl+Shift+ArrowRight');
-  assert.equal(migrated.shortcuts.paste,'MouseMiddle');
-  assert.equal(migrated.shortcutSchemaVersion,2);
+  assert.equal(migrated.shortcuts.paste,'Ctrl+Shift+V');
+  assert.equal(migrated.shortcuts.pasteMouse,'MouseMiddle');
+  assert.equal(migrated.shortcutSchemaVersion,3);
   await fs.writeFile(file,JSON.stringify({shortcuts:{...old,connect:'F2',settings:'MouseRight'}}));
   const custom=await store.settings();
   assert.equal(custom.shortcuts.connect,'F2');

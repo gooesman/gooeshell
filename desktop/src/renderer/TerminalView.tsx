@@ -107,7 +107,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
    if(chord&&chord===keys.reconnect&&!online.current&&callbacks.current.onReconnect){callbacks.current.onReconnect();return true;}
    if(chord&&chord===keys.sudoPassword&&online.current&&callbacks.current.onSudoPassword){callbacks.current.onSudoPassword();return true;}
    if(chord===keys.copy){if(terminal.hasSelection())void api.writeClipboard(terminal.getSelection());return true;}
-   if(chord===keys.paste){offerClipboard();return true;}
+   if(chord&&(chord===keys.paste||chord===keys.pasteMouse||chord===keys.pasteMouseSecondary)){offerClipboard();return true;}
    if(chord===keys.search){setSearchOpen(true);return true;}
    if(chord&&chord===keys.previousCommand)return marks.navigate(-1);
    if(chord&&chord===keys.nextCommand)return marks.navigate(1);
@@ -125,7 +125,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
    return true;
   });
   const mouse=(event:MouseEvent)=>{const chord=mouseChord(event);if(chord&&perform(chord)){event.preventDefault();event.stopImmediatePropagation();terminal.focus();}};
-  const context=(event:MouseEvent)=>{const chord=mouseChord(event);if(Object.values(current.current.shortcuts).includes(chord)){event.preventDefault();return;}if(current.current.rightClickPaste){event.preventDefault();offerClipboard();}};
+  const context=(event:MouseEvent)=>{const chord=mouseChord(event);if(chord&&Object.values(current.current.shortcuts).includes(chord))event.preventDefault();};
   element.addEventListener('mousedown',mouse,true);element.addEventListener('contextmenu',context);terminal.focus();
   return()=>{disposed=true;cancelAnimationFrame(resizeFrame);remove();input.dispose();binaryInput.dispose();selection.dispose();observer.disconnect();pasteRoot.removeEventListener('keydown',pasteKeyboard,true);element.removeEventListener('paste',nativePaste,true);element.removeEventListener('mousedown',mouse,true);element.removeEventListener('contextmenu',context);pasteController.current=null;marks.dispose();commandMarks.current=null;terminal.dispose();activeFont.current?.release();activeFont.current=null;term.current=null;search.current=null;requestFit.current=null;};
  },[tabId]);

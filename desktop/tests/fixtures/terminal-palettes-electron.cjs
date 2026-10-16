@@ -47,7 +47,7 @@ function output(text){const bytes=Buffer.byteLength(text);window.webContents.sen
 async function flush(){await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await delay(40);}
 async function palette(name){await evaluate(`[...document.querySelectorAll('.terminal-palette-choice')].find(el=>el.querySelector('strong')?.textContent===${JSON.stringify(name)}).click()`);await flush();}
 async function theme(id){await evaluate(`document.getElementById('interface-${id}').click()`);await until(async()=>(await inspect()).settings.theme===id,'interface '+id);await flush();}
-async function bold(enabled){await evaluate(`document.querySelector('[role="switch"][aria-label="允许终端文字额外加粗"]').click()`);await until(async()=>{const state=await inspect();return state.settings.terminalBold===enabled&&state.fontWeightBold===(enabled?700:400);},'program bold '+enabled);await flush();}
+async function bold(enabled){await evaluate(`document.querySelector('.font-settings-section [role="switch"][aria-label="允许终端文字额外加粗"]').click()`);await until(async()=>{const state=await inspect();return state.settings.terminalBold===enabled&&state.fontWeightBold===(enabled?700:400);},'program bold '+enabled);await flush();}
 async function captureStyles(label){
   await flush();
   const geometry=await evaluate(`(()=>{const terminal=window.__fixtureTerminal,rect=terminal.element.querySelector('.xterm-screen').getBoundingClientRect();return{x:rect.left,y:rect.top,width:rect.width,rowHeight:rect.height/terminal.rows,innerWidth:window.innerWidth};})()`);
@@ -106,6 +106,8 @@ async function run(){
   await window.loadURL(url);window.setMenu(null);
   await until(async()=>(await inspect())?.cols>0&&metrics.calls.some(call=>call.method==='terminalResize'),'initial terminal');
   await evaluate('void(window.__fixtureOriginalTerminal=window.__fixtureTerminal)');await delay(150);await flush();
+  assert.equal(await evaluate(`document.querySelectorAll('.terminal-colors-section [aria-label="允许终端文字额外加粗"]').length`),0);
+  assert.equal(await evaluate(`document.querySelectorAll('.font-settings-section [aria-label="允许终端文字额外加粗"]').length`),1);
   assert.equal((await inspect()).background,'rgb(0, 0, 0)');
   phase='follow interface uses vivid dark colors';
   await theme('light');assert.equal((await inspect()).background,'rgb(255, 255, 255)');assert.equal((await inspect()).theme.foreground,'#242424');

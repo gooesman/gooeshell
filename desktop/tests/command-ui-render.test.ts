@@ -27,6 +27,6 @@ test('command library edits and scoped dispatch previews work in the native rend
   const result = JSON.parse(await fs.readFile(report, 'utf8').catch(() => { throw new Error('No command UI report: ' + stderr); }));
   t.diagnostic(`command UI artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true);
-  for (const name of ['scopeAndOfflineCopy', 'borrowedPreviewBoundToTarget', 'changedCommandInvalidatesPreview', 'createEditMoveAndPersistence', 'searchAndDelete', 'identityChangeRequiresBorrowing', 'focusTrapAndThemes']) assert.equal(result.checks[name], true, name);
+  for (const name of ['legacyModePreserved', 'scopeAndOfflineCopy', 'borrowedPreviewBoundToTarget', 'changedCommandInvalidatesPreview', 'createEditMoveAndPersistence', 'searchAndDelete', 'identityChangeRequiresBorrowing', 'focusTrapAndThemes']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []);
 });

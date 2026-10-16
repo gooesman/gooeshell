@@ -35,7 +35,7 @@ export interface AppSettings {
   fontWeight: number; chineseFontWeight: number;
   shortcutSchemaVersion: number;
   fontFamily: string; chineseFont: string; fontSize: number; lineHeight: number;
-  cursorBlink: boolean; copyOnSelect: boolean; rightClickPaste: boolean; sudoPasswordSubmit: boolean;
+  cursorBlink: boolean; copyOnSelect: boolean; sudoPasswordSubmit: boolean;
   backgroundImage: string; backgroundOpacity: number;
   shortcuts: Record<string, string>;
 }

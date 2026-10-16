@@ -49,30 +49,6 @@
 .font-recommended-option {
   font-weight: 700;
 }
-.font-recommendations {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 7px;
-}
-.font-recommendation {
-  padding: 4px 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-muted);
-  background: var(--surface);
-  font-size: 10px;
-  cursor: pointer;
-}
-.font-recommendation:hover,
-.font-recommendation.selected {
-  border-color: var(--text-muted);
-  color: var(--text);
-  background: var(--surface-raised);
-}
-.font-recommendation.selected {
-  font-weight: 600;
-}
 .font-help {
   color: var(--text-muted);
   font-size: 10px;

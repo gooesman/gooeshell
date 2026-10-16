@@ -7,6 +7,54 @@ import {Store,cleanProfile,cleanSettings} from '../src/main/store';
 import {defaultSettings} from '../src/shared/defaults';
 import {connectionIdentity,connectionConfigurationIdentity} from '../src/shared/connections';
 const profile={id:'test',name:'test host',host:'example.com',port:22,username:'alice',auth:'password' as const,rememberHost:true,encoding:'utf8' as const};
+
+test('paste settings migrate keyboard and mouse independently without stealing other shortcuts',()=>{
+ const legacy=(paste:string,rightClickPaste=false,other:Record<string,string>={})=>cleanSettings({shortcutSchemaVersion:2,rightClickPaste,shortcuts:{paste,...other}} as any);
+ assert.equal(defaultSettings.shortcuts.paste,'Ctrl+Shift+V');
+ assert.equal(defaultSettings.shortcuts.pasteMouse,'');
+ assert.equal(Object.hasOwn(defaultSettings,'rightClickPaste'),false);
+ const keyboard=legacy('Ctrl+Alt+V',true);
+ assert.equal(keyboard.shortcuts.paste,'Ctrl+Alt+V');assert.equal(keyboard.shortcuts.pasteMouse,'MouseRight');
+ assert.equal(Object.hasOwn(keyboard,'rightClickPaste'),false);
+ const middle=legacy('MouseMiddle');
+ assert.equal(middle.shortcuts.paste,'Ctrl+Shift+V');assert.equal(middle.shortcuts.pasteMouse,'MouseMiddle');
+ const two=legacy('MouseMiddle',true);
+ assert.equal(two.shortcuts.paste,'Ctrl+Shift+V');assert.equal(two.shortcuts.pasteMouse,'MouseMiddle');assert.equal(two.shortcuts.pasteMouseSecondary,'MouseRight');
+ const right=legacy('MouseRight',true);
+ assert.equal(right.shortcuts.pasteMouse,'MouseRight');assert.equal(Object.hasOwn(right.shortcuts,'pasteMouseSecondary'),false);
+ const modified=legacy('Ctrl+Shift+MouseBack',true);
+ assert.equal(modified.shortcuts.pasteMouse,'Ctrl+Shift+MouseBack');assert.equal(modified.shortcuts.pasteMouseSecondary,'MouseRight');
+ const occupied=legacy('MouseMiddle',true,{search:'Ctrl+Shift+V',copy:'MouseRight'});
+ assert.equal(occupied.shortcuts.paste,'');assert.equal(occupied.shortcuts.pasteMouse,'MouseMiddle');assert.equal(Object.hasOwn(occupied.shortcuts,'pasteMouseSecondary'),false);
+ assert.equal(occupied.shortcuts.search,'Ctrl+Shift+V');assert.equal(occupied.shortcuts.copy,'MouseRight');
+ const mouseConflict=legacy('MouseMiddle',true,{copy:'MouseMiddle'});
+ assert.equal(mouseConflict.shortcuts.copy,'MouseMiddle');assert.equal(mouseConflict.shortcuts.pasteMouse,'MouseRight');
+ const rightConflict=legacy('F8',true,{search:'mouseright'});
+ assert.equal(rightConflict.shortcuts.paste,'F8');assert.equal(rightConflict.shortcuts.pasteMouse,'');assert.equal(rightConflict.shortcuts.search,'mouseright');
+ for(const settings of [keyboard,middle,two,right,modified,occupied,mouseConflict,rightConflict])assert.deepEqual(cleanSettings(settings),settings);
+ const cleared=cleanSettings({...two,rightClickPaste:true,shortcuts:{...two.shortcuts,pasteMouse:'',pasteMouseSecondary:''}} as any);
+ assert.equal(cleared.shortcuts.paste,'Ctrl+Shift+V');assert.equal(cleared.shortcuts.pasteMouse,'');assert.equal(Object.hasOwn(cleared.shortcuts,'pasteMouseSecondary'),false);
+ assert.equal(Object.hasOwn(cleared,'rightClickPaste'),false);
+ assert.deepEqual(cleanSettings(cleared),cleared);
+});
+
+test('migrated paste bindings persist together and disabled mouse paste remains disabled after reload',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-paste-settings-'));
+ const file=path.join(root,'settings.json');
+ try{
+  await fs.writeFile(file,JSON.stringify({shortcutSchemaVersion:2,rightClickPaste:true,shortcuts:{paste:'MouseMiddle'}}));
+  const migrated=await new Store(root).settings();
+  await new Store(root).saveSettings(migrated);
+  assert.deepEqual(await new Store(root).settings(),migrated);
+  assert.equal(JSON.parse(await fs.readFile(file,'utf8')).rightClickPaste,undefined);
+  await new Store(root).saveSettings({...migrated,shortcuts:{...migrated.shortcuts,paste:'Ctrl+Alt+V',pasteMouse:'Shift+MouseForward',pasteMouseSecondary:''}});
+  const custom=await new Store(root).settings();
+  assert.equal(custom.shortcuts.paste,'Ctrl+Alt+V');assert.equal(custom.shortcuts.pasteMouse,'Shift+MouseForward');assert.equal(Object.hasOwn(custom.shortcuts,'pasteMouseSecondary'),false);
+  await new Store(root).saveSettings({...custom,shortcuts:{...custom.shortcuts,pasteMouse:''}});
+  const disabled=await new Store(root).settings();assert.equal(disabled.shortcuts.paste,'Ctrl+Alt+V');assert.equal(disabled.shortcuts.pasteMouse,'');
+  assert.deepEqual(cleanSettings(disabled),disabled);
+ }finally{await fs.unlink(file);await fs.rmdir(root);}
+});
 test('command mark placement defaults right and persists each display mode',async()=>{
  assert.equal(cleanSettings({} as any).commandMarks,'right');
  for(const commandMarks of [undefined,null,true,'',0,'both',{},[]])assert.equal(cleanSettings({...defaultSettings,commandMarks} as any).commandMarks,'right');

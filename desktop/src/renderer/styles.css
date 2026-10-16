@@ -1672,17 +1672,6 @@ kbd {
   color:var(--text)
 }
 
-.shortcut-presets {
-  display:flex;
-  align-items:center;
-  gap:10px;
-  margin:0 0 18px
-}
-.shortcut-presets>span {
-  font-size:10px;
-  color:var(--text-muted);
-  line-height:1.7
-}
 .shortcut-actions {
   display:flex;
   align-items:center;

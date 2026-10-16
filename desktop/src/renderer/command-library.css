@@ -33,7 +33,6 @@
 .command-card-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
 .command-card-actions > span { font-size: 9px; line-height: 1.4; color: var(--text-subtle); flex: 1; }
 .command-sidebar .button.command-action { min-height: 27px; padding: 4px 7px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 11px; gap: 4px; }
-.command-sidebar .button.command-action.preferred { color: var(--text); border-color: var(--border); background: var(--surface-selected); }
 .command-sidebar .button.command-action:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
 .command-group-empty { width: 100%; border: 1px dashed var(--border); border-radius: 8px; background: transparent; color: var(--text-subtle); padding: 14px 8px; cursor: pointer; font-size: 11px; }
 .command-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 40px 13px 20px; color: var(--text-subtle); }
@@ -51,9 +50,7 @@
 .command-editor-fields .form-field small { font-size: 11px; line-height: 1.6; color: var(--text-subtle); font-weight: 400; }
 .command-editor-fields input, .command-editor-fields select, .command-editor-fields textarea { border-radius: 8px; }
 .command-editor-fields textarea { min-height: 135px; resize: vertical; max-height: 35vh; font: 12px/1.7 'Cascadia Mono', Consolas, monospace; tab-size: 4; }
-.command-editor-options { display: flex; align-items: center; gap: 20px; }
-.command-editor-options > .form-field { flex: 1; }
-.command-confirm-option { display: flex; align-items: center; gap: 8px; font-size: 12px; padding-top: 22px; }
+.command-confirm-option { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .command-confirm-option input { margin: 0; }
 .command-help { color: var(--text-muted); font-size: 12px; line-height: 1.7; }
 .command-discard { border: 1px solid var(--border-strong); border-radius: 9px; padding: 13px; margin-top: 15px; font-size: 12px; }

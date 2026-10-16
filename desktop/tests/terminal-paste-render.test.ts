@@ -24,5 +24,6 @@ test('actual TerminalView multiline paste edits locally and advances through iso
   t.diagnostic(`terminal paste artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + stderr); assert.equal(result.success, true, JSON.stringify(result, null, 2));
   assert.ok(Object.keys(result.checks).length >= 12); assert.ok(Object.values(result.checks).every(value => value === true)); assert.deepEqual(result.rendererErrors, []);
+  for (const check of ['simultaneousKeyboardMouse', 'legacyDualMouse', 'mouseSinglePaste', 'rightContextNoDuplicate', 'modifiedMouseChord', 'mouseCleared']) assert.equal(result.checks[check], true, 'Missing check: ' + check);
   for (const check of ['editedWhole', 'editorEnterIsLocal', 'emptyEditorBlocked', 'longEditorComplete', 'cancelEditedText', 'editedLines', 'chooserFocusIsolation', 'editorFocusCycle', 'disabledChoicesSkipped', 'editedDraftTabIsolation', 'chooserBlocksUnderlyingTerminal', 'keyboardWhole', 'keyboardWholeRepeat', 'keyboardHoldTabIsolation', 'keyboardLines', 'editorCtrlEnterLines', 'keyboardNext', 'queuePendingBlocksNext', 'keyboardRepeat', 'keyboardQueueButtonRepeat', 'keyboardCancelRepeat', 'chooserImeIgnored', 'queueImeIgnored', 'noQueueCtrlEnter']) assert.equal(result.checks[check], true, 'Missing check: ' + check);
 });

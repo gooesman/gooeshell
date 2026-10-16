@@ -35,6 +35,10 @@ async function click(index, css) { await evaluate(`document.querySelector(${JSON
 async function native(index, text) {
   await evaluate(`(() => { const data = new DataTransfer(); data.setData('text/plain', ${JSON.stringify(text)}); document.querySelector(${JSON.stringify(selector(index) + ' .xterm-helper-textarea')}).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })); })()`); await flush();
 }
+async function mouse(index, button, modifiers = {}) {
+  const events = await evaluate(`(() => { const target = document.querySelector(${JSON.stringify(selector(index) + ' .xterm-helper-textarea')}); return ${JSON.stringify(button === 2 ? ['mousedown', 'mouseup', 'contextmenu'] : ['mousedown', 'mouseup', 'auxclick'])}.map(type => { const event = new MouseEvent(type, { button: ${button}, bubbles: true, cancelable: true, ...${JSON.stringify(modifiers)} }); target.dispatchEvent(event); return { type, prevented: event.defaultPrevented }; }); })()`);
+  await flush(); return events;
+}
 async function offer(index, text) { await native(index, text); await until(async () => (await inspect()).dialogs.some(dialog => dialog.target === String(index)), 'paste chooser'); }
 async function choose(index, mode) { await click(index, `[data-paste-choice="${mode}"]`); }
 async function cancel(index) { await click(index, '.terminal-paste-dialog button'); }
@@ -82,12 +86,35 @@ async function run() {
   await until(async () => (await inspect()).dialogs.length === 1, 'keyboard chooser'); assert.equal(inputs().length, before); assert.equal(await evaluate('window.__nativePasteCount'), 0, 'custom shortcut must prevent a second native paste'); await cancel(0); metrics.checks.keyboardChooser = true;
 
   phase = 'right click and configured middle click use the same chooser'; clipboard = 'mouse first\nmouse second';
-  await evaluate(`document.querySelector('${selector(0)} .xterm-helper-textarea').dispatchEvent(new MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true }))`);
+  const rightEvents = await mouse(0, 2); assert.equal(rightEvents.find(event => event.type === 'contextmenu').prevented, true);
   await until(async () => (await inspect()).dialogs.length === 1, 'right click chooser'); await cancel(0);
-  await setState('window.__pasteFixture.setMouse(true)', state => state.mouse);
-  await evaluate(`document.querySelector('${selector(0)} .xterm-helper-textarea').dispatchEvent(new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true }))`);
+  await setState('window.__pasteFixture.setMouse("MouseMiddle")', state => state.mouse === 'MouseMiddle');
+  await mouse(0, 1);
   await until(async () => (await inspect()).dialogs.length === 1, 'middle click chooser'); assert.equal(inputs().length, before); await cancel(0);
-  await setState('window.__pasteFixture.setMouse(false)', state => !state.mouse); metrics.checks.mouseChooser = true;
+  await key(0, 'V', ['control', 'shift']); await until(async () => (await inspect()).dialogs.length === 1, 'keyboard paste remains enabled with middle click'); await cancel(0);
+  metrics.checks.mouseChooser = true; metrics.checks.simultaneousKeyboardMouse = true;
+
+  phase = 'legacy dual mouse bindings and keyboard each paste exactly once';
+  await setState('window.__pasteFixture.setSecondary("MouseRight")', state => state.secondary === 'MouseRight');
+  clipboard = 'single dual paste'; before = inputs().length;
+  await mouse(0, 1); assert.equal(inputs().length, before + 1);
+  const secondaryEvents = await mouse(0, 2); assert.equal(inputs().length, before + 2); assert.equal(secondaryEvents.find(event => event.type === 'contextmenu').prevented, true);
+  await key(0, 'V', ['control', 'shift']);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), Array.from({ length: 3 }, () => ['paste-a', clipboard]));
+  assert.equal(await evaluate('window.__nativePasteCount'), 0);
+  metrics.checks.legacyDualMouse = true; metrics.checks.mouseSinglePaste = true; metrics.checks.rightContextNoDuplicate = true;
+
+  phase = 'modified side mouse binding is independent from keyboard paste';
+  await setState('window.__pasteFixture.setSecondary("");window.__pasteFixture.setMouse("Ctrl+Shift+MouseForward")', state => state.secondary === '' && state.mouse === 'Ctrl+Shift+MouseForward');
+  before = inputs().length; await mouse(0, 4); assert.equal(inputs().length, before);
+  await mouse(0, 4, { ctrlKey: true, shiftKey: true }); assert.equal(inputs().length, before + 1);
+  await key(0, 'V', ['control', 'shift']); assert.equal(inputs().length, before + 2); metrics.checks.modifiedMouseChord = true;
+
+  phase = 'clearing mouse paste leaves keyboard paste available';
+  await setState('window.__pasteFixture.setMouse("")', state => state.mouse === '');
+  before = inputs().length; await mouse(0, 2); await mouse(0, 1); assert.equal(inputs().length, before);
+  await key(0, 'V', ['control', 'shift']); assert.equal(inputs().length, before + 1); metrics.checks.mouseCleared = true;
+  await setState('window.__pasteFixture.setMouse("MouseRight")', state => state.mouse === 'MouseRight');
 
   phase = 'whole paste preserves xterm bracket wrappers and normalized bytes'; await bracketed(0, 'paste-a', true);
   await offer(0, 'line one\r\nline two\n'); before = inputs().length; await choose(0, 'all');

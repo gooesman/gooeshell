@@ -112,7 +112,7 @@ async function run() {
   result.checks.launchFromSshCreatesTab = true;
 
   phase = 'local global command use';
-  await evaluate(`[...document.querySelectorAll('button')].find(button => button.title.startsWith('展开命令管理')).click()`);
+  await evaluate(`[...document.querySelectorAll('button')].find(button => button.title.startsWith('展开命令库')).click()`);
   await click('填入全局示例');
   assert.equal(await evaluate(`window.localTerminalFixture.calls.find(call => call.method === 'sendCommand').id`), 'local-2');
   await value('#command-scope', 'fixture-server', true);

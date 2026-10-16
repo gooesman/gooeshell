@@ -40,7 +40,6 @@ export default function FontSettings({settings, onChange}: {settings: AppSetting
         {choices.other.length > 0 && <optgroup label="其他可用字体">{choices.other.map(font => <option key={font} value={font}>{font}{isBundledFont(font) ? ' · 内置' : ''}</option>)}</optgroup>}
         {choices.missing && <optgroup label="当前字体（未检测到）"><option value={choices.missing}>{choices.missing}</option></optgroup>}
       </select>
-      {choices.recommended.length > 0 && <div className="font-recommendations" aria-label={`${label}推荐`}>{choices.recommended.slice(0, 3).map(font => <button type="button" key={font} className={`font-recommendation${choices.selected === font ? ' selected' : ''}`} aria-pressed={choices.selected === font} onClick={() => choose(font)}>{font}</button>)}</div>}
       <label className="font-weight-label" htmlFor={weightId}>{language==='english'?'英文字重':'中文字重'}</label>
       <select id={weightId} value={settings[weightKey]} disabled={loading||!weights.length} onChange={event=>onChange({[weightKey]:Number(event.target.value)})}>
         {!weights.includes(settings[weightKey])&&<option value={settings[weightKey]} disabled>当前 {settings[weightKey]} · {loading?'检测中':'此字体未提供'}</option>}
@@ -58,6 +57,10 @@ export default function FontSettings({settings, onChange}: {settings: AppSetting
       {selector('chinese', 'chineseFont', '中文字体')}
       <div className="form-field"><label htmlFor="font-size">字号 · {settings.fontSize} px</label><input id="font-size" type="range" min={8} max={40} step={1} value={settings.fontSize} onChange={event => onChange({fontSize: Number(event.target.value)})} /></div>
       <div className="form-field"><label htmlFor="line-height">行高 · {settings.lineHeight.toFixed(2)}</label><input id="line-height" type="range" min={1} max={1.8} step={.05} value={settings.lineHeight} onChange={event => onChange({lineHeight: Number(event.target.value)})} /></div>
+    </div>
+    <div className="settings-row">
+      <div><div className="row-title">允许终端文字额外加粗</div><div className="row-description">关闭时保持你选择的中英文字重，颜色照常显示；开启后按程序的要求加粗。</div></div>
+      <button type="button" role="switch" aria-label="允许终端文字额外加粗" aria-checked={settings.terminalBold} className={`switch${settings.terminalBold ? ' checked' : ''}`} onClick={() => onChange({ terminalBold: !settings.terminalBold })} />
     </div>
     <div className="font-preview" style={{fontFamily:previewFamily||terminalFontFamily(settings),fontSize:settings.fontSize,fontWeight:previewFamily?400:settings.fontWeight,lineHeight:settings.lineHeight}}><span className="accent">root@server</span><span className="preview-muted">:~$ </span>ls -lah<br />0123456789 AaBbCc 终端中文字体预览<br /><span className="preview-muted">drwxr-xr-x　文档 / Documents</span></div>
     {fontError && <p className="font-help" role="status">{fontError}</p>}

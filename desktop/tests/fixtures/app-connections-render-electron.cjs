@@ -120,8 +120,9 @@ async function run() {
   assert.equal(await evaluate(`document.querySelectorAll('.host .host-icon').length`), 0);
   assert.equal(await evaluate(`document.querySelectorAll('.connection-group-toggle svg').length`), 2);
   assert.equal(await evaluate(`[...document.querySelectorAll('#server-sidebar button')].some(button => [button.title, button.getAttribute('aria-label'), button.textContent.trim()].some(label => label === '设置' || label === '打开设置'))`), false);
-  assert.equal(await evaluate(`[...document.querySelectorAll('.titlebar button')].some(button => /纯终端/.test(button.title + ' ' + button.getAttribute('aria-label') + ' ' + button.textContent))`), false);
+  assert.equal(await evaluate(`[...document.querySelectorAll('.titlebar button')].some(button => /专注模式/.test(button.title + ' ' + button.getAttribute('aria-label') + ' ' + button.textContent))`), false);
   assert.equal(await evaluate(`[...document.querySelectorAll('.titlebar button')].filter(button => button.title === '设置' || button.getAttribute('aria-label') === '设置').length`), 1);
+  assert.equal(await evaluate(`document.querySelector('.connection-home').textContent.includes('字体与快捷键')`), false);
   result.checks.simplifiedToolbarAndSettingsEntry = true;
   result.checks.initialHomeTab = true;
   phase = 'recent menu edits and saves without connecting';

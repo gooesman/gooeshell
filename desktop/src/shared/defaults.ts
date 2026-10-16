@@ -2,11 +2,11 @@ import type { AppSettings } from './types';
 export const defaultSettings: AppSettings = {
   theme: 'dark', terminalPalette: 'follow-interface', terminalBold: false, commandMarks: 'right',
   showConnectionHistory: true, filesToggleIconOnly: true, fontWeight: 400, chineseFontWeight: 400,
-  shortcutSchemaVersion: 2,
+  shortcutSchemaVersion: 3,
   fontFamily: 'DejaVu Sans Mono', chineseFont: 'Microsoft YaHei', fontSize: 14,
-  lineHeight: 1.1, cursorBlink: false, copyOnSelect: false, rightClickPaste: false,
+  lineHeight: 1.1, cursorBlink: false, copyOnSelect: false,
   backgroundImage: '', backgroundOpacity: 0.15, sudoPasswordSubmit: false,
-  shortcuts: {commands:'Ctrl+Shift+M',connect:'Ctrl+Shift+P',settings:'Ctrl+Shift+F1',sidebar:'Ctrl+Shift+[',terminalHeader:'Ctrl+Shift+]',previousTab:'Ctrl+Shift+ArrowLeft',nextTab:'Ctrl+Shift+ArrowRight',previousCommand:'Ctrl+ArrowUp',nextCommand:'Ctrl+ArrowDown',files:'Ctrl+Shift+E',maximize:'Ctrl+Shift+F10',fullscreen:'F11',zen:'Ctrl+Shift+F11',copy:'Ctrl+Shift+C',paste:'Ctrl+Shift+V',search:'Ctrl+Shift+F',fontUp:'Ctrl+=',fontDown:'Ctrl+-',reconnect:'Ctrl+Shift+R',sudoPassword:'Ctrl+Alt+P'}
+  shortcuts: {commands:'Ctrl+Shift+M',connect:'Ctrl+Shift+P',settings:'Ctrl+Shift+F1',sidebar:'Ctrl+Shift+[',terminalHeader:'Ctrl+Shift+]',previousTab:'Ctrl+Shift+ArrowLeft',nextTab:'Ctrl+Shift+ArrowRight',previousCommand:'Ctrl+ArrowUp',nextCommand:'Ctrl+ArrowDown',files:'Ctrl+Shift+E',maximize:'Ctrl+Shift+F10',fullscreen:'F11',zen:'Ctrl+Shift+F11',copy:'Ctrl+Shift+C',paste:'Ctrl+Shift+V',pasteMouse:'',search:'Ctrl+Shift+F',fontUp:'Ctrl+=',fontDown:'Ctrl+-',reconnect:'Ctrl+Shift+R',sudoPassword:'Ctrl+Alt+P'}
 };
 
 export function normalizeShortcut(value: string): string {

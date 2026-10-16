@@ -49,7 +49,7 @@ export async function identityMainHarness(t:{after:(fn:()=>Promise<void>)=>void}
  }
  let window:FakeWindow;
  class Window extends FakeWindow{constructor(...args:any[]){super(...args);window=this;}}
- const app=Object.assign(new EventEmitter(),{setName:()=>{},requestSingleInstanceLock:()=>true,quit:()=>{},exit:()=>{},setAppUserModelId:()=>{},getPath:()=>root,getAppPath:()=>path.resolve('.'),getVersion:()=> 'fixture',isPackaged:false,
+ const app=Object.assign(new EventEmitter(),{setName:()=>{},setAboutPanelOptions:()=>{},requestSingleInstanceLock:()=>true,quit:()=>{},exit:()=>{},setAppUserModelId:()=>{},getPath:()=>root,getAppPath:()=>path.resolve('.'),getVersion:()=> 'fixture',isPackaged:false,
   whenReady:()=>({then:(fn:()=>Promise<unknown>)=>Promise.resolve().then(fn).catch(rejectReady)}),
  });
  const ipcMain=Object.assign(new EventEmitter(),{handle:(_name:string,fn:typeof handler)=>{handler=fn;resolveReady(undefined);}});

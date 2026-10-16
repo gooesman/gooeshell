@@ -4,9 +4,9 @@ import { ConnectionIcon } from './ConnectionSidebar';
 import type { ConnectionHistoryEntry, HostProfile } from '../shared/types';
 import './connection-home.css';
 
-export default function ConnectionHome({ history, showHistory, connectShortcut, onCreate, onSettings, onPick, onContextMenu }: {
+export default function ConnectionHome({ history, showHistory, connectShortcut, onCreate, onPick, onContextMenu }: {
   history: ConnectionHistoryEntry[]; showHistory: boolean; connectShortcut: string;
-  onCreate: () => void; onSettings: () => void; onPick: (profile: HostProfile) => void; onContextMenu: (event:MouseEvent, profile:HostProfile) => void;
+  onCreate: () => void; onPick: (profile: HostProfile) => void; onContextMenu: (event:MouseEvent, profile:HostProfile) => void;
 }) {
   const hasHistory = showHistory && history.length > 0;
   return <div className={`connection-home${hasHistory ? ' with-history' : ''}`}>
@@ -14,7 +14,7 @@ export default function ConnectionHome({ history, showHistory, connectShortcut, 
       <img className="home-icon" src="./gooeshell-icon.png" alt="GooeShell" draggable={false} />
       <h1>打开终端，开始工作。</h1>
       <p>选择最近连接，或打开快速连接。</p>
-      <div className="empty-actions"><button className="button primary" onClick={onCreate}>+ 快速连接</button><button className="button secondary" onClick={onSettings}>字体与快捷键</button></div>
+      <div className="empty-actions"><button className="button primary" onClick={onCreate}>+ 快速连接</button></div>
       <span className="home-shortcut">{connectShortcut} 快速连接 · F11 全屏</span>
     </div>
     {hasHistory && <section className="recent-connections" aria-label="最近连接">

@@ -18,10 +18,6 @@ export default function TerminalColorSettings({ settings, onChange }: {
   return <section className="terminal-colors-section" aria-labelledby="terminal-colors-heading">
     <h3 id="terminal-colors-heading">终端配色</h3>
     <p className="settings-description">可以与界面主题分开选择。保存后应用到所有已打开的终端。</p>
-    <div className="settings-row">
-      <div><div className="row-title">允许终端文字额外加粗</div><div className="row-description">关闭时保持你选择的中英文字重，颜色照常显示；开启后按程序的要求加粗。</div></div>
-      <button type="button" role="switch" aria-label="允许终端文字额外加粗" aria-checked={settings.terminalBold} className={`switch${settings.terminalBold ? ' checked' : ''}`} onClick={() => onChange({ terminalBold: !settings.terminalBold })} />
-    </div>
     <div className="terminal-palette-picker" role="group" aria-label="终端配色">
       {choices.map(palette => <button type="button" key={palette.id}
         className={`terminal-palette-choice${selected === palette.id ? ' selected' : ''}`}
