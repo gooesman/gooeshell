@@ -43,7 +43,38 @@ async function replaceEditor(text) {
   await evaluate(`document.querySelector('.cm-content').focus()`);
   await key('A', [modifier]);
   await window.webContents.insertText(text);
-  await until(async () => (await inspect()).text.includes(text.trimEnd()), 'editor input');
+  await until(() => evaluate(`window.editorFixture.readEditor()?.text === ${JSON.stringify(text)}`), 'editor input');
+}
+async function select(label, value) {
+  await evaluate(`(() => {
+    const select=document.querySelector('select[aria-label="'+${JSON.stringify(label)}+'"]');
+    if (!select || select.disabled) throw new Error('Missing enabled select: '+${JSON.stringify(label)});
+    select.focus();select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+}
+async function palette(value) {
+  await select('编辑器配色', value);
+  await until(() => evaluate(`(() => { const select=document.querySelector('select[aria-label="编辑器配色"]'); return !select.disabled && select.value===${JSON.stringify(value)}; })()`), 'palette ' + value);
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+}
+const appearance = () => evaluate(`(() => {
+  const style = element => {
+    const foreground=getComputedStyle(element).color;
+    let node=element, background='';
+    while(node) { background=getComputedStyle(node).backgroundColor; if(background!=='rgba(0, 0, 0, 0)' && background!=='transparent')break;node=node.parentElement; }
+    return {foreground,background};
+  };
+  return [...document.querySelectorAll('.cm-editor')].map(editor => ({
+    ...style(editor),
+    search: [...editor.querySelectorAll('.cm-search,input[name="search"],input[name="replace"],.cm-search button[name="next"]')].map(style),
+  }));
+})()`);
+function contrast(foreground, background) {
+  const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(channel => {
+    const value=channel/255; return value<=0.04045 ? value/12.92 : ((value+0.055)/1.055)**2.4;
+  }).reduce((sum, channel, index) => sum + channel * [0.2126,0.7152,0.0722][index],0);
+  const light=luminance(foreground), dark=luminance(background);
+  return (Math.max(light,dark)+0.05)/(Math.min(light,dark)+0.05);
 }
 async function button(label) {
   await until(() => evaluate(`Boolean([...document.querySelectorAll('button')].find(button =>
@@ -186,9 +217,35 @@ async function run() {
   metrics.checks.conflictPreservesDraft = true;
   await screenshot('conflict');
 
+  phase = 'palette save errors remain separate from file conflicts';
+  await palette('paper');
+  await evaluate(`window.editorFixture.failNextPaletteSave()`);
+  await select('编辑器配色', 'midnight');
+  await until(async () => (await inspect()).body.includes('配色偏好保存失败'), 'separate palette failure');
+  assert.match((await inspect()).body,/原文件已发生变化/,'palette errors must not replace a file conflict');
+  assert.equal(await evaluate(`document.querySelector('select[aria-label="编辑器配色"]').value`),'paper');
+  await palette('auto');
+  assert.match((await inspect()).body,/原文件已发生变化/,'successful palette changes must not dismiss a file conflict');
+  assert.ok(!(await inspect()).body.includes('配色偏好保存失败'));
+  metrics.checks.paletteFailurePreservesFileConflict = true;
+
   phase = 'comparison checks again if the server changes a second time';
   await button('查看最新版本');
   await until(async () => (await inspect()).text.includes('updated on server'), 'latest file comparison');
+  phase = 'comparison panes share the selected palette without losing either document';
+  await evaluate(`window.paletteComparisonNodes=[...document.querySelectorAll('.cm-editor')]`);
+  for (const value of ['graphite', 'midnight', 'paper']) {
+    await palette(value);
+    const colors=await appearance();
+    assert.equal(colors.length,2);
+    assert.deepEqual(colors[0],colors[1], 'comparison and draft use the same appearance');
+    assert.ok(await evaluate(`window.paletteComparisonNodes.every((node,index)=>node===document.querySelectorAll('.cm-editor')[index])`));
+    assert.ok((await inspect()).text.includes('保持本地修改'));
+    assert.ok((await inspect()).text.includes('updated on server'));
+  }
+  await palette('auto');
+  metrics.checks.comparisonPalette = true;
+  phase = 'comparison checks again if the server changes a second time';
   backend.conflict = false;
   backend.text = 'second update on server\n';
   backend.revision = revision(10);
@@ -287,6 +344,152 @@ async function run() {
   await button('关闭编辑器');
   await button('放弃修改');
   await until(async () => (await inspect()).open === 'false', 'finish second document');
+
+  phase = 'editor palettes preserve the view, draft, cursor, scroll and undo history';
+  const yaml = 'services:\n  api:\n    image: "gooeshell:latest"\n    replicas: 3\n    enabled: true\n    ports:\n      - "8080:80"\n    environment:\n      MESSAGE: "中文配置"\n' + Array.from({length:90},(_,index)=>`    # fixture line ${index + 1}`).join('\n')+'\n';
+  const yamlDraft=yaml.replace('gooeshell:latest','gooeshell:edited');
+  backend.text=yaml;backend.revision=revision(40);backend.delayWrite=false;
+  await evaluate(`window.editorFixture.setTheme('dark');window.editorFixture.setOpen(true)`);
+  await until(() => evaluate(`window.editorFixture.readEditor()?.text === ${JSON.stringify(yaml)}`), 'open YAML fixture');
+  await select('语法模式','yaml');
+  await replaceEditor(yamlDraft);
+  await evaluate(`window.paletteEditorNode=document.querySelector('.cm-editor')`);
+  const readsBeforePalettes=backend.reads.length;
+  for (const value of ['auto','graphite','midnight','paper']) {
+    await evaluate(`window.editorFixture.selectPosition(30,5);document.querySelector('.cm-scroller').scrollTop=500`);
+    await delay(70);
+    const before=await evaluate(`window.editorFixture.readEditor()`);
+    assert.ok(before.scrollTop>0);
+    await palette(value);
+    const after=await evaluate(`window.editorFixture.readEditor()`);
+    assert.deepEqual(after,before,'palette changes preserve content, cursor and scroll: '+value);
+    assert.ok(await evaluate(`window.paletteEditorNode===document.querySelector('.cm-editor')`),'palette changes reconfigure the existing view');
+    await button('撤销');
+    await until(() => evaluate(`window.editorFixture.readEditor()?.text === ${JSON.stringify(yaml)}`),'undo after palette '+value);
+    await button('重做');
+    await until(() => evaluate(`window.editorFixture.readEditor()?.text === ${JSON.stringify(yamlDraft)}`),'redo after palette '+value);
+  }
+  assert.equal(backend.reads.length,readsBeforePalettes,'palette changes never reload the file');
+  assert.equal(backend.writes.length,6,'palette changes never save the document');
+  metrics.checks.palettePreservesEditor = true;
+
+  phase = 'palette persistence waits for confirmation without blocking file editing';
+  await evaluate(`window.editorFixture.holdPaletteSave()`);
+  await select('编辑器配色','midnight');
+  await until(() => evaluate(`document.querySelector('select[aria-label="编辑器配色"]').disabled`),'pending palette save disables only its control');
+  assert.equal(await evaluate(`document.querySelector('.cm-content').contentEditable`),'true');
+  assert.equal(await evaluate(`document.querySelector('button[aria-label="保存文件"]').disabled`),false);
+  await evaluate(`window.editorFixture.finishPaletteSave()`);
+  await until(() => evaluate(`!document.querySelector('select[aria-label="编辑器配色"]').disabled && document.querySelector('select[aria-label="编辑器配色"]').value==='midnight'`),'finish palette save');
+  assert.equal(await evaluate(`window.editorFixture.readEditor().text`),yamlDraft);
+  metrics.checks.palettePending = true;
+
+  phase = 'YAML colors distinguish keys and values with normal weight';
+  await evaluate(`window.editorFixture.selectPosition(1,0);document.querySelector('.cm-scroller').scrollTop=0`);
+  await delay(70);
+  metrics.paletteStyles={};
+  for (const value of ['graphite','midnight','paper']) {
+    await palette(value);
+    const colors=await appearance();
+    const tokens=await evaluate(`(() => {
+      const spans=[...document.querySelectorAll('.cm-content span')];
+      return ['services','"gooeshell:edited"','3'].map(text=>{
+        const token=spans.find(span=>span.textContent===text);
+        if(!token)throw new Error('YAML token missing: '+text);
+        const style=getComputedStyle(token);return {text,color:style.color,weight:style.fontWeight};
+      });
+    })()`);
+    assert.notEqual(tokens[0].color,tokens[1].color,'YAML keys and quoted strings have distinct colors');
+    assert.notEqual(tokens[0].color,tokens[2].color,'YAML keys and plain values have distinct colors');
+    assert.ok(tokens.every(token=>Number(token.weight)<=400),'syntax highlighting must not add bold text');
+    assert.ok(tokens.every(token=>contrast(token.color,colors[0].background)>=4.5),'YAML token contrast must remain readable');
+    metrics.paletteStyles[value]={...colors[0],tokens};
+    await screenshot('yaml-'+value);
+  }
+  assert.equal(new Set(Object.values(metrics.paletteStyles).map(style=>style.background)).size,3,'the three alternatives are visually distinct');
+  metrics.checks.yamlPaletteColors = true;
+
+  phase = 'JSON syntax distinguishes properties, strings and numeric values';
+  await select('语法模式','json');
+  await replaceEditor('{"image":"gooeshell:latest","replicas":3}\n');
+  for (const value of ['graphite','midnight','paper']) {
+    await palette(value);
+    const tokens=await evaluate(`(() => {
+      const spans=[...document.querySelectorAll('.cm-content span')];
+      return ['"image"','"gooeshell:latest"','3'].map(text=>{
+        const token=spans.find(span=>span.textContent===text);
+        if(!token)throw new Error('JSON token missing: '+text);
+        const style=getComputedStyle(token);return {color:style.color,weight:style.fontWeight};
+      });
+    })()`);
+    assert.equal(new Set(tokens.map(token=>token.color)).size,3,'JSON properties, strings and numbers have distinct colors');
+    assert.ok(tokens.every(token=>Number(token.weight)<=400));
+    assert.ok(tokens.every(token=>contrast(token.color,metrics.paletteStyles[value].background)>=4.5));
+  }
+  await select('语法模式','yaml');
+  await replaceEditor(yamlDraft);
+  await evaluate(`window.editorFixture.selectPosition(1,0);document.querySelector('.cm-scroller').scrollTop=0`);
+  metrics.checks.jsonPaletteColors = true;
+
+  phase = 'explicit editor palettes and search controls are independent of the app theme';
+  await button('替换');
+  await until(() => evaluate(`Boolean(document.querySelector('input[name="search"]'))`),'palette search panel');
+  await fill('input[name="search"]','services');
+  for (const value of ['paper','midnight']) {
+    await palette(value);
+    await evaluate(`window.editorFixture.setTheme('dark')`);await delay(60);
+    const darkApp=await appearance();
+    await evaluate(`window.editorFixture.setTheme('light')`);await delay(60);
+    const lightApp=await appearance();
+    assert.deepEqual(lightApp,darkApp,'explicit palette including search fields ignores surrounding app theme');
+    assert.ok(lightApp[0].search.length>=4);
+    for (const style of [lightApp[0],...lightApp[0].search]) assert.ok(contrast(style.foreground,style.background)>=4.5,'search panel and input contrast');
+    metrics.paletteStyles[value].search=lightApp[0].search;
+    await evaluate(`window.editorFixture.setTheme(${JSON.stringify(value==='paper'?'dark':'light')})`);
+    await delay(60);
+    await screenshot(value+'-opposite-app-search');
+  }
+  await palette('auto');
+  await evaluate(`window.editorFixture.setTheme('light')`);await delay(60);
+  assert.equal((await appearance())[0].background,metrics.paletteStyles.paper.background);
+  await evaluate(`window.editorFixture.setTheme('dark')`);await delay(60);
+  assert.equal((await appearance())[0].background,metrics.paletteStyles.graphite.background);
+  metrics.checks.paletteThemeIndependence = true;
+  metrics.checks.paletteSearchContrast = true;
+
+  phase = 'palette selector and search panel fit in a small editor window';
+  await palette('paper');
+  window.setSize(780,620);
+  await delay(100);
+  const layout=await evaluate(`(() => {
+    const dialog=document.querySelector('.text-editor-dialog').getBoundingClientRect();
+    const bounds=[...document.querySelectorAll('.editor-toolbar,.editor-toolbar select,.editor-statusbar,.cm-search,input[name="search"]')].map(node=>node.getBoundingClientRect());
+    return {viewport:{width:innerWidth,height:innerHeight},dialog:{left:dialog.left,right:dialog.right,top:dialog.top,bottom:dialog.bottom},inside:bounds.every(bounds=>bounds.left>=dialog.left-1 && bounds.right<=dialog.right+1)};
+  })()`);
+  assert.ok(layout.dialog.left>=0 && layout.dialog.top>=0 && layout.dialog.right<=layout.viewport.width && layout.dialog.bottom<=layout.viewport.height);
+  assert.ok(layout.inside,'palette and search controls stay inside the dialog at small width');
+  await screenshot('paper-small-window');
+  metrics.checks.paletteSmallWindow = true;
+  window.setSize(1200,820);
+
+  phase = 'palette preference survives closing and reloading the fixture';
+  await evaluate(`document.querySelector('input[name="search"]').focus()`);
+  await key('Escape');
+  await button('关闭编辑器');
+  await button('放弃修改');
+  await until(async () => (await inspect()).open==='false','close palette fixture');
+  await evaluate(`window.editorFixture.setOpen(true)`);
+  await until(() => evaluate(`window.editorFixture.readEditor()?.text === ${JSON.stringify(yaml)}`),'reopen with chosen palette');
+  assert.equal(await evaluate(`document.querySelector('select[aria-label="编辑器配色"]').value`),'paper');
+  assert.equal((await appearance())[0].background,metrics.paletteStyles.paper.background);
+  await button('关闭编辑器');
+  await until(async () => (await inspect()).open==='false','close clean document before reload');
+  await window.loadURL(url);
+  await until(() => evaluate(`window.editorFixture?.readEditor()?.text === ${JSON.stringify(yaml)}`),'reload isolated fixture');
+  assert.equal(await evaluate(`document.querySelector('select[aria-label="编辑器配色"]').value`),'paper');
+  assert.equal((await appearance())[0].background,metrics.paletteStyles.paper.background);
+  assert.equal(backend.writes.length,6);
+  metrics.checks.palettePreference = true;
   assert.equal(metrics.rendererErrors.length, 0);
   metrics.success = true;
 }

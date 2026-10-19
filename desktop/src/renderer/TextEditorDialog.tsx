@@ -3,7 +3,8 @@ import { ArrowDownToLine, Check, FileText, Maximize2, Minimize2, Redo2, RefreshC
 import { api } from './api';
 import CodeEditor, { type CodeEditorHandle } from './CodeEditor';
 import { editorLanguage, editorLanguages } from './editor-language';
-import type { EditableTextFile, EditorEncoding, FileEntry, TextWriteRequest } from '../shared/types';
+import { editorPalettes } from './editor-theme';
+import type { EditableTextFile, EditorEncoding, EditorPalette, FileEntry, TextWriteRequest } from '../shared/types';
 import './text-editor.css';
 
 export interface EditorTarget {
@@ -24,8 +25,9 @@ function lineEnding(text: string): EditableTextFile['lineEnding'] {
   return endings.size > 1 ? 'mixed' : endings.has('\r\n') ? 'crlf' : endings.has('\r') ? 'cr' : endings.has('\n') ? 'lf' : 'none';
 }
 
-export default function TextEditorDialog({ target, theme, disconnected, onClose, onSaved }: {
+export default function TextEditorDialog({ target, theme, palette, onPaletteChange, disconnected, onClose, onSaved }: {
   target: EditorTarget; theme: 'dark' | 'light'; disconnected: boolean;
+  palette: EditorPalette; onPaletteChange: (palette: EditorPalette) => Promise<void>;
   onClose: () => void; onSaved: () => void;
 }) {
   const [file, setFile] = useState<EditableTextFile | null>(null);
@@ -37,6 +39,8 @@ export default function TextEditorDialog({ target, theme, disconnected, onClose,
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [paletteSaving, setPaletteSaving] = useState(false);
+  const [paletteError, setPaletteError] = useState('');
   const [wrap, setWrap] = useState(false);
   const [language, setLanguage] = useState('auto');
   const [indent, setIndent] = useState<'2' | '4' | 'tab'>('2');
@@ -215,6 +219,12 @@ export default function TextEditorDialog({ target, theme, disconnected, onClose,
     else { setError(''); setStatus('已格式化，保存后生效'); }
   };
   const tool = (label: string, icon: React.ReactNode, action: () => void, disabled = false) => <button type="button" className="editor-tool" aria-label={label} title={label} disabled={disabled} onClick={action}>{icon}</button>;
+  const changePalette = async (value: EditorPalette) => {
+    setPaletteSaving(true); setPaletteError('');
+    try { await onPaletteChange(value); }
+    catch (cause) { if (alive.current) setPaletteError(`配色未保存：${message(cause)}`); }
+    finally { if (alive.current) setPaletteSaving(false); }
+  };
 
   return <div className="modal-backdrop editor-backdrop"><section ref={section} role="dialog" aria-modal="true" aria-label={`${target.entry.name} · 文本编辑器`} className={`text-editor-dialog${expanded ? ' expanded' : ''}`}>
     <header className="editor-heading"><FileText size={17}/><div className="editor-heading-copy"><strong>{target.entry.name}{dirty && <span className="editor-dirty" aria-label="未保存"> ●</span>}</strong><span title={target.entry.path}>{isRemote ? target.connectionName : '本地'} · {target.entry.path}</span></div>{tool(expanded ? '还原编辑器' : '展开编辑器', expanded ? <Minimize2 size={16}/> : <Maximize2 size={16}/>, () => setExpanded(value => !value))}{tool('关闭编辑器', <X size={17}/>, close, !!busy)}</header>
@@ -230,15 +240,17 @@ export default function TextEditorDialog({ target, theme, disconnected, onClose,
       {languageName === 'JSON' && <button type="button" className="editor-tool editor-tool-text" disabled={!file || file.truncated || !!busy} onClick={() => void formatJson()}>格式化 JSON</button>}
       <button type="button" className={`editor-tool${wrap ? ' active' : ''}`} aria-label="自动换行" title="自动换行" aria-pressed={wrap} onClick={() => setWrap(value => !value)}><WrapText size={16}/></button>
       <span className="editor-toolbar-spacer"/>
+      <select aria-label="编辑器配色" title="编辑器配色 · 自动记住选择" value={palette} disabled={paletteSaving} onChange={event => void changePalette(event.target.value as EditorPalette)}>{editorPalettes.map(item => <option key={item.id} value={item.id}>配色：{item.name}</option>)}</select>
       {tool('重新读取', <RefreshCw size={15}/>, () => confirmDiscard('重新读取会放弃当前未保存的修改', () => load(readEncoding || undefined)), disconnected || !!busy)}
       <select aria-label="以编码重新打开" title="以指定编码重新读取原文件" value={readEncoding} disabled={!!busy || disconnected} onChange={event => { const chosen = event.target.value as EditorEncoding | ''; confirmDiscard('更换读取编码会放弃当前未保存的修改', () => load(chosen || undefined)); }}><option value="">读取编码：自动</option>{encodings.map(([key, label]) => <option key={key} value={key}>读取：{label}</option>)}</select>
     </div>
+    {paletteError && <div className="editor-banner editor-error" role="alert">{paletteError}</div>}
     {disconnected && <div className="editor-banner" role="status">连接已断开，编辑内容仍保留。可以继续编辑并另存到本地。</div>}
     {file?.truncated && <div className="editor-banner">文件超过 2 MB，当前为只读预览，不能保存截断内容。</div>}
     {error && <div className="editor-banner editor-error" role="alert"><span>{/TEXT_CONFLICT/.test(error) ? '原文件已发生变化，尚未覆盖。你的修改仍保留，请先查看最新版本。' : error}</span>{/TEXT_CONFLICT/.test(error) && <button type="button" className="text-button" disabled={!!busy || disconnected} onClick={compare}>查看最新版本</button>}</div>}
     <div className={`editor-document-area${latest ? ' comparing' : ''}`}>
-      <div className="editor-document-pane">{latest && <div className="editor-pane-caption">当前编辑内容</div>}{file ? <CodeEditor key={generation} ref={surface} initialText={initialText.current} path={target.entry.path} language={language} indent={indent} theme={theme} readOnly={file.truncated || busy === '读取文件'} wrap={wrap} onInputPending={pending => { setInputPending(pending); if (pending) { dirtyRef.current = true; api.editorState?.({ dirty: true, busy: busyRef.current }); } }} onChange={text => { const value = current.current; value.draft = text; dirtyRef.current = !!value.file && (convertEol(text, value.eol) !== value.file.text || value.encoding !== value.file.encoding); api.editorState?.({ dirty: dirtyRef.current, busy: busyRef.current }); setDraft(text); setStatus(''); }} onCursorChange={(line, column) => setCursor({ line, column })} onSave={() => saveRef.current()}/> : <div className="editor-empty">{busy ? '正在读取文件…' : '文件尚未打开。可以选择正确的读取编码后重试。'}</div>}</div>
-      {latest && <div className="editor-document-pane"><div className="editor-pane-caption">磁盘最新版本 · 只读</div><CodeEditor key={latest.revision} initialText={latest.text} path={target.entry.path} language={language} indent={indent} theme={theme} readOnly wrap={wrap} onChange={() => {}} onCursorChange={() => {}} onSave={() => {}}/></div>}
+      <div className="editor-document-pane">{latest && <div className="editor-pane-caption">当前编辑内容</div>}{file ? <CodeEditor key={generation} ref={surface} initialText={initialText.current} path={target.entry.path} language={language} indent={indent} theme={theme} palette={palette} readOnly={file.truncated || busy === '读取文件'} wrap={wrap} onInputPending={pending => { setInputPending(pending); if (pending) { dirtyRef.current = true; api.editorState?.({ dirty: true, busy: busyRef.current }); } }} onChange={text => { const value = current.current; value.draft = text; dirtyRef.current = !!value.file && (convertEol(text, value.eol) !== value.file.text || value.encoding !== value.file.encoding); api.editorState?.({ dirty: dirtyRef.current, busy: busyRef.current }); setDraft(text); setStatus(''); }} onCursorChange={(line, column) => setCursor({ line, column })} onSave={() => saveRef.current()}/> : <div className="editor-empty">{busy ? '正在读取文件…' : '文件尚未打开。可以选择正确的读取编码后重试。'}</div>}</div>
+      {latest && <div className="editor-document-pane"><div className="editor-pane-caption">磁盘最新版本 · 只读</div><CodeEditor key={latest.revision} initialText={latest.text} path={target.entry.path} language={language} indent={indent} theme={theme} palette={palette} readOnly wrap={wrap} onChange={() => {}} onCursorChange={() => {}} onSave={() => {}}/></div>}
     </div>
     {latest && <div className="editor-compare-actions"><span>核对后选择；保存时还会再次检查版本。</span><button className="button secondary small" onClick={() => setLatest(null)}>取消比较</button><button className="button secondary small" disabled={!!busy} onClick={() => confirmDiscard('使用最新版本会放弃当前未保存的修改', () => { install(latest); setStatus('已读取最新版本'); })}>使用最新版本</button><button className="button primary small" disabled={!canSave || latest.truncated} onClick={() => save(false, latest.revision)}>以当前内容覆盖此版本</button></div>}
     <footer className="editor-statusbar"><span className="editor-save-status" title={status}>{busy || status || (dirty ? '未保存' : file ? '已载入' : '未载入')}{status.startsWith('已保存') && <Check size={12}/>}</span><span>行 {cursor.line}，列 {cursor.column}</span><select aria-label="语法模式" value={language} onChange={event => setLanguage(event.target.value)}>{editorLanguages.map(item => <option key={item.id} value={item.id}>{item.id === 'auto' ? `自动 · ${editorLanguage(target.entry.path).name}` : item.name}</option>)}</select><select aria-label="缩进" value={indent} onChange={event => setIndent(event.target.value as '2' | '4' | 'tab')}><option value="2">2 空格</option><option value="4">4 空格</option><option value="tab">Tab</option></select><select aria-label="换行格式" title="保存时使用的换行格式" value={eol} disabled={!file || file.truncated || !!busy} onChange={event => setEol(event.target.value as EolChoice)}><option value="preserve">保留原换行{file ? ` · ${eolNames[file.lineEnding]}` : ''}</option><option value="lf">LF</option><option value="crlf">CRLF</option><option value="cr">CR</option></select><select aria-label="保存编码" title="保存编码" value={encoding} disabled={!file || file.truncated || !!busy} onChange={event => setEncoding(event.target.value as EditorEncoding)}>{encodings.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>{file && <span>{file.truncated ? '> 2 MB' : `${(file.size / 1024).toFixed(1)} KB`}</span>}</footer>

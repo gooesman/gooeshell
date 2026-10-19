@@ -35,6 +35,7 @@ export function cleanSettings(input:AppSettings):AppSettings {
   const result=structuredClone(defaultSettings);
   if(!input||typeof input!=='object')return result;
   if(input.theme==='dark'||input.theme==='light')result.theme=input.theme;
+  if(input.editorPalette==='auto'||input.editorPalette==='graphite'||input.editorPalette==='midnight'||input.editorPalette==='paper')result.editorPalette=input.editorPalette;
   result.terminalPalette=normalizeTerminalPalette(input.terminalPalette);
   if(input.commandMarks==='hidden'||input.commandMarks==='left'||input.commandMarks==='right')result.commandMarks=input.commandMarks;
   if(Number.isInteger(input.fontWeight)&&input.fontWeight>=1&&input.fontWeight<=1000)result.fontWeight=input.fontWeight;

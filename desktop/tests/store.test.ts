@@ -124,6 +124,24 @@ test('terminal palette and bold preferences migrate independently and persist va
  try{for(const terminalBold of [true,false]){const store=new Store(root);await store.saveSettings({...defaultSettings,theme:'light',terminalPalette:'soft',terminalBold});const restored=await new Store(root).settings();assert.equal(restored.theme,'light');assert.equal(restored.terminalPalette,'soft');assert.equal(restored.terminalBold,terminalBold);}}
  finally{await fs.unlink(path.join(root,'settings.json'));await fs.rmdir(root);}
 });
+test('editor palette defaults for old or invalid settings and persists independently of terminal colors',async()=>{
+ const legacy={...defaultSettings,theme:'light' as const,terminalPalette:'soft',fontSize:18,shortcuts:{...defaultSettings.shortcuts,paste:'Ctrl+Alt+V'}} as any;
+ delete legacy.editorPalette;
+ const expected={...legacy,editorPalette:'auto'};
+ assert.deepEqual(cleanSettings(legacy),expected);
+ for(const editorPalette of [undefined,null,true,'',0,'unknown',{},[]])assert.deepEqual(cleanSettings({...legacy,editorPalette}),expected);
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-editor-palette-settings-'));
+ const file=path.join(root,'settings.json');
+ try{
+  await fs.writeFile(file,JSON.stringify(legacy));
+  assert.deepEqual(await new Store(root).settings(),expected);
+  for(const editorPalette of ['auto','graphite','midnight','paper'] as const){
+   await new Store(root).saveSettings({...legacy,editorPalette});
+   assert.deepEqual(await new Store(root).settings(),{...legacy,editorPalette});
+  }
+ }finally{await fs.unlink(file);await fs.rmdir(root);}
+});
+
 test('profiles persist only intended fields and never credentials',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-store-test-'));
  const store=new Store(root);

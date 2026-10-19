@@ -181,6 +181,41 @@ try {
   assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:false,followInPathBar:true,remoteDisabled:true});
   assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
   assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
+  phase('exercise packaged editor palette through local file list');
+  const editorFile = path.join(fileRoot, 'palette-smoke.yml');
+  const editorText = 'services:\n  smoke:\n    image: "gooeshell:test"\n    replicas: 2\n';
+  await fs.writeFile(editorFile, editorText);
+  const editorPalette = await call('Runtime.evaluate', {
+    expression: `(async()=>{
+      const wait=async(check,label)=>{const limit=Date.now()+6000;while(!check()){if(Date.now()>limit)throw new Error('Editor palette timeout: '+label);await new Promise(resolve=>setTimeout(resolve,30));}};
+      const input=document.querySelector('[data-side="local"] [aria-label="本地目录路径"]');
+      if(!input || !input.getClientRects().length)throw new Error('Local file list unavailable');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(fileRoot)});input.dispatchEvent(new Event('input',{bubbles:true}));
+      await new Promise(resolve=>setTimeout(resolve,0));input.form.requestSubmit();
+      const row=()=>[...document.querySelectorAll('[data-side="local"] [data-file-path]')].find(item=>item.dataset.filePath===${JSON.stringify(editorFile)});
+      await wait(row,'local YAML entry');
+      const open=async()=>{row().dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));await wait(()=>document.querySelector('.text-editor-dialog .cm-editor')?.textContent.includes('services:'),'lazy editor load');};
+      const select=()=>document.querySelector('.text-editor-dialog [aria-label="编辑器配色"]');
+      const background=()=>getComputedStyle(document.querySelector('.text-editor-dialog .cm-editor')).backgroundColor;
+      const light=color=>color.match(/[0-9.]+/g)?.slice(0,3).every(value=>Number(value)>200);
+      const choose=async(value)=>{select().value=value;select().dispatchEvent(new Event('change',{bubbles:true}));await wait(()=>select()?.value===value&&!select().disabled,'save '+value);};
+      await open();
+      if(select().value!=='auto')throw new Error('Unexpected initial editor palette');
+      const darkBackground=background();await choose('paper');await wait(()=>light(background()),'paper colors');
+      const paperBackground=background();
+      if((await window.gooeshell.initial()).settings.editorPalette!=='paper')throw new Error('Editor palette was not persisted');
+      document.querySelector('[aria-label="关闭编辑器"]').click();await wait(()=>!document.querySelector('.text-editor-dialog'),'close editor');
+      await open();if(select().value!=='paper'||!light(background()))throw new Error('Reopened editor lost paper palette');
+      await choose('auto');await wait(()=>background()===darkBackground,'restore automatic colors');
+      if((await window.gooeshell.initial()).settings.editorPalette!=='auto')throw new Error('Automatic editor palette was not restored');
+      document.querySelector('[aria-label="关闭编辑器"]').click();await wait(()=>!document.querySelector('.text-editor-dialog'),'final close');
+      return {openedFromFileList:true,darkBackground,paperBackground,persisted:true,reopened:true,restored:'auto'};
+    })()`, returnByValue:true,awaitPromise:true,
+  });
+  assert.equal(editorPalette.exceptionDetails,undefined,'Packaged editor palette interface failed');
+  state.editorPalette=editorPalette.result.value;
+  assert.notEqual(state.editorPalette.darkBackground,state.editorPalette.paperBackground);
+  assert.equal(await fs.readFile(editorFile,'utf8'),editorText,'Palette selection must not modify the file');
   phase('exercise packaged local terminal through IPC');
   const localTerminal = await call('Runtime.evaluate', {
     expression: `(async()=>{

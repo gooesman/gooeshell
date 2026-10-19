@@ -8,9 +8,9 @@ import react from '@vitejs/plugin-react';
 
 // The editor's focus, undo history, search panel and keyboard handling depend on
 // Chromium. Run the actual renderer instead of reproducing them in a DOM mock.
-test('built-in editor preserves drafts and saves to its original connection', {
+test('built-in editor preserves drafts, connection and state while changing palettes', {
   skip: process.env.GOOESHELL_EDITOR_RENDER_TEST === '1' ? false : 'Set GOOESHELL_EDITOR_RENDER_TEST=1 with Electron installed (Linux needs a display or xvfb-run)',
-  timeout: 75_000,
+  timeout: 120_000,
 }, async t => {
   const root = process.cwd();
   const artifactsRoot = path.resolve('../.build');
@@ -44,7 +44,7 @@ test('built-in editor preserves drafts and saves to its original connection', {
   let stderr = '';
   child.stderr.on('data', data => { stderr += data.toString(); });
   child.stdout.on('data', () => {});
-  const timeout = setTimeout(() => child.kill(), 65_000);
+  const timeout = setTimeout(() => child.kill(), 110_000);
   timeout.unref();
   child.once('close', () => clearTimeout(timeout));
   t.after(() => { if (child.exitCode === null) child.kill(); });
@@ -72,5 +72,15 @@ test('built-in editor preserves drafts and saves to its original connection', {
   assert.equal(result.checks.pendingSavePreservesNewEdits, true);
   assert.equal(result.checks.pendingSaveAndClosePreservesNewEdits, true);
   assert.equal(result.checks.jsonFormattingAndUndo, true);
+  assert.equal(result.checks.comparisonPalette, true);
+  assert.equal(result.checks.paletteFailurePreservesFileConflict, true);
+  assert.equal(result.checks.palettePreservesEditor, true);
+  assert.equal(result.checks.palettePending, true);
+  assert.equal(result.checks.yamlPaletteColors, true);
+  assert.equal(result.checks.jsonPaletteColors, true);
+  assert.equal(result.checks.paletteThemeIndependence, true);
+  assert.equal(result.checks.paletteSearchContrast, true);
+  assert.equal(result.checks.paletteSmallWindow, true);
+  assert.equal(result.checks.palettePreference, true);
   assert.deepEqual(result.rendererErrors, []);
 });

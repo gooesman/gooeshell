@@ -26,8 +26,10 @@ export interface HostProfile {
   jumpHost?: JumpHostProfile;
   shellIntegration?: boolean;
 }
+export type EditorPalette = 'auto' | 'graphite' | 'midnight' | 'paper';
 export interface AppSettings {
   theme: 'dark' | 'light';
+  editorPalette: EditorPalette;
   terminalPalette: string;
   terminalBold: boolean;
   commandMarks: 'hidden' | 'left' | 'right';

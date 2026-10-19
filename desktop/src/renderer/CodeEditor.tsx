@@ -1,13 +1,14 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
-import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, Prec } from '@codemirror/state';
 import { EditorView, crosshairCursor, drawSelection, dropCursor, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, rectangularSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, redo, undo } from '@codemirror/commands';
-import { HighlightStyle, bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language';
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { gotoLine, highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
-import { tags } from '@lezer/highlight';
+import type { EditorPalette } from '../shared/types';
 import { createEditorDocument } from './editor-document';
 import { editorLanguage } from './editor-language';
+import { editorAppearance } from './editor-theme';
 import './code-editor.css';
 
 export type CodeEditorHandle = {
@@ -26,6 +27,7 @@ export type CodeEditorProps = {
   initialText: string;
   path: string;
   theme: 'dark' | 'light';
+  palette?: EditorPalette;
   readOnly: boolean;
   wrap: boolean;
   language?: string;
@@ -44,45 +46,6 @@ const phrases = {
   'replaced $ matches': '已替换 $ 处匹配', 'Fold line': '折叠此行', 'Unfold line': '展开此行',
   'Unfold': '展开', 'folded code': '已折叠的代码',
 };
-
-function editorAppearance(theme: 'dark' | 'light'): Extension {
-  const dark = theme === 'dark';
-  return [EditorView.theme({
-    '&': { height: '100%', color: 'var(--text)', backgroundColor: 'var(--surface-sunken)' },
-    '&.cm-focused': { outline: 'none' },
-    '.cm-scroller': { fontFamily: 'var(--mono)', fontSize: '13px', lineHeight: '1.65', overflow: 'auto' },
-    '.cm-content': { padding: '10px 0', caretColor: 'var(--text)' },
-    '.cm-line': { padding: '0 12px' },
-    '.cm-gutters': { backgroundColor: 'var(--surface-sunken)', color: 'var(--text-subtle)', borderRight: '1px solid var(--border)' },
-    '.cm-lineNumbers .cm-gutterElement': { padding: '0 9px 0 12px', minWidth: '3em' },
-    '.cm-activeLineGutter': { backgroundColor: 'var(--surface-selected)', color: 'var(--text)' },
-    '.cm-activeLine': { backgroundColor: dark ? '#ffffff06' : '#00000004' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text)' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: dark ? '#ffffff26' : '#00000020' },
-    '.cm-selectionMatch': { backgroundColor: dark ? '#ffffff16' : '#00000010' },
-    '.cm-searchMatch': { backgroundColor: dark ? '#bc986c35' : '#d6a96a45', outline: '1px solid #a8896550' },
-    '.cm-searchMatch-selected': { backgroundColor: dark ? '#bc986c65' : '#c2945c65' },
-    '&.cm-focused .cm-matchingBracket': { color: 'inherit', backgroundColor: dark ? '#ffffff26' : '#00000018', outline: '1px solid var(--border-strong)' },
-    '.cm-foldPlaceholder': { color: 'var(--text-muted)', backgroundColor: 'var(--surface-selected)', border: '1px solid var(--border)', borderRadius: '4px' },
-    '.cm-panels': { backgroundColor: 'var(--surface-raised)', color: 'var(--text)' },
-    '.cm-panels-top': { borderBottom: '1px solid var(--border)' },
-    '.cm-panels-bottom': { borderTop: '1px solid var(--border)' },
-    '.cm-tooltip': { backgroundColor: 'var(--surface-raised)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '6px' },
-  }, { dark }), syntaxHighlighting(HighlightStyle.define([
-    { tag: tags.comment, color: dark ? '#929292' : '#777777', fontStyle: 'italic' },
-    { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], color: dark ? '#c5b5d6' : '#765587' },
-    { tag: [tags.string, tags.special(tags.string)], color: dark ? '#b6c6a6' : '#4f7146' },
-    { tag: [tags.number, tags.bool, tags.null, tags.atom], color: dark ? '#d0b493' : '#8d6135' },
-    { tag: [tags.function(tags.variableName), tags.labelName], color: dark ? '#b7c9da' : '#3f658a' },
-    { tag: [tags.propertyName, tags.attributeName], color: dark ? '#c6c3b9' : '#665d48' },
-    { tag: [tags.tagName, tags.typeName, tags.className], color: dark ? '#abc9c3' : '#3f7269' },
-    { tag: tags.heading, color: dark ? '#e3e3e3' : '#202020', fontWeight: 'bold' },
-    { tag: tags.strong, fontWeight: 'bold' },
-    { tag: tags.emphasis, fontStyle: 'italic' },
-    { tag: tags.link, textDecoration: 'underline' },
-    { tag: tags.invalid, color: 'var(--danger)' },
-  ]))];
-}
 
 function openReplace(view: EditorView): boolean {
   openSearchPanel(view);
@@ -175,7 +138,7 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
             },
           }),
           EditorView.contentAttributes.of({ 'aria-label': '文件内容', 'aria-multiline': 'true', spellcheck: 'false' }),
-          config.current.appearance.of(editorAppearance(initial.theme)),
+          config.current.appearance.of(editorAppearance(initial.theme, initial.palette)),
           config.current.language.of(language.extension),
           config.current.indentation.of([indentUnit.of(indentation(initial.indent)), EditorState.tabSize.of(initial.indent === '2' || !initial.indent ? 2 : 4)]),
           config.current.wrapping.of(initial.wrap ? EditorView.lineWrapping : []),
@@ -210,7 +173,7 @@ const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEd
     };
   }, []);
 
-  useEffect(() => { view.current?.dispatch({ effects: config.current.appearance.reconfigure(editorAppearance(props.theme)) }); }, [props.theme]);
+  useEffect(() => { view.current?.dispatch({ effects: config.current.appearance.reconfigure(editorAppearance(props.theme, props.palette)) }); }, [props.theme, props.palette]);
   useEffect(() => { view.current?.dispatch({ effects: config.current.wrapping.reconfigure(props.wrap ? EditorView.lineWrapping : []) }); }, [props.wrap]);
   useEffect(() => { view.current?.dispatch({ effects: config.current.writable.reconfigure([EditorState.readOnly.of(props.readOnly), EditorView.editable.of(!props.readOnly)]) }); }, [props.readOnly]);
   useEffect(() => { view.current?.dispatch({ effects: config.current.language.reconfigure(editorLanguage(props.path, props.language).extension) }); }, [props.path, props.language]);
