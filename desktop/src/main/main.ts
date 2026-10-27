@@ -376,7 +376,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
     }finally{if(attemptId&&connectAttempts.get(attemptId)===attempt)connectAttempts.delete(attemptId);}
    }
    case 'localList':return localList(value||os.homedir());
-   case 'chooseFiles':{const result=await dialog.showOpenDialog(win,{title:value?.title,properties:value?.directory?['openDirectory']:value?.multiple?['openFile','multiSelections']:['openFile']});return result.canceled?[]:result.filePaths;}
+   case 'chooseFiles':{const result=await dialog.showOpenDialog(win,{title:value?.title,defaultPath:typeof value?.defaultPath==='string'?value.defaultPath:undefined,properties:value?.directory?['openDirectory']:value?.multiple?['openFile','multiSelections']:['openFile']});return result.canceled?[]:result.filePaths;}
    case 'showInFolder':shell.showItemInFolder(localPath(value));return;
    case 'readFile':return value.side==='local'?readLocalText(value.path):remote('readFile',value);
    case 'readTextFile':return value.side==='local'?readLocalTextFile(value):remote('readTextFile',value);

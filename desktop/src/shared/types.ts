@@ -155,7 +155,7 @@ export interface DesktopApi {
   localList(path: string): Promise<FileListing>;
   remoteList(request: RemoteRequest): Promise<FileListing>;
   terminalCwd(request: { sessionId: string }): Promise<{ path: string; source: 'shell' | 'tmux' }>;
-  chooseFiles(options: { directory?: boolean; multiple?: boolean; title?: string }): Promise<string[]>;
+  chooseFiles(options: { directory?: boolean; multiple?: boolean; title?: string; defaultPath?: string }): Promise<string[]>;
   showInFolder(path: string): Promise<void>;
   transfer(request: TransferRequest): Promise<string>;
   cancelTransfer(id: string): Promise<void>;

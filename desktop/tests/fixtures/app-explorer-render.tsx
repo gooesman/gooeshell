@@ -75,7 +75,7 @@ api.onEvent = listener => { listeners.add(listener); return () => { listeners.de
 api.disconnect = async sessionId => control.emit({ type: 'sessionClosed', sessionId, message: 'fixture disconnected' });
 api.localList = path => list({ sessionId: '', path, side: 'local' });
 api.remoteList = request => list({ ...request, side: 'remote' });
-api.chooseFiles = async () => { await record('chooseFiles', { sessionId: '', path: '' }); return [...control.chosenFiles]; };
+api.chooseFiles = async options => { await record('chooseFiles', { sessionId: '', path: '', ...options }); return [...control.chosenFiles]; };
 api.externalEdits = async () => [...control.external];
 api.openExternalEditor = async request => {
   calls.push({ method: 'openExternalEditor', request: { ...request } });

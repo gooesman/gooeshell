@@ -25,6 +25,9 @@
 .file-table .file-table-spacer:hover { background:transparent; }
 .file-table-wrap { overflow-anchor:none; }
 .transfer-dialog .file-action-location { margin-bottom:12px; }
+.transfer-destination { display:flex; align-items:center; gap:8px; }
+.transfer-destination .dialog-path { flex:1; min-width:0; }
+.transfer-destination button { flex-shrink:0; white-space:nowrap; }
 .transfer-source-list { list-style:none; max-height:108px; overflow:auto; margin:0 0 20px; padding:8px 11px; border:1px solid var(--border); border-radius:8px; background:var(--surface); }
 .transfer-source-list li { font:11px/1.8 var(--mono); color:var(--text-muted); overflow-wrap:anywhere; padding:2px 0; }
 .transfer-mode-options { min-width:0; border:0; padding:0; margin:0; display:flex; flex-direction:column; gap:9px; }
