@@ -32,6 +32,7 @@ const unavailable=async()=>{throw new Error('这是浏览器界面预览；请�
 const previewTexts=new Map<string,EditableTextFile>();
 let previewRevision=0;
 const preview:DesktopApi={
+ mcpStatus:async()=>({available:false,enabled:false}),setMcpEnabled:unavailable,
  listLoginIdentities:async()=>({identities:previewIdentities.map(previewIdentitySummary),secureStorageAvailable:false}),
  saveLoginIdentity:async input=>{
   const existing=previewIdentities.find(identity=>identity.id===input.id);

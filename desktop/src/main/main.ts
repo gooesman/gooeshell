@@ -20,9 +20,12 @@ import {listLocalDirectory} from './local-directory';
 import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
+import {McpBridge} from './mcp-bridge';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
 let identityWrites:Promise<unknown>=Promise.resolve();
+let mcpBridge:McpBridge|undefined;
+const bridgeSessions=new Set<string>();
 function identityMutation<T>(operation:()=>Promise<T>):Promise<T>{const next=identityWrites.catch(()=>{}).then(operation);identityWrites=next;return next;}
 const sessionLoginPasswords=new Map<string,string>();
 const keyAttempts=new Map<string,{cancelled:boolean;started:boolean;profileId:string}>();
@@ -99,7 +102,7 @@ function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
  return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
 }
-function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();if(worker)worker.postMessage({method:'shutdown',args:[]});void localStop.finally(()=>setTimeout(()=>{void worker?.terminate();app.exit(0);},300));}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();if(worker)worker.postMessage({method:'shutdown',args:[]});void Promise.all([localStop,bridgeStop]).finally(()=>setTimeout(()=>{void worker?.terminate();app.exit(0);},300));}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
@@ -128,7 +131,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
  identities=new IdentityStore(app.getPath('userData'),credentialCipher);
  localKeys=new LocalKeyStore(path.join(app.getPath('userData'),'keys'));
  const sendEvent=(event:AppEvent)=>{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',event);};
- const trackClosed=(id:string)=>{sessionProfiles.delete(id);sessionLoginPasswords.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
+ const trackClosed=(id:string)=>{sessionProfiles.delete(id);sessionLoginPasswords.delete(id);bridgeSessions.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
  localPty=new LocalPtyService(event=>{if(event.type==='sessionClosed')trackClosed(event.sessionId);sendEvent(event);});
  const hostQuestions=new Set<string>();
  let restarts:number[]=[];
@@ -157,13 +160,14 @@ if(primaryInstance)app.whenReady().then(async()=>{
  win.webContents.on('will-navigate',(event,url)=>{if(url!==win.webContents.getURL())event.preventDefault();});
  session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
  const trusted=(event:Electron.IpcMainEvent|Electron.IpcMainInvokeEvent)=>event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;
- ipcMain.handle('gooeshell:call',async(event,method,args:unknown[])=>{
-  if(!trusted(event)||!Array.isArray(args))throw new Error('调用来源无效');
+ const invoke=async(method:string,args:unknown[])=>{
   const request:any=args[0];
   if(localPty.has(request?.sessionId)&&(remoteMethods.has(method)||method==='sendSudoPassword'||request.side==='remote'&&['readFile','readTextFile','writeFile','writeTextFile','mkdir','createFile','removeFile','rename'].includes(method)))throw new Error('本地终端不支持 SSH、远程目录或 sudo 密码操作');
   if(remoteMethods.has(method)){const result=await remote(method,...args);if(method==='confirmHostKey')hostQuestions.delete(args[0] as string);return result;}
   const value:any=args[0];
   switch(method){
+   case 'mcpStatus':return mcpBridge!.status();
+   case 'setMcpEnabled':return mcpBridge!.setEnabled(value);
    case 'listLocalShells':return localPty.listLocalShells();
    case 'createLocalSession':return localPty.createLocalSession(value);
    case 'disconnect':if(localPty.has(value)){localPty.disconnect(value);return;}return remote('disconnect',value);
@@ -333,7 +337,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
      const effectiveProfile={...profile,...(skipHostKeyVerification?{rememberHost:false}:{}),...(profile.jumpHost&&skipJumpHostKeyVerification?{jumpHost:{...profile.jumpHost,rememberHost:false}}:{})};
      if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
      attempt.started=true;
-     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId,jumpPassword,jumpPassphrase,skipJumpHostKeyVerification});
+     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId,jumpPassword,jumpPassphrase,skipJumpHostKeyVerification,bridgeOnly:value.bridgeOnly===true});
      if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
      if(closedSessions.has(connected.id))throw new Error('服务器在连接完成前关闭了终端，请重新连接。');
      sessionProfiles.set(connected.id,profile);
@@ -394,7 +398,42 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'fullscreen':win.setFullScreen(!win.isFullScreen());return;
    default:throw new Error('不支持的操作');
   }
+ };
+ ipcMain.handle('gooeshell:call',async(event,method,args:unknown[])=>{
+  if(!trusted(event)||!Array.isArray(args))throw new Error('调用来源无效');
+  return invoke(method,args);
  });
+ const bridgeDescription=(id:string,profile:HostProfile)=>({id,connectionId:profile.id,name:profile.name,host:profile.host,port:profile.port,username:profile.username,source:bridgeSessions.has(id)?'mcp':'terminal'});
+ const descriptor=path.join(app.getPath('userData'),'mcp-bridge.json');
+ mcpBridge=new McpBridge(app.getPath('userData'),{command:process.execPath,args:[path.join(__dirname,'mcp-stdio.js'),descriptor],env:{ELECTRON_RUN_AS_NODE:'1'}},async(name,args,signal)=>{
+  signal.throwIfAborted();
+  if(name==='list_connections'){
+   const profiles=await resolveIdentityMetadata(identities,await store.connections());const library=await identities.list();
+   return profiles.map(profile=>({connectionId:profile.id,name:profile.name,host:profile.host,port:profile.port,username:profile.username,auth:profile.auth,identityName:library.identities.find(identity=>identity.id===profile.loginIdentityId)?.name,hasJumpHost:!!profile.jumpHost}));
+  }
+  if(name==='list_sessions')return[...sessionProfiles].map(([id,profile])=>bridgeDescription(id,profile));
+  if(name==='connect'){
+   const stored=(await store.connections()).find(profile=>profile.id===args.connectionId);if(!stored)throw new Error('保存的连接不存在，请在 Gooeshell 中先保存连接');
+   const profile=(await resolveIdentityMetadata(identities,[stored]))[0];
+   const existing=[...sessionProfiles].find(([,live])=>live.id===profile.id&&connectionConfigurationIdentity(live)===connectionConfigurationIdentity(profile));
+   if(existing)return{...bridgeDescription(...existing),reused:true};
+   const attemptId=randomUUID();const cancel=()=>{void invoke('cancelConnect',[attemptId]).catch(()=>{});};
+   signal.addEventListener('abort',cancel,{once:true});
+   try{
+    signal.throwIfAborted();const connected=await invoke('connect',[{profile,attemptId,bridgeOnly:true}]);
+    if(signal.aborted){await remote('disconnect',connected.id);signal.throwIfAborted();}
+    bridgeSessions.add(connected.id);return{...bridgeDescription(connected.id,connected.profile),reused:false};
+   }finally{signal.removeEventListener('abort',cancel);}
+  }
+  const profile=sessionProfiles.get(args.sessionId);if(!profile)throw new Error('SSH 会话已断开，请先调用 connect');
+  let password:string|undefined;
+  if(args.sudo){const saved=await credentials.get(profile);password=saved.sudoUsesLogin?(profile.loginIdentityId?sessionLoginPasswords.get(args.sessionId):saved.password):saved.sudoPassword;}
+  signal.throwIfAborted();
+  if(sessionProfiles.get(args.sessionId)!==profile)throw new Error('SSH 会话已断开，请重新连接');
+  const requestId=randomUUID(),cancel=()=>{void remote('cancelBridgeExec',requestId).catch(()=>{});};
+  signal.addEventListener('abort',cancel,{once:true});
+  try{return await remote('bridgeExec',{...args,requestId,password});}finally{signal.removeEventListener('abort',cancel);}
+ },async()=>{if(shuttingDown){bridgeSessions.clear();return;}await Promise.all([...bridgeSessions].map(id=>remote('disconnect',id).catch(()=>{})));bridgeSessions.clear();});
  ipcMain.on('gooeshell:terminal',(event,method,args)=>{
   if(!trusted(event)||!['terminalInput','terminalBinaryInput','terminalResize','terminalAck'].includes(method)||!Array.isArray(args))return;
   try{
@@ -407,6 +446,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
  const dev=process.env.GOOESHELL_DEV_URL;
  if(dev){if(!/^http:\/\/127\.0\.0\.1:5173\/?$/.test(dev))throw new Error('Invalid development URL');await win.loadURL(dev);}else await win.loadFile(path.join(__dirname,'../../dist/index.html'));
  win.show();
+ await mcpBridge.load().catch(error=>sendEvent({type:'notice',message:'MCP 桥接未启动：'+(error instanceof Error?error.message:String(error))}));
  if(activateWhenReady)activateWindow();
 });
 if(primaryInstance){

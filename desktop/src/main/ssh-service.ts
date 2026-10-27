@@ -19,6 +19,8 @@ import { canonicalPublicKey, type ResolvedLocalKey } from './local-keys';
 import { installPublicKey } from './ssh-key-install';
 import { createTransferHash } from './transfer-hash-probe';
 import { SHELL_INTEGRATION_COMMAND } from './shell-integration';
+import {executeBridgeCommand} from './bridge-command';
+import type {BridgeCommand,BridgeCommandResult} from '../shared/mcp';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -107,6 +109,7 @@ function remoteError(error: unknown): Error {
 /** Lives in a worker: rendering, SSH crypto and file I/O never share the UI thread. */
 export class SshService {
   private readonly sessions = new Map<string, Session>();
+  private readonly bridgeJobs = new Map<string,AbortController>();
   private readonly jobs = new Map<string, TransferJob>();
   private readonly questions = new Map<string, HostQuestion>();
   private readonly attempts = new Map<string, ConnectAttempt>();
@@ -508,6 +511,11 @@ export class SshService {
     try {
       const client = await this.openClient(session);
       session.terminalClient = client;
+      if(request.bridgeOnly){
+        client.on('close',()=>this.finishSession(session,'SSH 连接已关闭'));
+        client.on('error',error=>this.finishSession(session,`SSH 连接出错：${message(error)}`));
+        return{id:session.id,profile:{...profile}};
+      }
       const shell = await new Promise<ClientChannel>((resolve, reject) => {
         let settled=false;
         const cleanup=()=>{client.removeListener('close',closed);client.removeListener('error',failed);};
@@ -889,6 +897,16 @@ export class SshService {
     this.emit({ type: 'transfer', transfer: { ...job.info } });
     if (job.info.mode !== 'archive') job.client?.destroy();
   }
+
+  async bridgeExec(request:BridgeCommand&{requestId:string;password?:string}):Promise<BridgeCommandResult>{
+    const session=this.session(request.sessionId);
+    if(!session.terminalClient||this.bridgeJobs.size>=8||this.bridgeJobs.has(request.requestId))throw new Error('MCP 命令暂不可用，请稍后重试');
+    const controller=new AbortController(),cancel=()=>controller.abort();
+    this.bridgeJobs.set(request.requestId,controller);session.abort.signal.addEventListener('abort',cancel,{once:true});
+    try{return await executeBridgeCommand(session.terminalClient,request,session.profile.encoding,controller.signal,request.password);}
+    finally{this.bridgeJobs.delete(request.requestId);session.abort.signal.removeEventListener('abort',cancel);}
+  }
+  cancelBridgeExec(id:string):void{this.bridgeJobs.get(id)?.abort();}
 
   terminalCwd(request: {sessionId: string}): Promise<TerminalDirectory> {
     const session = this.session(request.sessionId);

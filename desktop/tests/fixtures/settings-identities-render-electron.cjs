@@ -25,7 +25,7 @@ async function run() {
   await until(() => evaluate('Boolean(document.querySelector(".settings-dialog"))'), 'settings ready');
   phase = 'navigation';
   const tabs = await evaluate('[...document.querySelectorAll(".settings-tabs button")].map(button => button.textContent)');
-  assert.deepEqual(tabs, ['通用', '字体与外观', '终端配色', '键盘与鼠标', '登录身份', '关于']); result.checks.simplifiedNavigation = true;
+  assert.deepEqual(tabs, ['通用', '字体与外观', '终端配色', '键盘与鼠标', '登录身份', 'AI 与 MCP', '关于']); result.checks.simplifiedNavigation = true;
   const bounds = await evaluate('(() => { const {x,y,width,height}=document.querySelector(".settings-dialog").getBoundingClientRect();return{x,y,width,height};})()');
   for (const label of tabs) { await click(label); assert.deepEqual(await evaluate('(() => { const {x,y,width,height}=document.querySelector(".settings-dialog").getBoundingClientRect();return{x,y,width,height};})()'), bounds); }
   result.checks.fixedDialogDimensions = true;

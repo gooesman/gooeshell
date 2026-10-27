@@ -1,5 +1,7 @@
 # Upstream provenance
 
+The local MCP bridge uses the official [TypeScript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk), pinned to `@modelcontextprotocol/sdk` 1.32.2 (MIT), and Zod 4.6.7 (MIT). The v1 SDK provides a CommonJS entry compatible with the desktop's existing main-process build. Dependency licenses remain in the packaged modules. The adapter runs over stdio using the application's bundled Node runtime; connection selection, credential handling and the authenticated loopback bridge are independent GooeShell code.
+
 GooeShell is an independent Windows-first product. The current graphical application lives in `desktop/` and uses Electron, React, TypeScript, xterm.js and ssh2. The original native prototype and imported WezTerm source tree remain in this repository as a reference, under their original licenses.
 
 The graphical application does not run or repackage the WezTerm executables. Its new code is MIT licensed under `desktop/LICENSE`; dependency licenses are retained in the packaged Node modules and Electron distribution. Font provenance is recorded below.

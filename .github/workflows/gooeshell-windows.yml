@@ -125,6 +125,8 @@ jobs:
             desktop/test-output/editor-main-*/result.json
             .build/editor-render-*/result.json*
             desktop/test-output/connection-main-*/result.json
+            desktop/test-output/mcp-main-*/result.json
+            desktop/test-output/mcp-settings-*.png
             desktop/test-output/reload-shortcuts-*/result.json
             .build/connection-ui-*/result.json*
             .build/connections-flow-*/result.json*

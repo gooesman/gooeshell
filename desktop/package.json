@@ -1,7 +1,7 @@
 {
   "name": "gooeshell",
   "desktopName": "gooeshell.desktop",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Local terminal, SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
@@ -38,6 +38,7 @@
     "@codemirror/state": "^6.7.4",
     "@codemirror/view": "^6.43.11",
     "@lezer/highlight": "^1.2.3",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@xterm/addon-fit": "latest",
     "@xterm/addon-search": "latest",
     "@xterm/addon-webgl": "0.19.0",
@@ -48,7 +49,8 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "ssh2": "1.17.0",
-    "tar": "^7.5.22"
+    "tar": "^7.5.22",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -109,6 +111,10 @@
       "maintainer": "gooesman"
     },
     "extraResources": [
+      {
+        "from": "../docs/MCP.md",
+        "to": "docs/MCP.md"
+      },
       {
         "from": "assets/icon.png",
         "to": "icon.png"

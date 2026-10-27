@@ -1,4 +1,5 @@
 import type {FontFamilyInfo} from './font-types';
+import type {McpStatus} from './mcp';
 export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
 export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
 export type CredentialRemember = 'never' | 'session' | 'persistent';
@@ -55,7 +56,7 @@ export interface LocalSessionInfo { kind: 'local'; id: string; tabId?: string; n
 export type SessionInfo = SshSessionInfo | LocalSessionInfo;
 export interface LocalShellInfo { id: string; name: string; path?: string; available: boolean; isDefault: boolean; }
 export interface CreateLocalSessionRequest { shell?: string; cwd?: string; cols?: number; rows?: number; }
-export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; jumpPassword?: string; jumpPassphrase?: string; skipJumpHostKeyVerification?: boolean; }
+export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; jumpPassword?: string; jumpPassphrase?: string; skipJumpHostKeyVerification?: boolean; bridgeOnly?: boolean; }
 export interface FileEntry {
   name: string; path: string; type: 'directory' | 'file' | 'symlink';
   size: number; modified: number; mode?: number; owner?: string; group?: string;
@@ -101,6 +102,8 @@ export type AppEvent =
   | { type: 'notice'; message: string };
 
 export interface DesktopApi {
+  mcpStatus(): Promise<McpStatus>;
+  setMcpEnabled(enabled: boolean): Promise<McpStatus>;
   listLoginIdentities(): Promise<LoginIdentityList>;
   saveLoginIdentity(input: SaveLoginIdentityInput): Promise<LoginIdentitySummary>;
   deleteLoginIdentity(id: string): Promise<void>;

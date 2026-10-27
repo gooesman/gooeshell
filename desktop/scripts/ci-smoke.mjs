@@ -3,6 +3,8 @@ import { execFile, spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
+import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const [target, arch] = process.argv.slice(2);
 const platform = { win: 'win32', mac: 'darwin', linux: 'linux' }[target];
@@ -46,6 +48,7 @@ const stopped = new Promise(resolve => child.once('close', resolve));
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const deadline = started + 45_000;
 let socket;
+let mcpClient;
 let nextId = 0;
 const pending = new Map();
 async function call(method, params = {}, timeoutMs = Math.max(1, deadline - Date.now())) {
@@ -158,6 +161,31 @@ try {
     })()`, returnByValue:true,awaitPromise:true,
   });
   assert.equal(quickConnection.exceptionDetails,undefined,'Packaged quick connection interface failed');
+  phase('exercise packaged MCP adapter');
+  const mcpInitial=await call('Runtime.evaluate',{expression:'window.gooeshell.mcpStatus()',returnByValue:true,awaitPromise:true});
+  assert.equal(mcpInitial.result.value.enabled,false);
+  const mcpEnabled=await call('Runtime.evaluate',{expression:'window.gooeshell.setMcpEnabled(true)',returnByValue:true,awaitPromise:true});
+  assert.equal(mcpEnabled.exceptionDetails,undefined,'Packaged MCP bridge could not start');
+  const mcpTransport=new StdioClientTransport({...mcpEnabled.result.value.config,stderr:'pipe'});let mcpErrors='';
+  mcpTransport.stderr.on('data',bytes=>mcpErrors+=bytes.toString());
+  mcpClient=new McpClient({name:'gooeshell-package-check',version:'1.0.0'});await mcpClient.connect(mcpTransport);
+  assert.deepEqual((await mcpClient.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command']);
+  const mcpConnections=await mcpClient.callTool({name:'list_connections',arguments:{}});
+  assert.equal(mcpConnections.isError,undefined);assert.deepEqual(JSON.parse(mcpConnections.content[0].text),[]);
+  const mcpUi=await call('Runtime.evaluate',{expression:`(async()=>{
+    document.querySelector('.titlebar [aria-label="设置"]').click();await new Promise(resolve=>setTimeout(resolve,50));
+    [...document.querySelectorAll('.settings-tabs button')].find(button=>button.textContent==='AI 与 MCP').click();
+    const limit=Date.now()+3000;while(!document.querySelector('#mcp-config')){if(Date.now()>limit)throw new Error('MCP settings did not load');await new Promise(resolve=>setTimeout(resolve,20));}
+    return {enabled:document.querySelector('[aria-label="启用本机 MCP 桥接"]').getAttribute('aria-checked'),config:JSON.parse(document.querySelector('#mcp-config').value)};
+  })()`,returnByValue:true,awaitPromise:true});
+  assert.equal(mcpUi.exceptionDetails,undefined,'Packaged MCP settings page failed');assert.equal(mcpUi.result.value.enabled,'true');
+  assert.deepEqual(mcpUi.result.value.config.mcpServers.gooeshell,mcpEnabled.result.value.config);
+  try{const screenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},2500);await fs.writeFile(path.join(output,`mcp-settings-${target}-${arch}${packageLabel?'-'+packageLabel:''}.png`),Buffer.from(screenshot.data,'base64'));}catch(error){diagnostics.mcpScreenshot=String(error);}
+  await call('Runtime.evaluate',{expression:`[...document.querySelectorAll('.settings-dialog .modal-footer button')].find(button=>button.textContent==='关闭').click()`});
+  await call('Runtime.evaluate',{expression:'window.gooeshell.setMcpEnabled(false)',returnByValue:true,awaitPromise:true});
+  assert.equal((await mcpClient.callTool({name:'list_sessions',arguments:{}})).isError,true);
+  await mcpClient.close();mcpClient=undefined;assert.equal(mcpErrors,'');
+  state.mcp={stdio:true,tools:4,revoked:true};
   const fileRoot = await fs.mkdtemp(path.join(output, 'smoke-files-'));
   const selected = path.join(fileRoot, 'selected'), leaf = path.join(selected, 'new.txt');
   const keep = path.join(fileRoot, 'keep.txt'); await fs.writeFile(keep, 'outside selected tree');
@@ -302,6 +330,7 @@ try {
   throw error;
 } finally {
   clearTimeout(watchdog);
+  await mcpClient?.close().catch(()=>{});
   socket?.close();
   if (child.exitCode === null && child.signalCode === null) child.kill();
   await Promise.race([stopped, pause(3000)]);
