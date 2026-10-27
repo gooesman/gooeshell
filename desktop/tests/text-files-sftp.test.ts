@@ -6,6 +6,7 @@ import test from 'node:test';
 import { Client, type SFTPWrapper } from 'ssh2';
 import { sftpCall, trackSftp } from '../src/main/sftp-transfer';
 import { SshService } from '../src/main/ssh-service';
+import { ExternalEditorService } from '../src/main/external-editor';
 import { encodeEditableText, MAX_EDITABLE_TEXT } from '../src/main/text-files';
 import type { HostProfile } from '../src/shared/types';
 
@@ -66,6 +67,25 @@ test('editor reads and atomically saves encoded files over real SSH/SFTP with ba
   await service.writeTextFile({ sessionId: 'editor-fixture', path: newPath, text: '新文件', encoding: 'gb18030', expectedRevision: 'missing' });
   assert.equal((await service.readTextFile({ sessionId: 'editor-fixture', path: newPath, encoding: 'gb18030' })).text, '新文件');
   await assert.rejects(service.writeTextFile({ sessionId: 'editor-fixture', path: newPath, text: 'overwrite', encoding: 'utf8', expectedRevision: 'missing' }), /TEXT_CONFLICT/);
+  const external = new ExternalEditorService(path.join(values.root, 'external-' + caseName), {
+    read: (sessionId, path) => service.readTextFile({ sessionId, path }),
+    write: request => service.writeTextFile(request), launch: async () => {}, changed: () => {},
+  });
+  await external.load(); t.after(() => external.stop());
+  const host = { key: 'fixture-only', name: profile.name, sessionId: 'editor-fixture' };
+  const draft = await external.open(host, remotePath);
+  const now = Date.now();
+  await fs.writeFile(draft.localPath, '# External edit\r\n');
+  await external.poll(now); await external.poll(now + 1000);
+  assert.equal(await fs.readFile(diskPath, 'utf8'), '# External edit\r\n');
+  await fs.writeFile(diskPath, '# Server changed'); await fs.writeFile(draft.localPath, '# Pending local');
+  await external.poll(now + 2000); await external.poll(now + 3000);
+  assert.equal(external.list()[0].state, 'conflict');
+  assert.equal(await fs.readFile(diskPath, 'utf8'), '# Server changed');
+  const compared = await external.compare(draft.id, host);
+  await external.action({ id: draft.id, action: 'upload', localRevision: compared.local.revision, remoteRevision: compared.remote.revision }, host);
+  assert.equal(await fs.readFile(diskPath, 'utf8'), '# Pending local');
+  await external.stop();
   await fs.writeFile(diskPath, Buffer.from('x'.repeat(MAX_EDITABLE_TEXT - 1) + '你suffix'));
   const preview = await service.readTextFile(request);
   assert.equal(preview.truncated, true);

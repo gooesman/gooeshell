@@ -21,10 +21,15 @@ import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
 import {McpBridge} from './mcp-bridge';
+import {ExternalEditorService} from './external-editor';
+import {launchExternalEditor,externalEditorCommand} from './external-editor-launch';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
 let identityWrites:Promise<unknown>=Promise.resolve();
 let mcpBridge:McpBridge|undefined;
+let externalEditor:ExternalEditorService;
+function externalHost(sessionId:string){const profile=sessionProfiles.get(sessionId);if(!profile)throw new Error('请先连接原服务器，再使用外部编辑');return{sessionId,key:JSON.stringify([profile.id,connectionIdentity(profile)]),name:profile.name||`${profile.username}@${profile.host}`};}
+function externalResumeHost(id:string){const key=externalEditor.connectionKey(id);for(const sessionId of sessionProfiles.keys()){const host=externalHost(sessionId);if(host.key===key)return host;}throw new Error('请先连接原服务器，再恢复回传');}
 const bridgeSessions=new Set<string>();
 function identityMutation<T>(operation:()=>Promise<T>):Promise<T>{const next=identityWrites.catch(()=>{}).then(operation);identityWrites=next;return next;}
 const sessionLoginPasswords=new Map<string,string>();
@@ -102,7 +107,7 @@ function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
  return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
 }
-function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();if(worker)worker.postMessage({method:'shutdown',args:[]});void Promise.all([localStop,bridgeStop]).finally(()=>setTimeout(()=>{void worker?.terminate();app.exit(0);},300));}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();void Promise.all([localStop,bridgeStop,externalEditor?.stop()]).finally(()=>{if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{void worker?.terminate();app.exit(0);},300);});}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
@@ -131,7 +136,9 @@ if(primaryInstance)app.whenReady().then(async()=>{
  identities=new IdentityStore(app.getPath('userData'),credentialCipher);
  localKeys=new LocalKeyStore(path.join(app.getPath('userData'),'keys'));
  const sendEvent=(event:AppEvent)=>{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',event);};
- const trackClosed=(id:string)=>{sessionProfiles.delete(id);sessionLoginPasswords.delete(id);bridgeSessions.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
+ externalEditor=new ExternalEditorService(path.join(app.getPath('userData'),'external-editor'),{read:(sessionId,path)=>remote('readTextFile',{sessionId,path}),write:request=>remote('writeTextFile',request),launch:async file=>launchExternalEditor((await store.settings()).externalEditorPath,file,value=>shell.openPath(value)),changed:edits=>sendEvent({type:'externalEdits',edits})});
+ await externalEditor.load();
+ const trackClosed=(id:string)=>{externalEditor.disconnected(id);sessionProfiles.delete(id);sessionLoginPasswords.delete(id);bridgeSessions.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
  localPty=new LocalPtyService(event=>{if(event.type==='sessionClosed')trackClosed(event.sessionId);sendEvent(event);});
  const hostQuestions=new Set<string>();
  let restarts:number[]=[];
@@ -154,7 +161,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
  const windowIcon=app.isPackaged?path.join(process.resourcesPath,'icon.png'):path.join(app.getAppPath(),'assets','icon.png');
  const initialTheme=(await store.settings()).theme;
  win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'GooeShell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
- win.on('close',event=>{discardEditorApproved=false;if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}});
+ win.on('close',event=>{discardEditorApproved=false;if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}if(externalEditor.list().length&&dialog.showMessageBoxSync(win,{type:'question',title:'外部编辑尚未结束',message:'退出后将停止自动回传，所有本地草稿会保留。',detail:'外部编辑器中尚未保存的内容仍由该编辑器管理。重新打开 GooeShell 并连接原服务器后，可在外部编辑列表恢复回传。',buttons:['继续编辑','退出并保留草稿'],defaultId:0,cancelId:0,noLink:true})!==1)event.preventDefault();});
  win.webContents.on('will-prevent-unload',event=>{if(discardEditorApproved||confirmEditorClose()){discardEditorApproved=false;event.preventDefault();}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  win.webContents.on('will-navigate',(event,url)=>{if(url!==win.webContents.getURL())event.preventDefault();});
@@ -374,6 +381,25 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'readFile':return value.side==='local'?readLocalText(value.path):remote('readFile',value);
    case 'readTextFile':return value.side==='local'?readLocalTextFile(value):remote('readTextFile',value);
    case 'writeTextFile':return value.side==='local'?writeLocalTextFile(value):remote('writeTextFile',value);
+   case 'externalEdits':return externalEditor.list();
+   case 'openExternalEditor':{
+    if(!value||!['local','remote'].includes(value.side))throw new Error('文件位置无效');
+    const editor=(await store.settings()).externalEditorPath;
+    if(value.side==='remote'){
+     // Validate the association before downloading or creating a draft.
+     externalEditorCommand(editor,path.resolve(path.posix.basename(value.path)));
+     return externalEditor.open(externalHost(value.sessionId),value.path);
+    }
+    const file=localPath(value.path);externalEditorCommand(editor,file);
+    const text=await readLocalTextFile({path:file});if(text.truncated)throw new Error('外部文本编辑最多支持 2 MiB');
+    await launchExternalEditor(editor,file,value=>shell.openPath(value));return null;
+   }
+   case 'compareExternalEdit':return externalEditor.compare(value,externalResumeHost(value));
+   case 'externalEditAction':{
+    if(!value||!['open','reveal','retry','finish','upload','reload'].includes(value.action))throw new Error('外部编辑操作无效');
+    if(value.action==='reveal'){const edit=externalEditor.list().find(item=>item.id===value.id);if(!edit)throw new Error('外部编辑任务已结束');shell.showItemInFolder(edit.localPath);return;}
+    return externalEditor.action(value,['open','finish'].includes(value.action)?undefined:externalResumeHost(value.id));
+   }
    case 'saveTextCopy':{
     if(!value||typeof value.name!=='string'||typeof value.text!=='string')throw new Error('文件内容无效');
     const name=path.basename(value.name).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_')||'未命名.txt';

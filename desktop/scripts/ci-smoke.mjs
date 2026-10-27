@@ -209,6 +209,25 @@ try {
   assert.deepEqual(files.result.value, {rejected:true,text:'preserve original',toolbar:false,followInPathBar:true,remoteDisabled:true});
   assert.equal(await fs.readFile(keep, 'utf8'), 'outside selected tree');
   assert.equal(await fs.stat(selected).then(()=>true,()=>false), false);
+  phase('exercise packaged external editor launch');
+  // A disposable Node script stands in for a configured editor. Never open the
+  // user's default app or read a real document during package verification.
+  const externalFile = path.join(fileRoot, 'external editor & literal.cjs'), externalMarker = path.join(fileRoot, 'external-opened.json');
+  await fs.writeFile(externalFile, `require('node:fs').writeFileSync(${JSON.stringify(externalMarker)},JSON.stringify({file:process.argv[1]}));`);
+  const externalEditor = await call('Runtime.evaluate', {
+    expression: `(async()=>{const api=window.gooeshell,settings=(await api.initial()).settings;
+      let scriptBlocked=false;try{await api.openExternalEditor({side:'local',sessionId:'',path:${JSON.stringify(externalFile)}});}catch(error){scriptBlocked=String(error).includes('指定文本编辑器');}
+      try{await api.saveSettings({...settings,externalEditorPath:${JSON.stringify(process.execPath)}});
+        const result=await api.openExternalEditor({side:'local',sessionId:'',path:${JSON.stringify(externalFile)}});
+        return{scriptBlocked,localResult:result,jobs:(await api.externalEdits()).length};
+      }finally{await api.saveSettings(settings);}
+    })()`, returnByValue: true, awaitPromise: true,
+  });
+  assert.equal(externalEditor.exceptionDetails, undefined, 'Packaged external editor IPC failed');
+  assert.deepEqual(externalEditor.result.value, { scriptBlocked: true, localResult: null, jobs: 0 });
+  await until(() => fs.stat(externalMarker).then(() => true, () => false));
+  assert.equal(JSON.parse(await fs.readFile(externalMarker, 'utf8')).file, externalFile, 'Editor received the exact literal path');
+  state.externalEditor = { ...externalEditor.result.value, configuredProgramLaunched: true };
   phase('exercise packaged editor palette through local file list');
   const editorFile = path.join(fileRoot, 'palette-smoke.yml');
   const editorText = 'services:\n  smoke:\n    image: "gooeshell:test"\n    replicas: 2\n';

@@ -31,6 +31,7 @@ export type EditorPalette = 'auto' | 'graphite' | 'midnight' | 'paper';
 export interface AppSettings {
   theme: 'dark' | 'light';
   editorPalette: EditorPalette;
+  externalEditorPath: string;
   terminalPalette: string;
   terminalBold: boolean;
   commandMarks: 'hidden' | 'left' | 'right';
@@ -87,6 +88,14 @@ export type TextWriteRequest = RemoteRequest & {
   side: 'local' | 'remote'; text: string; encoding: EditorEncoding; expectedRevision: string; bom?: boolean;
 };
 export interface TextWriteResult { revision: string; size: number; }
+export interface ExternalEdit {
+  id: string; name: string; path: string; localPath: string; connectionName: string;
+  state: 'watching' | 'uploading' | 'conflict' | 'error' | 'paused';
+  message: string;
+}
+export interface ExternalEditComparison { local: EditableTextFile; remote: EditableTextFile; }
+export type ExternalEditAction = { id: string; action: 'open' | 'reveal' | 'retry' | 'finish' }
+  | { id: string; action: 'upload' | 'reload'; localRevision: string; remoteRevision: string };
 export interface CommandResult { output: string; exitCode: number; }
 export interface CommandGroup { id: string; name: string; connectionId?: string; connectionName?: string; order: number; }
 export interface SavedCommand { id: string; groupId: string; name: string; command: string; description: string; mode: 'insert' | 'execute'; confirmBeforeRun: boolean; order: number; }
@@ -99,6 +108,7 @@ export type AppEvent =
   | { type: 'hostKey'; requestId: string; host: string; port: number; fingerprint: string; previousFingerprint?: string; saveAllowed?: boolean; role?: 'jump' | 'target'; via?: string }
   | { type: 'hostKeyCancelled'; requestId: string }
   | { type: 'transfer'; transfer: TransferInfo }
+  | { type: 'externalEdits'; edits: ExternalEdit[] }
   | { type: 'notice'; message: string };
 
 export interface DesktopApi {
@@ -153,6 +163,10 @@ export interface DesktopApi {
   writeFile(request: RemoteRequest & { side: 'local' | 'remote'; text: string }): Promise<void>;
   readTextFile(request: TextReadRequest): Promise<EditableTextFile>;
   writeTextFile(request: TextWriteRequest): Promise<TextWriteResult>;
+  openExternalEditor(request: { side: 'local' | 'remote'; sessionId: string; path: string }): Promise<ExternalEdit | null>;
+  externalEdits(): Promise<ExternalEdit[]>;
+  externalEditAction(request: ExternalEditAction): Promise<void>;
+  compareExternalEdit(id: string): Promise<ExternalEditComparison>;
   saveTextCopy(request: { name: string; text: string; encoding: EditorEncoding; bom?: boolean }): Promise<string | null>;
   editorState(state: { dirty: boolean; busy: boolean }): void;
   chmod(request: RemoteRequest & { mode: number }): Promise<void>;

@@ -77,6 +77,7 @@ const preview:DesktopApi={
  writeTextFile:async r=>{const key=r.side+':'+r.path;if(previewTexts.get(key)?.revision!==r.expectedRevision)throw new Error('TEXT_CONFLICT: 演示文件已变化');const revision=`demo:${++previewRevision}`,size=new TextEncoder().encode(r.text).length;previewTexts.set(key,{text:r.text,truncated:false,encoding:r.encoding,bom:r.bom??false,lineEnding:r.text.includes('\r\n')?'crlf':'lf',revision,size});return{revision,size};},
  saveTextCopy:unavailable,editorState:()=>{},
  fonts:async()=>[...bundledFontFamilies,...['Cascadia Code','Consolas','Microsoft YaHei','SimSun'].filter(font=>document.fonts.check(`14px \"${font}\"`))],fontCatalog:previewFontCatalog,backgroundData:async()=>'',
+ externalEdits:async()=>[],openExternalEditor:async()=>{throw new Error('请在桌面版中使用外部编辑器');},externalEditAction:async()=>{},compareExternalEdit:async()=>{throw new Error('浏览器演示没有外部编辑草稿');},
  readClipboard:()=>navigator.clipboard.readText(),writeClipboard:text=>navigator.clipboard.writeText(text),
  fullscreen:async()=>{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();},minimize:()=>{},maximize:()=>{},closeWindow:()=>{},
  terminalInput:()=>{},terminalBinaryInput:()=>{},terminalResize:()=>{},terminalAck:()=>{},pathForFile:()=>'',onEvent:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}

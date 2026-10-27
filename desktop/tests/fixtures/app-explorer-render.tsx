@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '../../src/renderer/App';
 import { api, isPreview } from '../../src/renderer/api';
-import type { AppEvent, FileEntry, FileListing, HostProfile, RemoteRequest, TransferInfo } from '../../src/shared/types';
+import type { AppEvent, ExternalEdit, FileEntry, FileListing, HostProfile, RemoteRequest, TransferInfo } from '../../src/shared/types';
 import '../../src/renderer/styles.css';
 import '../../src/renderer/terminal-fonts.css';
 
@@ -37,7 +37,7 @@ let held: (() => void) | undefined;
 const control = {
   renderSamples: [] as number[],
   calls, denyNext: '', denyPath: '', holdNext: '', held: false, cwd: {} as Record<string, string>,
-  chosenFiles: [] as string[], transfers: [] as TransferInfo[],
+  chosenFiles: [] as string[], transfers: [] as TransferInfo[], external: [] as ExternalEdit[],
   release: () => { held?.(); held = undefined; control.held = false; },
   emit: (event: AppEvent) => listeners.forEach(listener => listener(event)),
   transferState: (id: string, state: TransferInfo['state'], done = 0, total = 0) => { const transfer = control.transfers.find(item => item.id === id)!; Object.assign(transfer, { state, done, total }); control.emit({ type: 'transfer', transfer: { ...transfer } }); },
@@ -76,6 +76,25 @@ api.disconnect = async sessionId => control.emit({ type: 'sessionClosed', sessio
 api.localList = path => list({ sessionId: '', path, side: 'local' });
 api.remoteList = request => list({ ...request, side: 'remote' });
 api.chooseFiles = async () => { await record('chooseFiles', { sessionId: '', path: '' }); return [...control.chosenFiles]; };
+api.externalEdits = async () => [...control.external];
+api.openExternalEditor = async request => {
+  calls.push({ method: 'openExternalEditor', request: { ...request } });
+  if (request.side === 'local') return null;
+  const edit: ExternalEdit = { id: 'external-fixture', name: 'alpha.txt', path: request.path, localPath: 'C:\\Fixture\\draft.txt', connectionName: '测试服务器 A', state: 'watching', message: '保存后自动回传' };
+  control.external = [edit]; control.emit({ type: 'externalEdits', edits: [...control.external] }); return edit;
+};
+api.compareExternalEdit = async id => {
+  calls.push({ method: 'compareExternalEdit', request: { id } });
+  const file = { truncated: false, encoding: 'utf8' as const, lineEnding: 'lf' as const, size: 20, bom: false };
+  return { local: { ...file, text: '# Local saved version', revision: 'a'.repeat(64) }, remote: { ...file, text: '# Server changed version', revision: 'b'.repeat(64) } };
+};
+api.externalEditAction = async request => {
+  calls.push({ method: 'externalEditAction', request: { ...request } });
+  if (control.denyNext === 'externalEditAction') { control.denyNext = ''; throw new Error('服务器文件在比较后又有修改，请重新比较'); }
+  if (request.action === 'finish') control.external = [];
+  else if (['upload', 'reload', 'retry'].includes(request.action)) control.external = control.external.map(edit => ({ ...edit, state: 'watching', message: '已回传；继续监测保存' }));
+  control.emit({ type: 'externalEdits', edits: [...control.external] });
+};
 api.transfer = async request => {
   calls.push({ method: 'transfer', request: { ...request } });
   const name = request.source.split(/[\\/]/).at(-1)!, separator = request.direction === 'upload' ? '/' : '\\';

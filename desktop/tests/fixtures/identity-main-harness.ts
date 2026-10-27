@@ -7,12 +7,15 @@ import {createRequire} from 'node:module';
 import {createCipheriv,createDecipheriv,randomBytes} from 'node:crypto';
 import ts from 'typescript';
 import {defaultSettings} from '../../src/shared/defaults';
+import {ExternalEditorService} from '../../src/main/external-editor';
 
 /** Runs the real main IPC handler with an isolated catalog, test cipher, inert window and fake SSH worker. */
 export async function identityMainHarness(t:{after:(fn:()=>Promise<void>)=>void}){
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-identity-main-'));
  await fs.writeFile(path.join(root,'settings.json'),JSON.stringify(defaultSettings));
- t.after(async()=>{for(const entry of await fs.readdir(root,{withFileTypes:true})){if(entry.isFile())await fs.unlink(path.join(root,entry.name));}await fs.rmdir(root);});
+ const externalEditors:ExternalEditorService[]=[];
+ class FixtureExternalEditor extends ExternalEditorService { constructor(...args:ConstructorParameters<typeof ExternalEditorService>){super(...args);externalEditors.push(this);} }
+ t.after(async()=>{await Promise.all(externalEditors.map(service=>service.stop()));await fs.rmdir(path.join(root,'external-editor')).catch(error=>{if(error.code!=='ENOENT')throw error;});for(const entry of await fs.readdir(root,{withFileTypes:true})){if(entry.isFile())await fs.unlink(path.join(root,entry.name));}await fs.rmdir(root);});
  let resolveReady!:(value:unknown)=>void,rejectReady!:(error:unknown)=>void;
  const ready=new Promise((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});
  const calls:Array<{method:string;args:any[]}>=[],events:any[]=[],held:Array<{worker:FakeWorker;message:any}>=[];
@@ -59,7 +62,7 @@ export async function identityMainHarness(t:{after:(fn:()=>Promise<void>)=>void}
  const sourcePath=path.resolve('src/main/main.ts'),requireMain=createRequire(sourcePath),source=await fs.readFile(sourcePath,'utf8');
  const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
  const environment={...process.env};delete environment.GOOESHELL_DEV_URL;
- vm.runInNewContext(code,{exports:{},require:(name:string)=>name==='electron'?electron:name==='node:worker_threads'?{Worker:FakeWorker}:name==='./font-catalog'?{systemFontCatalog:async()=>[]}:name==='./application-menu'?{configureApplicationMenu:()=>{}}:requireMain(name),__dirname:path.dirname(sourcePath),process:{...process,env:environment},Date:ClockDate,Buffer,setTimeout,clearTimeout,structuredClone,console},{filename:'identity-main-fixture.cjs'});
+ vm.runInNewContext(code,{exports:{},require:(name:string)=>name==='electron'?electron:name==='node:worker_threads'?{Worker:FakeWorker}:name==='./external-editor'?{ExternalEditorService:FixtureExternalEditor}:name==='./font-catalog'?{systemFontCatalog:async()=>[]}:name==='./application-menu'?{configureApplicationMenu:()=>{}}:requireMain(name),__dirname:path.dirname(sourcePath),process:{...process,env:environment},Date:ClockDate,Buffer,setTimeout,clearTimeout,structuredClone,console},{filename:'identity-main-fixture.cjs'});
  await ready;
  return{root,calls,events,cipher,
   call:(method:string,value?:unknown)=>handler({sender:window.webContents,senderFrame:window.webContents.mainFrame},method,[value]),
