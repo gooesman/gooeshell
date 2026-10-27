@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ExternalEditorService } from '../src/main/external-editor';
-import { externalEditorCommand, launchExternalEditor } from '../src/main/external-editor-launch';
+import { externalEditorCommand, externalEditorForFile, launchExternalEditor } from '../src/main/external-editor-launch';
 import { readLocalTextFile, writeLocalTextFile } from '../src/main/local-files';
 import { MAX_EDITABLE_TEXT } from '../src/main/text-files';
 import { Store, cleanSettings } from '../src/main/store';
@@ -151,4 +151,43 @@ test('external editor preference migrates empty and survives store save/reload',
   const store = new Store(c.directory), editor = path.resolve('editor.exe');
   await store.saveSettings({ ...defaultSettings, externalEditorPath: editor });
   assert.equal((await new Store(c.directory).settings()).externalEditorPath, editor);
+}));
+
+test('file type editors override the fallback without changing other system associations', () => {
+  const editor = path.resolve('VS Code/Code.exe');
+  const settings = { ...defaultSettings, externalEditorByExtension: { '.py': editor } };
+  const file = path.resolve('项目/a & literal.PY');
+  assert.equal(externalEditorForFile(settings, file), editor);
+  assert.deepEqual(externalEditorCommand(externalEditorForFile(settings, file), file, 'win32'), { command: editor, args: [file] });
+  for (const name of ['notes.md', 'notes.txt']) {
+    const document = path.resolve(name);
+    assert.equal(externalEditorForFile(settings, document), '');
+    assert.equal(externalEditorCommand(externalEditorForFile(settings, document), document), null);
+  }
+  const fallback = { ...settings, externalEditorPath: editor, externalEditorByExtension: { '.md': '' } };
+  assert.equal(externalEditorForFile(fallback, '/notes.md'), '', 'explicit system default overrides the global editor');
+  assert.equal(externalEditorForFile(fallback, '/notes.txt'), editor);
+  assert.throws(() => externalEditorCommand(externalEditorForFile(settings, '/run.ps1'), path.resolve('run.ps1')), /指定文本编辑器/);
+});
+
+test('file type editor settings normalize, reject invalid entries and survive restart', async () => fixture(async c => {
+  const old = { ...defaultSettings } as any; delete old.externalEditorByExtension;
+  assert.deepEqual(cleanSettings(old).externalEditorByExtension, {});
+  const editor = path.resolve('VS Code/Code.exe'), store = new Store(c.directory);
+  const saved = { ...defaultSettings, externalEditorByExtension: { ' *.PY ': editor, '.md': '', '.txt': path.resolve('Notepad.exe'), 'py;exe': editor, '../sh': editor, '.js': 'bad\0path', '.ps1': 'bad\npath' } };
+  await store.saveSettings(saved);
+  const loaded = await new Store(c.directory).settings();
+  assert.deepEqual(loaded.externalEditorByExtension, { '.py': editor, '.md': '', '.txt': path.resolve('Notepad.exe') });
+  assert.equal(externalEditorForFile(loaded, '/test.PY'), editor);
+}));
+
+test('remote cached files retain the extension used for editor selection and reopening', async () => fixture(async c => {
+  const editor = path.resolve('Code.exe'), settings = { ...defaultSettings, externalEditorByExtension: { '.py': editor } };
+  const py = await c.service.open(host, '/项目/run.PY'), md = await c.service.open(host, '/项目/README.md');
+  assert.equal(externalEditorForFile(settings, py.localPath), editor);
+  assert.equal(externalEditorForFile(settings, md.localPath), '');
+  await c.service.action({ id: py.id, action: 'open' });
+  assert.equal(c.launched.at(-1), py.localPath);
+  settings.externalEditorByExtension['.py'] = path.resolve('Other.exe');
+  assert.equal(externalEditorForFile(settings, c.launched.at(-1)!), path.resolve('Other.exe'));
 }));

@@ -22,7 +22,7 @@ import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
 import {McpBridge} from './mcp-bridge';
 import {ExternalEditorService} from './external-editor';
-import {launchExternalEditor,externalEditorCommand} from './external-editor-launch';
+import {launchExternalEditor,externalEditorCommand,externalEditorForFile} from './external-editor-launch';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
 let identityWrites:Promise<unknown>=Promise.resolve();
@@ -136,7 +136,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
  identities=new IdentityStore(app.getPath('userData'),credentialCipher);
  localKeys=new LocalKeyStore(path.join(app.getPath('userData'),'keys'));
  const sendEvent=(event:AppEvent)=>{if(win&&!win.isDestroyed())win.webContents.send('gooeshell:event',event);};
- externalEditor=new ExternalEditorService(path.join(app.getPath('userData'),'external-editor'),{read:(sessionId,path)=>remote('readTextFile',{sessionId,path}),write:request=>remote('writeTextFile',request),launch:async file=>launchExternalEditor((await store.settings()).externalEditorPath,file,value=>shell.openPath(value)),changed:edits=>sendEvent({type:'externalEdits',edits})});
+ externalEditor=new ExternalEditorService(path.join(app.getPath('userData'),'external-editor'),{read:(sessionId,path)=>remote('readTextFile',{sessionId,path}),write:request=>remote('writeTextFile',request),launch:async file=>launchExternalEditor(externalEditorForFile(await store.settings(),file),file,value=>shell.openPath(value)),changed:edits=>sendEvent({type:'externalEdits',edits})});
  await externalEditor.load();
  const trackClosed=(id:string)=>{externalEditor.disconnected(id);sessionProfiles.delete(id);sessionLoginPasswords.delete(id);bridgeSessions.delete(id);closedSessions.add(id);if(closedSessions.size>1000)closedSessions.delete(closedSessions.values().next().value!);};
  localPty=new LocalPtyService(event=>{if(event.type==='sessionClosed')trackClosed(event.sessionId);sendEvent(event);});
@@ -384,7 +384,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'externalEdits':return externalEditor.list();
    case 'openExternalEditor':{
     if(!value||!['local','remote'].includes(value.side))throw new Error('文件位置无效');
-    const editor=(await store.settings()).externalEditorPath;
+    const editor=externalEditorForFile(await store.settings(),value.path);
     if(value.side==='remote'){
      // Validate the association before downloading or creating a draft.
      externalEditorCommand(editor,path.resolve(path.posix.basename(value.path)));

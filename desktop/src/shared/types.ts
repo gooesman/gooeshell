@@ -32,6 +32,7 @@ export interface AppSettings {
   theme: 'dark' | 'light';
   editorPalette: EditorPalette;
   externalEditorPath: string;
+  externalEditorByExtension: Record<string, string>;
   terminalPalette: string;
   terminalBold: boolean;
   commandMarks: 'hidden' | 'left' | 'right';

@@ -6,6 +6,7 @@ import {preferredChineseFont,systemFontCatalog} from './font-catalog';
 import {connectionIdentity,connectionConfigurationIdentity} from '../shared/connections';
 import {cleanJumpProfile} from './jump-profile';
 import {normalizeTerminalPalette} from '../shared/terminal-palettes';
+import {normalizeEditorExtension} from '../shared/external-editor';
 import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,ConnectionGroup,ConnectionIcon} from '../shared/types';
 const connectionIcons=new Set<ConnectionIcon>(['server','cloud','database','router','code','folder']);
 function identifier(input:unknown,label='连接'):string{
@@ -42,6 +43,10 @@ export function cleanSettings(input:AppSettings):AppSettings {
   result.chineseFontWeight=result.fontWeight;
   if(Number.isInteger(input.chineseFontWeight)&&input.chineseFontWeight>=1&&input.chineseFontWeight<=1000)result.chineseFontWeight=input.chineseFontWeight;
   for(const field of ['fontFamily','chineseFont','backgroundImage','externalEditorPath'] as const)if(typeof input[field]==='string'&&input[field].length<2048&&!input[field].includes('\0'))result[field]=input[field];
+  if(input.externalEditorByExtension&&typeof input.externalEditorByExtension==='object'&&!Array.isArray(input.externalEditorByExtension))for(const [key,value] of Object.entries(input.externalEditorByExtension)){
+    const extension=normalizeEditorExtension(key);
+    if(extension&&typeof value==='string'&&value.length<2048&&!/[\0\r\n]/.test(value))result.externalEditorByExtension[extension]=value.trim();
+  }
   for(const [field,min,max] of [['fontSize',8,40],['lineHeight',1,2],['backgroundOpacity',0,1]] as const)if(Number.isFinite(input[field]))result[field]=Math.max(min,Math.min(max,input[field]));
   for(const field of ['terminalBold','cursorBlink','copyOnSelect','showConnectionHistory','filesToggleIconOnly','sudoPasswordSubmit'] as const)if(typeof input[field]==='boolean')result[field]=input[field];
   for(const id of Object.keys(result.shortcuts))if(typeof input.shortcuts?.[id]==='string'&&input.shortcuts[id].length<80)result.shortcuts[id]=normalizeShortcut(input.shortcuts[id]);

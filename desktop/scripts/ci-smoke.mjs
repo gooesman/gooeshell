@@ -217,14 +217,17 @@ try {
   const externalEditor = await call('Runtime.evaluate', {
     expression: `(async()=>{const api=window.gooeshell,settings=(await api.initial()).settings;
       let scriptBlocked=false;try{await api.openExternalEditor({side:'local',sessionId:'',path:${JSON.stringify(externalFile)}});}catch(error){scriptBlocked=String(error).includes('指定文本编辑器');}
-      try{await api.saveSettings({...settings,externalEditorPath:${JSON.stringify(process.execPath)}});
+      try{await api.saveSettings({...settings,externalEditorPath:${JSON.stringify(path.join(fileRoot, 'must-not-launch.exe'))},externalEditorByExtension:{'.cjs':${JSON.stringify(process.execPath)}}});
+        const saved=(await api.initial()).settings;
         const result=await api.openExternalEditor({side:'local',sessionId:'',path:${JSON.stringify(externalFile)}});
-        return{scriptBlocked,localResult:result,jobs:(await api.externalEdits()).length};
+        await api.saveSettings({...settings,externalEditorPath:${JSON.stringify(process.execPath)},externalEditorByExtension:{'.cjs':''}});
+        let explicitSystemBlocked=false;try{await api.openExternalEditor({side:'local',sessionId:'',path:${JSON.stringify(externalFile)}});}catch(error){explicitSystemBlocked=String(error).includes('指定文本编辑器');}
+        return{scriptBlocked,explicitSystemBlocked,typeRuleSaved:saved.externalEditorByExtension['.cjs']===${JSON.stringify(process.execPath)},localResult:result,jobs:(await api.externalEdits()).length};
       }finally{await api.saveSettings(settings);}
     })()`, returnByValue: true, awaitPromise: true,
   });
   assert.equal(externalEditor.exceptionDetails, undefined, 'Packaged external editor IPC failed');
-  assert.deepEqual(externalEditor.result.value, { scriptBlocked: true, localResult: null, jobs: 0 });
+  assert.deepEqual(externalEditor.result.value, { scriptBlocked: true, explicitSystemBlocked: true, typeRuleSaved: true, localResult: null, jobs: 0 });
   await until(() => fs.stat(externalMarker).then(() => true, () => false));
   assert.equal(JSON.parse(await fs.readFile(externalMarker, 'utf8')).file, externalFile, 'Editor received the exact literal path');
   state.externalEditor = { ...externalEditor.result.value, configuredProgramLaunched: true };

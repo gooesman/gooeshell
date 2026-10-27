@@ -2093,3 +2093,12 @@ button,input,select,textarea,a,[role=tab],.tabbar,.window-controls {
   font-size: 10px;
 
 }
+
+.external-editor-preferences { border: 0; margin: 0; padding: 0; min-width: 0; }
+.external-editor-preferences>h3 { margin-top: 24px; }
+.external-editor-rule { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.external-editor-rule>label { display: block; margin-bottom: 8px; font-weight: 600; }
+.external-editor-add { margin: 12px 0; }
+.external-editor-add input { max-width: 160px; }
+.external-editor-preferences .field-inline { flex-wrap: wrap; }
+.external-editor-preferences .field-inline input { min-width: 140px; }
