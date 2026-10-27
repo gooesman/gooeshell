@@ -18,6 +18,6 @@ test('actual desktop MCP settings bridge stored identities, sudo, SSH reuse and 
   t.diagnostic('MCP desktop artifacts: '+artifacts);assert.equal(code,0,JSON.stringify(result,null,2)+logs);
   for(const check of ['settingsAndConfig','identityAndTransportReuse','foregroundPreserved','managedSudo','disableKeepsForeground','backgroundUsesStoredIdentity','missingPasswordStaysInApp','revokePendingAndOwnedConnections'])assert.equal(result.checks[check],true,check);
   if(result.realShell)assert.equal(result.checks.realShellCwdAndCachedSudo,true);
-  if(result.tmuxAvailable)assert.equal(result.checks.realTmuxParallelPanes,true);
+  if(result.tmuxAvailable)for(const check of ['realTmuxParallelPanes','managedTaskExitStates','privateTmuxSudo','taskSurvivesReconnect'])assert.equal(result.checks[check],true,check);
   assert.equal(result.success,true);
 });

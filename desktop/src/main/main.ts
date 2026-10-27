@@ -432,7 +432,8 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(sessionProfiles.get(args.sessionId)!==profile)throw new Error('SSH 会话已断开，请重新连接');
   const requestId=randomUUID(),cancel=()=>{void remote('cancelBridgeExec',requestId).catch(()=>{});};
   signal.addEventListener('abort',cancel,{once:true});
-  try{return await remote('bridgeExec',{...args,requestId,password});}finally{signal.removeEventListener('abort',cancel);}
+  const method=name==='start_task'?'bridgeStartTask':name==='read_task'?'bridgeReadTask':'bridgeExec';
+  try{return await remote(method,{...args,requestId,password});}finally{signal.removeEventListener('abort',cancel);}
  },async()=>{if(shuttingDown){bridgeSessions.clear();return;}await Promise.all([...bridgeSessions].map(id=>remote('disconnect',id).catch(()=>{})));bridgeSessions.clear();});
  ipcMain.on('gooeshell:terminal',(event,method,args)=>{
   if(!trusted(event)||!['terminalInput','terminalBinaryInput','terminalResize','terminalAck'].includes(method)||!Array.isArray(args))return;

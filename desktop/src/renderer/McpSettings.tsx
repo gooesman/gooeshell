@@ -20,7 +20,7 @@ export default function McpSettings({onBusyChange}:{onBusyChange:(busy:boolean)=
     <p className="settings-description">GooeShell 需保持运行。已有 SSH 连接会被复用；新建的桥接连接在后台运行，关闭桥接时释放。普通终端连接会保留，已启动的独立 tmux 任务仍在服务器运行。</p>
     {status?.available===false&&<p className="settings-description">请在桌面程序中启用此功能。</p>}
     {status?.config&&<><div className="form-field"><label htmlFor="mcp-config">客户端配置</label><textarea id="mcp-config" readOnly rows={12} value={json} style={{width:'100%',resize:'vertical',fontFamily:'monospace',fontSize:11}}/></div><div className="field-inline" style={{marginTop:12}}><button type="button" className="button secondary" disabled={busy} onClick={()=>void copy(true)}>复制 Codex 配置</button><button type="button" className="button secondary" disabled={busy} onClick={()=>void copy(false)}>复制通用 JSON 配置</button></div></>}
-    <p className="settings-description" style={{marginTop:18}}>可用操作：列出连接、列出会话、连接服务器、运行命令。长任务可通过命令创建 tmux 会话、分屏和读取日志；每次命令调用使用独立 Shell，工作目录需显式指定。认证缺失时请在连接设置中保存凭据，首次服务器指纹仍在 GooeShell 中确认。</p>
+    <p className="settings-description" style={{marginTop:18}}>可用操作：列出连接、列出会话、连接服务器、运行命令、启动后台任务、读取任务状态。普通命令无需 tmux；后台任务在 gooeshell-ai 会话中保留输出和真实退出状态，可使用保存的 sudo 凭据，密码不会输入窗格。每次命令使用独立 Shell，工作目录需显式指定。认证缺失时请在连接设置中保存凭据，首次服务器指纹仍在 GooeShell 中确认。</p>
     {message&&<p role="status" className="settings-description">{message}</p>}{error&&<div className="form-error" role="alert">{error}</div>}
   </>;
 }

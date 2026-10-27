@@ -21,7 +21,7 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   t.after(async()=>{await client.close();await bridge.stop();});
   await bridge.load();assert.equal(bridge.status().enabled,false);
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command']);
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command','start_task','read_task']);
   assert.equal((await client.callTool({name:'list_connections',arguments:{}})).isError,true,'disabled bridge cannot be used');
   await bridge.setEnabled(true);
   const descriptor=JSON.parse(await fs.readFile(bridge.file,'utf8')),url=`http://127.0.0.1:${descriptor.port}/call`;
@@ -32,6 +32,8 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   assert.equal(hostStatus,403);
   assert.equal((await request({tool:'__proto__',arguments:{}})).status,400);
   assert.equal((await request({tool:'connect',arguments:{connectionId:'fixture',password:'must-not-be-accepted'}})).status,400);
+  assert.equal((await request({tool:'start_task',arguments:{sessionId:'fixture',command:'true',password:'must-not-be-accepted'}})).status,400);
+  assert.equal((await request({tool:'read_task',arguments:{sessionId:'fixture',taskId:'bad; kill-server'}})).status,400);
   assert.equal(calls.length,0,'untrusted and invalid requests never reach connection logic');
   const listed=await client.callTool({name:'list_connections',arguments:{}});
   assert.equal(listed.isError,undefined);assert.match(JSON.stringify(listed),/Fixture/);

@@ -14,7 +14,7 @@ const userData=path.join(artifacts,'user-data');mkdirSync(userData,{recursive:tr
 safeStorage.isEncryptionAvailable=()=>false;safeStorage.isAsyncEncryptionAvailable=async()=>false;
 let copied='';clipboard.writeText=text=>{copied=text;};
 const report={success:false,checks:{},errors:[]},peers=new Set(),children=new Set(),commands=[];
-let window,client,transport,foreground='',authentications=0,shells=0,lastInput='',holdAuth=false,heldAuth=false,phase='startup';
+let window,client,transport,survivor,foreground='',authentications=0,shells=0,lastInput='',holdAuth=false,heldAuth=false,phase='startup';
 const progress=setInterval(()=>{void fs.writeFile(path.join(artifacts,'progress.json'),JSON.stringify({phase,lastScript:report.lastScript,window:!!window}));},1000);progress.unref();
 process.on('unhandledRejection',error=>{report.errors.push(String(error));void fs.writeFile(path.join(artifacts,'unexpected-error.json'),JSON.stringify(report));});
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -42,6 +42,11 @@ exec "$@"
 `;
   linuxSync('/usr/bin/env',['python3','-c','import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.mkdir(mode=0o700); (p/"bin").mkdir(); f=p/"bin"/"sudo"; f.write_text(sys.argv[2]); f.chmod(0o700); (p/"dir\u0027s 中文").mkdir()',linuxRoot,sudo]);
   try{tmux=linuxSync('/bin/sh',['-c','command -v tmux']).trim().length>0;}catch{}
+  if(tmux){
+    const executable=linuxSync('/bin/sh',['-c','command -v tmux']).trim();
+    const wrapper='#!/bin/sh\nexec '+JSON.stringify(executable)+' -S "$MCP_FIXTURE_ROOT/tasks.sock" "$@"\n';
+    linuxSync('/usr/bin/env',['python3','-c','import pathlib,sys; f=pathlib.Path(sys.argv[1])/"bin"/"tmux"; f.write_text(sys.argv[2]); f.chmod(0o700)',linuxRoot,wrapper]);
+  }
 }
 report.realShell=realShell;report.tmuxAvailable=tmux;
 const key=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'});
@@ -127,6 +132,36 @@ async function run(){
       return captures[0].stdout.includes('TASK_A_中文')&&captures[1].stdout.includes('TASK_B_中文');
     },'both task logs');
     report.checks.realTmuxParallelPanes=true;
+    phase='managed background tasks, actual exit status and private sudo input';
+    const finished=async task=>{let result=task;await until(async()=>{result=await tool('read_task',{sessionId:reused.id,taskId:task.taskId});return result.state==='exited';},'background completion');return result;};
+    const zero=await finished(await tool('start_task',{sessionId:reused.id,command:"printf 'TASK_中文\\n'; exit 0",cwd:linuxRoot+"/dir's 中文"}));
+    assert.equal(zero.exitCode,0);assert.match(zero.output,/TASK_中文/);assert.equal(zero.signal,null);
+    const nonzero=await finished(await tool('start_task',{sessionId:reused.id,command:"printf 'EXPECTED_ERROR\\n' >&2; exit 7"}));assert.equal(nonzero.exitCode,7);assert.match(nonzero.output,/EXPECTED_ERROR/);
+    const parallel=await Promise.all([0,7].map(code=>tool('start_task',{sessionId:reused.id,command:`printf PARALLEL_${code}; exit ${code}`})));
+    assert.notEqual(parallel[0].paneId,parallel[1].paneId);assert.deepEqual((await Promise.all(parallel.map(finished))).map(task=>task.exitCode),[0,7]);
+    const running=await tool('start_task',{sessionId:reused.id,command:'sleep 30'});assert.equal(running.state,'running');assert.equal(running.exitCode,null);
+    await tool('run_command',{sessionId:reused.id,command:`tmux show-options -p -v -t '${running.paneId}' @gooeshell_mcp_pid | xargs kill -TERM`});
+    const signaled=await finished(running);assert.equal(signaled.exitCode,143,'terminated task preserves the shell status instead of inventing success');
+    await tool('run_command',{sessionId:reused.id,command:`rm -f '${linuxRoot}/cached'`});
+    const privileged=await finished(await tool('start_task',{sessionId:reused.id,command:'printf PRIVATE_PIPE_SUDO_OK',sudo:true}));assert.equal(privileged.exitCode,0);assert.match(privileged.output,/PRIVATE_PIPE_SUDO_OK/);
+    await tool('run_command',{sessionId:reused.id,command:`touch '${linuxRoot}/cached'`});
+    const unread=await finished(await tool('start_task',{sessionId:reused.id,command:'cat',sudo:true}));assert.equal(unread.exitCode,0);assert.equal(unread.output.replace(/Pane is dead[^\n]*/g,'').trim(),'','cached sudo must not expose its unread password to the pane command');
+    await tool('run_command',{sessionId:reused.id,command:`rm -f '${linuxRoot}/cached'`});
+    await call('saveCredentials',{profile,credentials:{remember:'session',sudoUsesLogin:false,sudoPassword:'fixture-wrong-secret'}});
+    const denied=await finished(await tool('start_task',{sessionId:reused.id,command:'printf MUST_NOT_RUN',sudo:true}));assert.equal(denied.exitCode,1);assert.match(denied.output,/Denied/);assert(!denied.output.includes('MUST_NOT_RUN'));assert(!denied.output.includes('fixture-wrong-secret'));
+    await call('saveCredentials',{profile,credentials:{remember:'session',sudoUsesLogin:false,sudoPassword:''}});
+    await tool('run_command',{sessionId:reused.id,command:`touch '${linuxRoot}/cached'`});
+    const noPassword=await finished(await tool('start_task',{sessionId:reused.id,command:'printf PASSWORDLESS_OK',sudo:true}));assert.equal(noPassword.exitCode,0);assert.match(noPassword.output,/PASSWORDLESS_OK/);
+    const longSecret='A'.repeat(16384);await call('saveCredentials',{profile,credentials:{remember:'session',sudoUsesLogin:false,sudoPassword:longSecret}});
+    const longCached=await tool('start_task',{sessionId:reused.id,command:'sleep 3; printf LONG_CACHED_OK',sudo:true});assert.equal(longCached.state,'running','unused large password must not block background startup');
+    const longResult=await finished(longCached);assert.equal(longResult.exitCode,0);assert.match(longResult.output,/LONG_CACHED_OK/);assert(!longResult.output.includes(longSecret));assert(!commands.join('\n').includes(longSecret));
+    await call('saveCredentials',{profile,credentials:{remember:'session',sudoUsesLogin:false,sudoPassword:'fixture-sudo-secret'}});
+    for(const task of [zero,nonzero,privileged,unread]){assert(!task.output.includes('fixture-secret'));assert(!task.output.includes('fixture-sudo-secret'));}
+    for(const secret of ['fixture-secret','fixture-sudo-secret'])assert(!commands.join('\n').includes(secret));
+    const removed=await tool('run_command',{sessionId:reused.id,command:`tmux kill-pane -t '${zero.paneId}'`});assert.equal(removed.exitCode,0);
+    const missingTask=await client.callTool({name:'read_task',arguments:{sessionId:reused.id,taskId:zero.taskId}});assert.equal(missingTask.isError,true);assert.match(missingTask.content[0].text,/不存在/);
+    report.checks.managedTaskExitStates=true;report.checks.privateTmuxSudo=true;
+    survivor=await tool('start_task',{sessionId:reused.id,command:'sleep 3; printf SURVIVES_SSH_DISCONNECT'});
   }
   phase='disable keeps foreground connection';
   await call('setMcpEnabled',false);assert.equal((await client.callTool({name:'list_sessions',arguments:{}})).isError,true);
@@ -136,6 +171,7 @@ async function run(){
   await call('setMcpEnabled',true);
   const background=await tool('connect',{connectionId:profile.id});assert.equal(background.reused,false);assert.equal(background.source,'mcp');assert.equal(shells,1);
   await tool('run_command',{sessionId:background.id,command:'printf BACKGROUND_OK'});report.checks.backgroundUsesStoredIdentity=true;
+  if(survivor){let status;await until(async()=>{status=await tool('read_task',{sessionId:background.id,taskId:survivor.taskId});return status.state==='exited';},'background task survives SSH disconnect');assert.equal(status.exitCode,0);assert.match(status.output,/SURVIVES_SSH_DISCONNECT/);report.checks.taskSurvivesReconnect=true;}
   const missing={...profile,id:'missing',loginIdentityId:undefined,username:'fixture-user'};await call('saveConnection',{profile:missing,favorite:true});
   const noPassword=await client.callTool({name:'connect',arguments:{connectionId:'missing'}});assert.equal(noPassword.isError,true);assert.match(noPassword.content[0].text,/AUTH_REQUIRED/);report.checks.missingPasswordStaysInApp=true;
   phase='revoking pending connection releases bridge-owned transports';
@@ -151,7 +187,7 @@ app.on('browser-window-created',(_event,created)=>{window=created;phase='loading
   if(client)await client.close().catch(()=>{});
   for(const child of children)child.kill();for(const peer of peers)peer.end();server.close();
   if(realShell){
-    if(tmux)try{linuxSync('/bin/sh',['-c',`tmux -S '${linuxRoot}/tmux.sock' kill-server 2>/dev/null || true`]);}catch{}
+    if(tmux)try{linuxSync('/bin/sh',['-c',`tmux -S '${linuxRoot}/tmux.sock' kill-server 2>/dev/null || true; tmux -S '${linuxRoot}/tasks.sock' kill-server 2>/dev/null || true`]);}catch{}
     try{linuxSync('/usr/bin/env',['python3','-c','import pathlib,shutil,sys; p=pathlib.Path(sys.argv[1]); assert p.parent==pathlib.Path(sys.argv[2]) and p.name.startswith("gooeshell-mcp-") and p.resolve()==p; shutil.rmtree(p)',linuxRoot,temporaryRoot]);}catch(error){report.errors.push('Fixture cleanup: '+error.message);}
   }
   await fs.writeFile(path.join(artifacts,'result.json'),JSON.stringify(report,null,2));app.exit(report.success&&!report.errors.length?0:1);

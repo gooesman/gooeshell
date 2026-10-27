@@ -14,8 +14,16 @@ export const mcpTools = {
     schema:z.strictObject({connectionId:z.string().min(1).max(255)}), readOnly:false,
   },
   run_command: {
-    description:'Run a command through an existing SSH connection, on an independent channel. Each call has a fresh /bin/sh; use cwd for its working directory. sudo=true uses the password managed by GooeShell. Long-running work belongs in tmux: create detached sessions/windows, split-window -d -P -F "#{pane_id}", then use explicit pane IDs with send-keys and capture-pane -p. Do not assume the user\'s active pane. Disconnecting MCP does not stop detached tmux jobs. This tool returns command output and exit status, not the result of an asynchronously launched tmux job.',
+    description:'Run a short command through an existing SSH connection on an independent channel. Each call has a fresh /bin/sh; use cwd for its working directory. sudo=true privately uses GooeShell credentials. Returns the actual command stdout, stderr and exit status. For background or longer work use start_task/read_task; do not infer task completion from tmux send-keys returning successfully. Never type credentials into terminal panes.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),command:z.string().min(1).max(65536),cwd:z.string().max(2048).startsWith('/').optional(),sudo:z.boolean().default(false),timeoutMs:z.number().int().min(100).max(60000).default(30000)}), readOnly:false,
+  },
+  start_task: {
+    description:'Start a background command in a new managed tmux window, visible to the user in session gooeshell-ai. Requires tmux on the server. sudo=true privately supplies GooeShell credentials through a one-time owner-only pipe, never pane keystrokes, command arguments or files containing the password. Returns taskId and observed state; use read_task for completion and the actual exit code. Closing MCP or SSH does not stop an already launched task. On a start timeout, inspect gooeshell-ai before retrying: execution may already have started.',
+    schema:z.strictObject({sessionId:z.string().min(1).max(255),command:z.string().min(1).max(65536),cwd:z.string().max(2048).startsWith('/').optional(),sudo:z.boolean().default(false)}),readOnly:false,
+  },
+  read_task: {
+    description:'Read a managed background task by taskId on the same server/login. Returns running/finishing/exited, actual exitCode or signal when available, and recent merged terminal output. finishing means terminal EOF arrived before process exit status; check again later. A non-exited task or null exit code is not success. Output is tmux scrollback, not a complete durable log. If the user removed its pane or tmux server restarted, completion cannot be recovered. Do not poll continuously; wait between checks or do other work.',
+    schema:z.strictObject({sessionId:z.string().min(1).max(255),taskId:z.string().uuid(),tailLines:z.number().int().min(1).max(1000).default(200)}),readOnly:true,
   },
 };
 export type McpToolName = keyof typeof mcpTools;

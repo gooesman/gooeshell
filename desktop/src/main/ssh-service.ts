@@ -20,7 +20,8 @@ import { installPublicKey } from './ssh-key-install';
 import { createTransferHash } from './transfer-hash-probe';
 import { SHELL_INTEGRATION_COMMAND } from './shell-integration';
 import {executeBridgeCommand} from './bridge-command';
-import type {BridgeCommand,BridgeCommandResult} from '../shared/mcp';
+import {startBridgeTask,readBridgeTask} from './bridge-task';
+import type {BridgeCommand,BridgeTaskStart,BridgeTaskRead} from '../shared/mcp';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -898,12 +899,21 @@ export class SshService {
     if (job.info.mode !== 'archive') job.client?.destroy();
   }
 
-  async bridgeExec(request:BridgeCommand&{requestId:string;password?:string}):Promise<BridgeCommandResult>{
+  bridgeExec(request:BridgeCommand&{requestId:string;password?:string}){
+    return this.bridgeOperation(request,(client,encoding,signal)=>executeBridgeCommand(client,request,encoding,signal,request.password));
+  }
+  bridgeStartTask(request:BridgeTaskStart&{requestId:string;password?:string}){
+    return this.bridgeOperation(request,(client,encoding,signal)=>startBridgeTask(client,request,encoding,signal,request.password));
+  }
+  bridgeReadTask(request:BridgeTaskRead&{requestId:string}){
+    return this.bridgeOperation(request,(client,encoding,signal)=>readBridgeTask(client,request,encoding,signal));
+  }
+  private async bridgeOperation<T>(request:{sessionId:string;requestId:string},run:(client:Client,encoding:string,signal:AbortSignal)=>Promise<T>):Promise<T>{
     const session=this.session(request.sessionId);
     if(!session.terminalClient||this.bridgeJobs.size>=8||this.bridgeJobs.has(request.requestId))throw new Error('MCP 命令暂不可用，请稍后重试');
     const controller=new AbortController(),cancel=()=>controller.abort();
     this.bridgeJobs.set(request.requestId,controller);session.abort.signal.addEventListener('abort',cancel,{once:true});
-    try{return await executeBridgeCommand(session.terminalClient,request,session.profile.encoding,controller.signal,request.password);}
+    try{return await run(session.terminalClient,session.profile.encoding,controller.signal);}
     finally{this.bridgeJobs.delete(request.requestId);session.abort.signal.removeEventListener('abort',cancel);}
   }
   cancelBridgeExec(id:string):void{this.bridgeJobs.get(id)?.abort();}
