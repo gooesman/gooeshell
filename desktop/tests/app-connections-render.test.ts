@@ -27,5 +27,6 @@ test('full App creates independent home tabs, connects in place, and preserves c
   assert.equal(result.checks.simplifiedToolbarAndSettingsEntry, true);
   assert.equal(result.checks.maximizeShortcutPreservesWorkspace, true);
   assert.equal(result.checks.pasteQueueOverridesCustomAppShortcut, true);
+  for (const name of ['pasteWholeAfterCollapsedTabSwitch', 'pasteLinesAfterCollapsedTabSwitch', 'pasteEditorAfterCollapsedTabSwitch', 'pasteChoiceAfterFilesCollapse']) assert.equal(result.checks[name], true, name);
   assert.deepEqual(result.errors, []); assert.equal(result.visuals['dark-home'].theme, 'dark'); assert.equal(result.visuals['light-home'].theme, 'light');
 });

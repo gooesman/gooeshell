@@ -21,9 +21,9 @@ async function key(index, keyCode, modifiers = [], focus = true) {
   if (focus) await evaluate(`window.__pasteTerminals[${index}].focus()`);
   const editorFocused = !focus && await evaluate(`document.activeElement?.matches('[data-paste-editor]') === true`);
   window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
-  // Chromium editable fields insert a newline on the native char event; xterm
-  // sends its Enter byte from keyDown. Ctrl+Enter is an action, not text input.
-  if (editorFocused && keyCode === 'Enter' && !modifiers.includes('control') && !modifiers.includes('meta') && !modifiers.includes('alt')) window.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
+  // Only Shift+Enter inserts a newline; both plain and Ctrl+Enter prevent the
+  // native char event by choosing a paste mode from keyDown.
+  if (editorFocused && keyCode === 'Enter' && modifiers.includes('shift') && !modifiers.includes('control') && !modifiers.includes('meta') && !modifiers.includes('alt')) window.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
   window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await delay(60);
 }
 async function syntheticEnter(options = {}) {
@@ -165,10 +165,10 @@ async function run() {
   await key(0, 'Enter', ['control']);
   assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', '\r']]); metrics.checks.noQueueCtrlEnter = true;
 
-  phase = 'editor changes and Enter remain local until whole paste is chosen'; await offer(0, 'original one\noriginal two'); before = inputs().length;
+  phase = 'Shift+Enter edits locally and Enter pastes the complete edited draft'; await offer(0, 'original one\noriginal two'); before = inputs().length;
   await fillEditor(0, 'edited one\nedited two'); assert.equal(inputs().length, before);
-  await editorEnd(0); await key(0, 'Enter', [], false);
-  await until(async () => (await inspect()).dialogs[0].editorValue === 'edited one\nedited two\n', 'Enter inserts a newline in editor');
+  await editorEnd(0); await key(0, 'Enter', ['shift'], false);
+  await until(async () => (await inspect()).dialogs[0].editorValue === 'edited one\nedited two\n', 'Shift+Enter inserts a newline in editor');
   assert.equal(inputs().length, before); await window.webContents.insertText('edited three');
   await until(async () => (await inspect()).dialogs[0].editorValue === 'edited one\nedited two\nedited three', 'third edited line');
   assert.match((await inspect()).dialogs[0].text, /3 行/); assert.equal(inputs().length, before);
@@ -180,9 +180,33 @@ async function run() {
   window.showInactive();
   await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await delay(100);
   await fs.writeFile(reportFile + '.editable.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
-  window.hide();
-  await choose(0, 'all'); assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'edited one\redited two\redited three']]);
-  metrics.checks.editedWhole = true; metrics.checks.editorEnterIsLocal = true;
+  window.hide(); window.webContents.focus();
+  await until(() => evaluate('document.hasFocus()'), 'restore native input focus after screenshot');
+  await editorEnd(0); await key(0, 'Enter', [], false);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'edited one\redited two\redited three']]);
+  await assertFocused(0, '.xterm-helper-textarea');
+  metrics.checks.editedWhole = true; metrics.checks.editorShiftEnterIsLocal = true; metrics.checks.editorEnterWhole = true;
+
+  phase = 'holding editor Enter pastes once and never adds a terminal carriage return';
+  await offer(0, 'held original\ndraft'); await fillEditor(0, 'held edited\ncommand'); before = inputs().length;
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); await flush();
+  await syntheticEnter({ repeat: true }); await syntheticEnter({ repeat: true }); await releaseEnter();
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'held edited\rcommand']]);
+  await assertFocused(0, '.xterm-helper-textarea'); metrics.checks.editorEnterRepeat = true;
+
+  phase = 'clicking chooser text preserves edited draft focus and Ctrl+Enter remains usable';
+  await offer(0, 'before edit\nsecond'); await fillEditor(0, 'after edit\nsecond'); before = inputs().length;
+  const blankPoint = await evaluate(`(() => { const bounds = document.querySelector('${selector(0)} .terminal-paste-dialog > strong').getBoundingClientRect(); return { x: Math.round(bounds.x + 10), y: Math.round(bounds.y + 5) }; })()`);
+  window.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...blankPoint });
+  window.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...blankPoint }); await flush();
+  await assertFocused(0, '[data-paste-editor]');
+  assert.equal(await syntheticEnter({ isComposing: true }), false);
+  assert.equal(await syntheticEnter({ ctrlKey: true, keyCode: 229 }), false);
+  assert.equal(inputs().length, before);
+  await key(0, 'Enter', ['control'], false);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'after edit']]);
+  await click(0, '.terminal-paste-queue button:last-child');
+  metrics.checks.chooserBlankClickPreservesFocus = true; metrics.checks.editorImeIgnored = true;
 
   phase = 'empty editor disables both choices and never sends'; await offer(0, 'remove one\nremove two'); before = inputs().length;
   await fillEditor(0, ''); assert.deepEqual((await inspect()).dialogs[0].choicesDisabled, [true, true]);
@@ -192,6 +216,7 @@ async function run() {
   }
   metrics.checks.disabledChoicesSkipped = true;
   await key(0, 'Enter', ['control'], false); assert.equal(inputs().length, before); assert.equal((await inspect()).dialogs.length, 1);
+  await key(0, 'Enter', [], false); assert.equal(inputs().length, before); assert.equal((await inspect()).dialogs.length, 1);
   await choose(0, 'all'); await choose(0, 'lines'); assert.equal(inputs().length, before); assert.equal((await inspect()).dialogs.length, 1);
   await cancel(0); assert.equal(inputs().length, before); metrics.checks.emptyEditorBlocked = true;
 
@@ -291,16 +316,18 @@ async function run() {
   await until(async () => /data-paste-editor/.test((await inspect()).focus), 'editor regains focus after tab return');
   assert.match((await inspect()).focus, /data-paste-editor/);
   assert.equal((await inspect()).dialogs[0].editorValue, 'edited protected\nchooser draft'); assert.equal(inputs().length, before);
-  await editorEnd(0); await window.webContents.insertText(' locally'); await key(0, 'Enter', [], false);
+  await editorEnd(0); await window.webContents.insertText(' locally'); await key(0, 'Enter', ['shift'], false);
   await until(async () => (await inspect()).dialogs[0].editorValue === 'edited protected\nchooser draft locally\n', 'returned editor stays editable');
   assert.equal(inputs().length, before);
-  // Even an unexpected focus jump or native paste on the underlying xterm
-  // cannot write to the connection or replace the pending edited draft.
-  await key(0, 'Enter'); assert.equal(inputs().length, before);
+  // Unexpected xterm focus is returned to the editor; hidden terminal input
+  // and native paste cannot replace the pending edited draft.
+  await evaluate('window.__pasteTerminals[0].focus()'); await assertFocused(0, '[data-paste-editor]');
   await native(0, 'must-not-send'); assert.equal(inputs().length, before);
   assert.equal((await inspect()).dialogs[0].editorValue, 'edited protected\nchooser draft locally\n');
   metrics.checks.chooserBlocksUnderlyingTerminal = true;
-  await cancel(0); metrics.checks.chooserFocusIsolation = true; metrics.checks.editedDraftTabIsolation = true;
+  await key(0, 'Enter', ['control'], false);
+  assert.deepEqual(inputs().slice(before).map(call => call.args), [['paste-a', 'edited protected']]);
+  await click(0, '.terminal-paste-queue button:last-child'); metrics.checks.chooserFocusIsolation = true; metrics.checks.editedDraftTabIsolation = true;
 
   phase = 'disconnect clears chooser and line queue'; await offer(0, 'stop\ndisconnect'); await choose(0, 'lines'); before = inputs().length;
   emit({ type: 'sessionClosed', sessionId: 'paste-a', message: 'Fixture disconnect' }); await until(async () => (await inspect()).queues.length === 0, 'close event clears queue');

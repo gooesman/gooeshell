@@ -253,6 +253,67 @@ async function run() {
   assert.equal(await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'fullscreen').length`), 1);
   assert.equal(await evaluate(`window.appConnectionsFixture.calls.filter(call => call.method === 'maximize').length`), 2);
   result.checks.maximizeShortcutPreservesWorkspace = true;
+
+  phase = 'paste chooser remains usable after returning to a tab with file management collapsed';
+  assert.equal(await evaluate(`document.getElementById('file-manager').hidden`), true);
+  await evaluate(`window.fixturePasteInputs = []; window.fixturePasteSubscriptions = window.__appConnectionTerminals.filter(terminal => terminal.element?.isConnected).map(terminal => terminal.onData(data => window.fixturePasteInputs.push({ sessionId: terminal.element.closest('[data-terminal-session]').dataset.terminalSession, data }))); true`);
+  const pasteEnter = async (control = false, editor = false, shift = false) => {
+    const modifiers = control ? ['control'] : shift ? ['shift'] : [];
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter', modifiers });
+    if (editor && !control) window.webContents.sendInputEvent({ type: 'char', keyCode: '\r', modifiers });
+    window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter', modifiers }); await delay(35);
+  };
+  const openPaste = async text => {
+    await evaluate(`window.appConnectionsFixture.clipboardText = ${JSON.stringify(text)}; document.querySelector('[data-terminal-session][data-active="true"] .xterm-helper-textarea').focus()`);
+    await shortcut('V'); await until(() => evaluate(`Boolean(document.querySelector('.terminal-paste-dialog'))`), 'paste chooser opened');
+  };
+  const pasteTabRoundTrip = async () => {
+    await mouse('[data-fixture-tab="source"]'); await until(async () => await activeSession() === sourceSession, 'other terminal selected');
+    await mouse('[data-fixture-tab="duplicate"]'); await until(async () => await activeSession() === duplicateSession, 'paste terminal selected again');
+    await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  };
+  await openPaste('echo return one\necho return two'); await pasteTabRoundTrip();
+  result.pasteReturnFocus = await evaluate(`document.activeElement?.outerHTML`);
+  await pasteEnter();
+  assert.equal(await evaluate(`Boolean(document.querySelector('.terminal-paste-dialog'))`), false, 'Enter must choose whole paste after switching back to its terminal');
+  assert.deepEqual(await evaluate(`window.fixturePasteInputs`), [{ sessionId: duplicateSession, data: 'echo return one\recho return two' }]);
+  result.checks.pasteWholeAfterCollapsedTabSwitch = true;
+
+  await evaluate(`window.fixturePasteInputs = []`); await openPaste('echo first returned line\necho second returned line'); await pasteTabRoundTrip();
+  await pasteEnter(true);
+  assert.equal(await evaluate(`Boolean(document.querySelector('.terminal-paste-queue[data-paste-line="1"]'))`), true, 'Ctrl+Enter must choose line mode after switching back');
+  await pasteEnter(); await pasteEnter(true);
+  assert.deepEqual(await evaluate(`window.fixturePasteInputs`), [{ sessionId: duplicateSession, data: 'echo first returned line' }, { sessionId: duplicateSession, data: '\r' }, { sessionId: duplicateSession, data: 'echo second returned line' }]);
+  await click('取消剩余');
+  result.checks.pasteLinesAfterCollapsedTabSwitch = true;
+
+  await evaluate(`window.fixturePasteInputs = []`); await openPaste('original draft\nsecond line');
+  await fill('[data-paste-editor]', 'edited draft\nsecond line');
+  await evaluate(`const editor = document.querySelector('[data-paste-editor]'); editor.setSelectionRange(editor.value.length, editor.value.length)`);
+  await pasteTabRoundTrip();
+  assert.equal(await evaluate(`document.activeElement === document.querySelector('[data-paste-editor]')`), true, 'returning to an edited draft must preserve editor focus');
+  await pasteEnter(false, true, true);
+  assert.equal(await evaluate(`document.querySelector('[data-paste-editor]').value`), 'edited draft\nsecond line\n');
+  assert.deepEqual(await evaluate(`window.fixturePasteInputs`), [], 'editing a returned draft must not execute or paste anything');
+  await pasteEnter();
+  assert.equal(await evaluate(`Boolean(document.querySelector('.terminal-paste-dialog'))`), false, 'Enter must choose whole paste from the editor');
+  assert.deepEqual(await evaluate(`window.fixturePasteInputs`), [{ sessionId: duplicateSession, data: 'edited draft\rsecond line\r' }]);
+  await evaluate(`window.fixturePasteInputs = []`); await openPaste('original first\noriginal second');
+  await fill('[data-paste-editor]', 'edited first\nedited second'); await pasteTabRoundTrip();
+  await pasteEnter(true);
+  assert.deepEqual(await evaluate(`window.fixturePasteInputs`), [{ sessionId: duplicateSession, data: 'edited first' }]);
+  await click('取消剩余');
+  result.checks.pasteEditorAfterCollapsedTabSwitch = true;
+
+  await click('展开文件管理'); await openPaste('echo collapse one\necho collapse two');
+  await mouse('.titlebar [aria-label="收起文件管理"]');
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await evaluate(`window.fixturePasteInputs = []`); await pasteEnter();
+  assert.equal(await evaluate(`Boolean(document.querySelector('.terminal-paste-dialog'))`), false, 'collapsing files must return focus to the pending paste choice');
+  assert.deepEqual(await evaluate(`window.fixturePasteInputs`), [{ sessionId: duplicateSession, data: 'echo collapse one\recho collapse two' }]);
+  result.checks.pasteChoiceAfterFilesCollapse = true;
+  await evaluate(`window.fixturePasteSubscriptions.forEach(subscription => subscription.dispose())`);
+
   phase = 'settings draft survives the refresh shortcut';
   await click('设置'); await click('字体与外观');
   await shortcut('F10');

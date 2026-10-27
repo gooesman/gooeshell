@@ -74,7 +74,7 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
     return;
    }
    if(chooser&&paste.state?.mode==='choose'){
-    const choice=control?'lines':plain?target.closest<HTMLElement>('[data-paste-choice]')?.dataset.pasteChoice:undefined;
+    const choice=control?'lines':plain?(target.matches('[data-paste-editor]')?'all':target.closest<HTMLElement>('[data-paste-choice]')?.dataset.pasteChoice):undefined;
     const cancel=plain&&!!target.closest('[data-paste-cancel]');
     if(!choice&&!cancel)return;
     consume();if(event.repeat)return;holdPasteEnter();
@@ -182,13 +182,13 @@ export default function TerminalView({session,settings,active,onFontSizeChange,d
   // A newly opened paste dialog may already own focus before this frame runs.
   // Do not replace its default button or the user's editing position.
   if(host.current?.parentElement?.contains(document.activeElement))return;
-  const chooser=host.current?.parentElement?.querySelector<HTMLTextAreaElement>('.terminal-paste-dialog [data-paste-editor]');
-  if(chooser)chooser.focus();else terminal.focus();
+  // The chooser restores its own last focused control when this tab returns.
+  if(!host.current?.parentElement?.querySelector('.terminal-paste-dialog'))terminal.focus();
  });return()=>cancelAnimationFrame(frame);}},[active]);
  return <div className="terminal-instance" data-active={active} style={{position:'relative',height:'100%',minHeight:0,display:active?'block':'none',background:terminalBackground(settings.theme,settings.terminalPalette)}}>
   {background&&<div style={{position:'absolute',inset:0,backgroundImage:`url(${background})`,backgroundSize:'cover',backgroundPosition:'center',opacity:settings.backgroundOpacity,pointerEvents:'none'}}/>}
   <div ref={host} style={{position:'absolute',inset:isDisconnected||reconnecting||pasteState?.mode==='lines'?'10px 12px 76px':'10px 12px',minHeight:0}}/>
-  {pasteState&&pasteController.current&&<TerminalPastePanel state={pasteState} controller={pasteController.current} terminal={term.current} connectionName={sessionName(session)} />}
+  {pasteState&&pasteController.current&&<TerminalPastePanel state={pasteState} controller={pasteController.current} terminal={term.current} connectionName={sessionName(session)} active={active} />}
   {(isDisconnected||reconnecting)&&onReconnect&&<div className="terminal-reconnect" role="status"><div><strong>{local?(reconnecting?'正在重新打开…':'本地进程已退出'):(reconnecting?'正在重新连接…':'连接已断开')}</strong><span>{reconnectError||closedEvent?.message||'原终端内容已保留'}</span></div>{reconnecting?<button className="button secondary small" onClick={onCancelReconnect}>{local?'取消打开':'取消重连'}</button>:<button className="button secondary small" onClick={onReconnect}>{local?'重新打开':'重新连接'}{settings.shortcuts.reconnect&&<kbd>{settings.shortcuts.reconnect.replaceAll('+',' + ')}</kbd>}</button>}</div>}
   {fontWarning&&<div className="terminal-font-warning" role="status">{fontWarning}</div>}
   {searchOpen&&<div className="terminal-search" style={{position:'absolute',right:20,top:12,display:'flex',gap:6,padding:8,background:'var(--surface-raised)',border:'1px solid var(--border)',borderRadius:10,zIndex:5}}><input autoFocus placeholder="搜索终端输出" value={query} onChange={e=>{setQuery(e.target.value);search.current?.findNext(e.target.value);}} onKeyDown={e=>{e.stopPropagation();if(e.key==='Escape'){setSearchOpen(false);term.current?.focus();}if(e.key==='Enter')e.shiftKey?search.current?.findPrevious(query):search.current?.findNext(query);}}/><button onClick={()=>search.current?.findPrevious(query)}>↑</button><button onClick={()=>search.current?.findNext(query)}>↓</button><button onClick={()=>{setSearchOpen(false);term.current?.focus();}}>×</button></div>}
