@@ -25,6 +25,7 @@ const mock: Partial<DesktopApi> = {
   connections: async () => ({ profiles: [profile], connections: [profile], groups: [], history }),
   credentialStatus: async () => ({ remember:'session', sudoUsesLogin:true, hasPassword:false, hasPassphrase:false, hasSudoPassword:false, secureStorageAvailable:true }),
   listLoginIdentities: async () => ({identities:[],secureStorageAvailable:true}),
+  externalEdits: async () => [],
   listLocalShells: async () => [{ id: 'pwsh', name: 'PowerShell 7', available: true, isDefault: true }, { id: 'powershell', name: 'Windows PowerShell', available: true, isDefault: false }, { id: 'cmd', name: '命令提示符 (CMD)', available: true, isDefault: false }],
   createLocalSession: async (request = {}) => {
     control.calls.push({ method: 'createLocalSession', request });

@@ -1,30 +1,30 @@
-# Upstream provenance
+# 来源与许可
 
-The local MCP bridge uses the official [TypeScript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk), pinned to `@modelcontextprotocol/sdk` 1.32.2 (MIT), and Zod 4.6.7 (MIT). The v1 SDK provides a CommonJS entry compatible with the desktop's existing main-process build. Dependency licenses remain in the packaged modules. The adapter runs over stdio using the application's bundled Node runtime; connection selection, credential handling and the authenticated loopback bridge are independent GooeShell code.
+当前 GooeShell 桌面版是位于 `desktop/` 的独立应用，新增代码采用 [MIT](LICENSE.md)。打包保留 Electron 和各依赖原始许可证。它不运行或重新打包 WezTerm。
 
-GooeShell is an independent Windows-first product. The current graphical application lives in `desktop/` and uses Electron, React, TypeScript, xterm.js and ssh2. The original native prototype and imported WezTerm source tree remain in this repository as a reference, under their original licenses.
+## 当前组件
 
-The graphical application does not run or repackage the WezTerm executables. Its new code is MIT licensed under `desktop/LICENSE`; dependency licenses are retained in the packaged Node modules and Electron distribution. Font provenance is recorded below.
+| 组件 | 用途 | 来源 / 许可 |
+| --- | --- | --- |
+| Electron | 桌面窗口与运行时 | <https://github.com/electron/electron>，MIT，分发中另附 Chromium 等第三方许可。 |
+| React / TypeScript | 界面与应用代码 | <https://github.com/facebook/react>（MIT）、<https://github.com/microsoft/TypeScript>（Apache-2.0）。 |
+| xterm.js | 终端仿真与 WebGL 渲染 | <https://github.com/xtermjs/xterm.js>，MIT。 |
+| ssh2 | SSH、SFTP 与跳板机 | <https://github.com/mscdex/ssh2>，MIT。 |
+| node-pty | Windows ConPTY 与 POSIX PTY | <https://github.com/microsoft/node-pty>，MIT。 |
+| CodeMirror | 内置文本编辑器 | <https://github.com/codemirror/dev>，MIT。 |
+| TypeScript MCP SDK / Zod | 本机 MCP 协议与参数校验 | <https://github.com/modelcontextprotocol/typescript-sdk>、<https://github.com/colinhacks/zod>，MIT。 |
+| node-tar | 本地压缩传输 | <https://github.com/isaacs/node-tar>，BlueOak-1.0.0。 |
 
-Compressed file transfers use the [node-tar](https://github.com/isaacs/node-tar) library (BlueOak-1.0.0 license) and Node.js streaming gzip locally; the remote helper uses Python's standard-library `tarfile` and `gzip`. Archive validation and the transfer workflow are independent GooeShell code. No remote service is installed.
+实际依赖版本以 `desktop/package-lock.json` 为准。远程归档与部分文件操作使用 Python 标准库，不安装常驻远端服务。连接、任务、校验、编辑回传和界面编排是 GooeShell 自有实现。
 
-Local terminals use [microsoft/node-pty](https://github.com/microsoft/node-pty), pinned to 1.1.0 (MIT), with Windows ConPTY and POSIX pseudo-terminals. The complete module is unpacked beside the application ASAR so native helpers and worker scripts use real filesystem paths. Its license remains in the distributed dependency. Local terminal session routing, flow control and workspace integration are independent GooeShell code.
+`desktop/scripts/prepare-native-pty.mjs` 对固定的 node-pty 1.1.0 应用两项幂等打包修正：恢复 macOS spawn helper 的可执行位，以及避免重复替换已经 unpack 的 ASAR 路径。相关上游问题为 [850](https://github.com/microsoft/node-pty/issues/850) 和 [923](https://github.com/microsoft/node-pty/issues/923)；升级该依赖时需重新审查。
 
-`desktop/scripts/prepare-native-pty.mjs` applies two idempotent packaging fixes to this pinned dependency: restore executable bits for the macOS spawn helper ([upstream issue 850](https://github.com/microsoft/node-pty/issues/850)), and avoid replacing already-unpacked ASAR paths twice ([upstream issue 923](https://github.com/microsoft/node-pty/issues/923)). Dependency upgrades require reviewing these fixes. These are build-time changes, not modifications to installed applications or user Shell configuration.
+## 字体
 
-- Upstream: https://github.com/wezterm/wezterm
-- Imported revision: `9fa147c9532c7b175335f6453a4dd7ad7e6473b2`
-- Original license and third-party notices: `LICENSE.md`, `licenses/`, and per-component notices.
-- New GooeShell code: `gooeshell/`, `gooeshell-launcher/`, `gooeshell-files/`.
-- Product workflow: `.github/workflows/gooeshell-windows.yml`.
-- Original workflows are retained under `ci/upstream-workflows/` and do not run in this repository.
+内置 DejaVu Sans Mono、JetBrains Mono 和 IBM Plex Mono，使用上游原始文件并保留许可证、固定版本和来源说明，见 [字体目录](desktop/public/fonts/README.md)。系统字体只从用户设备枚举，不随程序重新分发；没有从 FinalShell 或 Xshell 提取字体用于分发。
 
-The historical native prototype retains its original executable names. The current Windows desktop application is distributed as `GooeShell.exe`; configuration paths and internal application identifiers retain `gooeshell` for compatibility.
+中英文独立字重使用 CSS 复合字体与 Unicode 范围；字体目录读取实际可用字体信息，不修改 xterm.js 或 WebGL 内部实现。
 
-The DejaVu Sans Mono files in `gooeshell/fonts/` are unmodified files from the official DejaVu 2.37 release. See that directory's README and original license for provenance.
+## 历史原型
 
-The graphical application bundles DejaVu Sans Mono 2.37, JetBrains Mono 2.304, and IBM Plex Mono with regular and bold faces in `desktop/public/fonts/`. That directory contains the upstream revisions, original licenses, and provenance in its README. System fonts are enumerated from the user's computer and are not redistributed.
-
-Independent Latin/CJK weights use standard [CSS composite font faces and Unicode ranges](https://www.w3.org/TR/css-fonts-4/#composite-fonts). Windows font enumeration filters simulated WPF faces and reads full/PostScript names from the [OpenType name table](https://learn.microsoft.com/en-us/typography/opentype/spec/name), including individual TTC collection faces. No xterm.js or WebGL internals are patched for this feature.
-
-The import preserves dependency submodule URLs and commits. Clone with `--recurse-submodules`.
+早期 WezTerm / Rust 原型已退出当前构建。导入提交、许可证和历史恢复位置见 [历史说明](docs/history/native-prototype.md)。移除旧源码不改变其原始许可，也不重写仓库历史。

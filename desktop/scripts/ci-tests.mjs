@@ -8,7 +8,7 @@ await fs.mkdir(output, { recursive: true });
 const directory = await fs.mkdtemp(path.join(output, 'ci-'));
 const ready = path.join(directory, 'sftp.ready');
 const server = spawn(process.env.GOOESHELL_TEST_PYTHON || 'python', [
-  '../gooeshell-files/tests-support/sftp_fixture.py',
+  '../test-support/ssh/sftp_fixture.py',
   '--root', path.join(directory, 'sftp'), '--ready', ready, '--lifetime', '600',
 ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 server.stdout.pipe(createWriteStream(path.join(directory, 'fixture.log')));

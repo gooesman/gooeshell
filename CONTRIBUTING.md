@@ -1,184 +1,28 @@
-# Contributing to wezterm
+# 参与 GooeShell 开发
 
-Thanks for considering donating your time and energy!  I value any contribution,
-even if it is just to highlight a typo.
+当前桌面程序在 `desktop/`。先阅读 [开发基线](docs/DEVELOPMENT.md) 和 [README](README.md)，再修改对应功能；废弃的 Rust 原型不再作为开发入口。
 
-Included here are some guidelines that can help streamline taking in your contribution.
-They are just guidelines and not hard-and-fast rules. Things will probably go faster
-and smoother if you have the time and energy to read and follow these suggestions.
+## 本地运行
 
-## Contributing Documentation
-
-There's never enough!  Pretty much anything is fair game to improve here.
-
-### Running the doc build yourself
-
-To check your documentation additions, you can optionally build the docs yourself and see how the changes will look on the webpage. 
-
-To serve them up, and then automatically rebuild and refresh the docs in your browser, run:
-```console
-$ ci/build-docs.sh serve
-```
-And then click on the URL that it prints out after it has performed the first build.
-
-Any arguments passed to `build-docs.sh` are passed down to the underlying `mkdocs` utility.
-
-Look at [mkdocs serve](https://www.mkdocs.org/user-guide/cli/#mkdocs-serve) for more information on additional parameters.
-
-### Operating system specific installation instructions?
-
-There are a lot of targets out there.  Today we have docs that are Ubuntu biased
-and I know that there are a lot of flavors of Linux. Rather than expand the README
-with instructions for those, please translate the instructions into steps that
-can be run in the [`get-deps`](https://github.com/wezterm/wezterm/blob/master/get-deps)
-script.
-
-## Contributing code
-
-Yes please!
-
-If you are new to the Rust language check out <https://doc.rust-lang.org/rust-by-example/>.
-
-### Building from source
-
-To build wezterm from source, you will need a local Rust toolchain, and a few platform-specific dependencies.
-Follow the [Install from Source](https://wezfurlong.org/wezterm/install/source.html) guide to get started!
-
-Some platforms like Windows have a few specific steps, make sure to check the dedicated sections in the guide.
-
-### Where to find things?
-
-The `term` directory holds the core terminal model code. This is agnostic
-of any windowing system. If you want to add support for terminal escape
-sequences and that sort of thing, you probably want to be in the `term` directory.
-Keep in mind that for maximal compatibility and utility `wezterm` aims to
-be compatible with the `xterm` behavior.
-https://invisible-island.net/xterm/ctlseqs/ctlseqs.html is a useful resource!
-
-The `src` directory holds the code for the `wezterm` program. This is
-the GUI renderer for the terminal model.  If you want to change something
-about the GUI you want to be in the `src` dir.
-
-### Iterating
-
-I tend to iterate and sanity check as I develop using `cargo check`; it
-will type-check your code without generating code which is much faster
-than building everything in release mode:
-
-```console
-$ cargo check
+```sh
+cd desktop
+npm ci
+npm run dev
 ```
 
-Likewise, if you want to quickly check that something works, you can run it
-in debug mode using:
+需要 Node.js 22.12+。第一次安装会下载 Electron，并准备 `node-pty` 的原生辅助文件。构建和打包使用 `npm run build`、`npm run pack`；各平台安装包应在对应系统上生成。
 
-```console
-$ cargo run
-```
+## 验证修改
 
-This will produce a debug-instrumented binary with poor optimization. This will
-give you more detail in the backtrace produced if you run `RUST_BACKTRACE=1 cargo run`.
+- 默认回归：在 `desktop/` 执行 `npm test`。
+- SSH / SFTP 集成：安装 `test-support/ssh/requirements.txt`，再在 `desktop/` 执行 `node scripts/ci-tests.mjs`。夹具只绑定回环地址，使用生成的临时身份与文件。
+- 界面测试：先生产构建，按变更运行 `scripts/ci-editor-tests.mjs`、`ci-connection-tests.mjs`、`ci-command-tests.mjs` 或 `ci-workspace-tests.mjs`。Linux 使用 `xvfb-run -a`。
+- 发布验收：运行成品启动检查和解压安装检查，参见 [发布流程](docs/RELEASING.md)。本地默认测试成功不代表所有环境测试都已执行。
 
-If you get a panic and want to examine local variables, you'll need to use gdb:
+修复缺陷时补充能复现问题的测试。界面异步加载应等待可观察的完成状态，不用固定短暂停顿代替完成判断，也不移除失败的验收要求。
 
-```console
-$ cargo build
-$ gdb ./target/debug/wezterm
-$ break rust_panic               # hit tab to complete the name of the panic symbol!
-$ run
-$ bt
-```
+## 提交与反馈
 
-Starting WezTerm with `wezterm-gui start --always-new-process` is useful to ensure Mux logs are not
-hidden in an background process started in an earlier test.
+让每次修改对应明确的问题，避免混入无关重构。不要提交账号密码、私钥、应用数据、真实服务器截图、`node_modules`、安装包或测试运行目录。界面说明使用演示连接；截图中的身份、地址和输出都应是虚构数据。
 
-Start WezTerm with `wezterm-gui --config-file ./test-conf.lua ……` to test a custom config file.
-
-
-### Please include tests to cover your changes!
-
-This will help ensure that your contributions keep working as things change.
-
-You can run the existing tests using:
-
-```console
-$ cargo test --all
-```
-
-There are some helper classes for writing tests for terminal behavior.
-Here's [an example of a test to verify that the terminal contents
-match expectations](https://github.com/wezterm/wezterm/blob/fd532a8c2fb3b56593597cf8be1775da1feda0a3/term/src/test/mod.rs#L314).
-
-Please also make a point of adding comments to your tests to help
-clarify the intent of the test!
-
-### Testing in a NixOS VM
-
-If you need to test WezTerm in a clean desktop environment (e.g. to reproduce a
-display server bug or verify a desktop integration), you can use the provided
-NixOS VM configurations.
-
-Two desktop variants are available:
-- GNOME (`testing-on-gnome`)
-- KDE Plasma (`testing-on-plasma`).
-
-**Prerequisites:** Nix is installed, with flakes enabled (`experimental-features = nix-command flakes`).
-
-**Workflow:**
-
-```console
-$ cargo build                                            # build wezterm locally
-$ nixos-rebuild build-vm --flake ./nix#testing-on-plasma # build the Plasma VM image
-$ REPO=$PWD ./result/bin/run-nixos-vm                    # start the VM
-```
-
-> [!NOTE]
-> You might need to tweak desktop settings (e.g. the keyboard layout) on first VM start.
->
-> The VM state is stored in `nixos.qcow2` in the current working directory on the host.
-
-Inside the VM, open a terminal (e.g. _Console_ on GNOME, _Konsole_ on Plasma), then:
-
-```console
-$ cd repo                      # go into ~/repo
-$ ./target/debug/wezterm-gui   # run wezterm for your tests
-```
-
-The host repository is mounted into the VM at `/home/dev/repo` via a 9p shared directory,
-so changes on the host (rebuilds, test config file, ..) are immediately visible inside the VM.
-
-Keep the VM running and make your changes locally, re-build wezterm on your host and kill/start
-wezterm again in the VM for your tests.
-
-> [!WARNING]
-> The host repo is supposed to be mounted in read-write but I (@bew) don't know why changes in the
-> repo are not actually propagated to the host. (PR welcome!)
-
-### Please also include documentation if you are adding or changing behavior
-
-This helps to keep things well-understood and working in the long term.
-Don't worry if you're not a wordsmith or English isn't your first language as
-I can help with that. It is more important to capture the intent of the
-feature and having this written out in English also helps when it comes
-to reviewing the code.
-
-## Submitting a Pull Request
-
-After considering all of the above, and once you've prepared your contribution
-and are ready to submit it, you'll need to create a pull request.
-
-If you're new to GitHub Pull Requests, read through
-https://help.github.com/articles/creating-a-pull-request/ to understand
-how the process works.
-
-### Before you submit your code
-
-Make sure that the tests are working and that the code is correctly
-formatted otherwise the continuous integration system will fail your build:
-
-```console
-$ rustup component add rustfmt-preview          # you only need to do this once
-$ cargo test --all
-$ cargo fmt --all
-```
-
+问题反馈请附 GooeShell 版本、系统、复现步骤和预期行为。涉及 SSH 时补充认证类型、是否经跳板机，以及终端或文件操作的具体报错；无需提供密码、私钥或完整配置文件。

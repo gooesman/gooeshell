@@ -1,0 +1,15 @@
+name: 功能建议
+description: 提出 GooeShell 的使用场景和改进建议。
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 希望解决什么问题
+      description: 请描述实际使用场景，以及目前需要怎样操作。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望的行为
+      description: 可附脱敏示意图；请说明与现有功能的关系。

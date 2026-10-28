@@ -102,6 +102,11 @@ async function run() {
   assert.ok(warning.detail.includes('Server A · /server-A/notes.md'));
   assert.ok(!warning.detail.includes('Server B'), 'clean restored file is excluded');
   closeChoice = 0; window.close(); await assertStillRunning();
+  const listDeadline = Date.now() + 10000;
+  while (!await window.webContents.executeJavaScript('Boolean(document.querySelector(".external-editors"))')) {
+    assert.ok(Date.now() < listDeadline, 'view files must finish loading the actual list');
+    await delay(25);
+  }
   assert.equal(await window.webContents.executeJavaScript('Boolean(document.querySelector(".external-editors"))'), true, 'view files opens the actual list');
   assert.ok(await window.webContents.executeJavaScript('document.querySelector(".external-editors").textContent.includes("/server-A/notes.md")'));
   await window.webContents.executeJavaScript(`document.querySelector('[role="dialog"][aria-label="外部编辑"] [aria-label="关闭"]').click()`);

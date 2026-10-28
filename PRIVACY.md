@@ -1,58 +1,22 @@
-# Privacy Policy for WezTerm
+# GooeShell 数据处理说明
 
-No data about your device(s) or WezTerm usage leave your device.
+GooeShell 是本地桌面应用。连接、界面设置、共享登录身份和命令库保存在当前系统用户的应用数据目录；位置与备份方法见 [配置说明](docs/CONFIGURATION.md)。
 
-## Data Maintained by WezTerm
+## 连接和凭据
 
-WezTerm maintains some historical data, such as recent searches or action
-usage, in some of its overlays such as the debug overlay and character
-selector, in order to make your usage more convenient. It is used only
-by the local process, and care is taken to limit access for the associated
-files on disk to only your local user identity.
+- SSH、SFTP 和跳板机连接直接访问用户选择的服务器。
+- 密码、私钥口令和 sudo 密码可选择不记住、仅本次使用，或系统加密长期记住。系统加密不可用时不改用明文保存。
+- 外部私钥保持在用户选择的位置；程序配置记录其路径。应用生成的密钥位于自己的 `keys/` 目录。
+- MCP 配置只包含本机程序、脚本和状态文件路径，不包含保存的 SSH 密码。桥接启用后，受信任的本机客户端可以调用已保存连接及 sudo 能力，具体范围见 [MCP 说明](docs/MCP.md)。
 
-WezTerm tracks the output from the commands that you have executed in
-a scrollback buffer.  At the time of writing, that scrollback buffer
-is an in-memory structure that is not visible to other users of the machine.
-In the future, if wezterm expands to offload scrollback information to
-your local disk, it will do so in such a way that other users on the
-same system will not be able to inspect it.
+## 文本、文件与历史
 
-## macOS and Data permissions
+终端滚动内容和命令状态记录主要保存在当前会话内存中。最近连接、命令库等会保存在本机。传输会创建暂存文件；未完成传输可能保留 `.gooeshell.part` 用于续传。
 
-On macOS, when a GUI application that has a "bundle" launches child processes
-(eg: WezTerm, running your shell, and your shell running the programs which you
-direct it to run), any permissioned resource access that may be attempted by
-those child processes will be reported as though WezTerm is attempting to
-access those resources.
+用外部编辑器打开远程文件时，GooeShell 会下载一份本地草稿并记录回传基线。草稿和冲突备份在断线、退出或结束回传后保留，供用户恢复或自行处理。外部编辑器自身如何保存、同步或上传文件，取决于该编辑器的配置。
 
-The result is that from time to time you may see a dialog about WezTerm
-accessing your Contacts if run a `find` command that happens to step through
-the portion of your filesystem where the contacts are stored.  Or perhaps you
-are running a utility that accesses your camera; it will appear as though
-WezTerm is accessing those resources, but it is not: there is no logic within
-WezTerm to attempt to access your contacts, camera or any other sensitive
-information.
+应用不会将本机服务器目录作为云端同步数据。AI 客户端可读取其调用得到的命令输出；这些输出后续如何被使用，取决于所选 AI 客户端及其设置。
 
-## Update Checking
+## 反馈与截图
 
-By default, once every 24 hours, wezterm makes an HTTP request to GitHub's
-release API in order to determine if a newer version is available and to
-notify you if that is the case.
-
-The content of that request is private between your machine and GitHub.  The
-contributors to WezTerm cannot see inside that request and therefore cannot
-infer any information from it.
-
-If you wish, you can disable update checking. See
-https://wezterm.org/config/lua/config/check_for_updates.html for
-more information on that.
-
-## Third-Party Builds
-
-The above is true of the wezterm source code and the binaries produced by
-wezterm's CI and made available from https://wezterm.org/ and
-https://github.com/wezterm/wezterm/.
-
-If you obtained a pre-built wezterm binary from some other source be aware that
-the person(s) building those versions may have modified them to behave
-differently from the source version.
+提交公开问题前，请移除密码、私钥、令牌、真实地址和敏感日志。仓库中的界面截图使用隔离的演示数据。系统加密依赖当前操作系统用户的密钥，不能代替对已登录设备和本机程序的访问控制。

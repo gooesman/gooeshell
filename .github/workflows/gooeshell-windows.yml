@@ -7,7 +7,8 @@ on:
     paths:
       - 'desktop/**'
       - '.github/workflows/gooeshell-windows.yml'
-      - 'gooeshell-files/tests-support/**'
+      - 'test-support/**'
+      - '.github/release-notes/**'
 permissions:
   contents: read
 concurrency:
@@ -53,7 +54,7 @@ jobs:
         run: node scripts/ci-artifacts.mjs verify ${{ matrix.target }} ${{ matrix.arch }}
       - run: npm ci --no-audit --no-fund
       - name: Install disposable SSH fixture
-        run: python -m pip install --disable-pip-version-check -r ../gooeshell-files/tests-support/requirements.txt
+        run: python -m pip install --disable-pip-version-check -r ../test-support/ssh/requirements.txt
       - name: Install Linux display and Chinese font dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 fonts-noto-cjk tmux
