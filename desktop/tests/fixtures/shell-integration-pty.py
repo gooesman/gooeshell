@@ -5,6 +5,7 @@ import pathlib
 import pty
 import re
 import select
+import shlex
 import signal
 import shutil
 import subprocess
@@ -165,8 +166,12 @@ try:
     out = shell.run('echo duplicate')
     assert b']633;E;' not in out, out
     checks.append('disabled history and duplicate filtering never copy a partial command')
-    os.write(shell.fd, b'sleep 20\n')
+    interrupt_command = shlex.quote(sys.executable) + ' -c \'import time; print("interrupt-ready", flush=True); time.sleep(20)\''
+    os.write(shell.fd, interrupt_command.encode() + b'\n')
     started = shell.until(b'\x1b]133;C\x07')
+    # C is emitted before Bash forks. Interrupt only after the child is running
+    # with its own signal handler, rather than racing Bash's process handoff.
+    shell.until(b'interrupt-ready\r\n')
     os.write(shell.fd, b'\x03')
     out = shell.until()
     assert b'\x1b]133;D;130\x07' in out, out
