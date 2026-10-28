@@ -3,6 +3,7 @@ const { Worker } = require('node:worker_threads');
 const { promises: fs, writeFileSync, mkdirSync } = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { createHash, randomUUID } = require('node:crypto');
 
 const artifacts = process.env.GOOESHELL_EDITOR_MAIN_ARTIFACTS;
 if (!artifacts || !path.isAbsolute(artifacts) || !path.basename(artifacts).startsWith('editor-main-')) throw new Error('Explicit isolated editor fixture directory required');
@@ -12,6 +13,15 @@ mkdirSync(userData, { recursive: true });
 mkdirSync(downloads, { recursive: true });
 app.setPath('userData', userData);
 app.setPath('downloads', downloads);
+const syncedText = '# Synced external draft';
+const seeded = ['A', 'B'].map(name => {
+  const id = randomUUID(), folder = path.join(userData, 'external-editor', id), fileName = 'edit-notes.md';
+  const checksum = createHash('sha256').update(syncedText).digest('hex');
+  mkdirSync(folder, { recursive: true }); writeFileSync(path.join(folder, fileName), syncedText);
+  writeFileSync(path.join(folder, 'session.json'), JSON.stringify({ id, name: 'notes.md', path: '/server-' + name + '/notes.md', fileName, connectionName: 'Server ' + name, connectionKey: 'fixture-' + name, baseRevision: 'v1:' + checksum, syncedDigest: checksum }));
+  return { path: path.join(folder, fileName), folder };
+});
+
 
 const report = { success: false, checks: {}, dialogs: [], workerShutdowns: 0, errors: [] };
 const reportPath = path.join(artifacts, 'result.json');
@@ -25,7 +35,7 @@ Worker.prototype.postMessage = function(message, ...args) {
   return postMessage.call(this, message, ...args);
 };
 dialog.showMessageBoxSync = (_window, options) => {
-  report.dialogs.push({ title: options.title, type: options.type, buttons: options.buttons });
+  report.dialogs.push({ title: options.title, type: options.type, buttons: options.buttons, detail: options.detail });
   return closeChoice;
 };
 dialog.showSaveDialog = async (_window, options) => {
@@ -81,6 +91,23 @@ async function run() {
   const initialState = await call('initial');
   assert.equal(initialState.profiles.length, 0);
   assert.equal(initialState.connectionHistory.length, 0);
+
+  assert.equal((await call('externalEdits')).length, 2, 'restored synchronized drafts exist');
+  await fs.writeFile(seeded[0].path, '# Unsent local edit');
+  closeChoice = 1; const externalDialogs = report.dialogs.length;
+  window.close(); await assertStillRunning();
+  assert.equal(report.dialogs.length, externalDialogs + 1);
+  const warning = report.dialogs.at(-1);
+  assert.equal(warning.title, '外部文件尚未完成回传');
+  assert.ok(warning.detail.includes('Server A · /server-A/notes.md'));
+  assert.ok(!warning.detail.includes('Server B'), 'clean restored file is excluded');
+  closeChoice = 0; window.close(); await assertStillRunning();
+  assert.equal(await window.webContents.executeJavaScript('Boolean(document.querySelector(".external-editors"))'), true, 'view files opens the actual list');
+  assert.ok(await window.webContents.executeJavaScript('document.querySelector(".external-editors").textContent.includes("/server-A/notes.md")'));
+  await window.webContents.executeJavaScript(`document.querySelector('[role="dialog"][aria-label="外部编辑"] [aria-label="关闭"]').click()`);
+  await fs.writeFile(seeded[0].path, syncedText); closeChoice = 0;
+  report.checks.externalExitIdentifiesFiles = true;
+  report.checks.externalExitViewList = true;
   const file = path.join(artifacts, 'original.txt');
   const initialBytes = Buffer.from('\ufeff原始\r\ncontent\n', 'utf8');
   await fs.writeFile(file, initialBytes);

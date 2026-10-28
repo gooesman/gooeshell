@@ -215,7 +215,7 @@ export default function App() {
     let alive = true; let states = new Map<string, ExternalEdit['state']>();
     const update = (edits: ExternalEdit[]) => { states = new Map(edits.map(edit => [edit.id, edit.state])); setExternalEdits(edits); };
     void api.externalEdits().then(edits => { if (alive) update(edits); }).catch(error => { if (alive) notify(errorText(error), true); });
-    const off = api.onEvent(event => { if (event.type !== 'externalEdits') return; for (const edit of event.edits) if ((edit.state === 'conflict' || edit.state === 'error') && states.get(edit.id) !== edit.state) notify(`${edit.name}：${edit.state === 'conflict' ? '检测到文件冲突' : '回传已暂停'}，请在底部“外部编辑”中处理。`, true); update(event.edits); });
+    const off = api.onEvent(event => { if (event.type === 'showExternalEdits') { setExternalOpen(true); return; } if (event.type !== 'externalEdits') return; for (const edit of event.edits) if ((edit.state === 'conflict' || edit.state === 'error') && states.get(edit.id) !== edit.state) notify(`${edit.name}：${edit.state === 'conflict' ? '检测到文件冲突' : '回传已暂停'}，请在底部“外部编辑”中处理。`, true); update(event.edits); });
     return () => { alive = false; off(); };
   }, [notify]);
   const toggleCommands = useCallback(() => { if (zen) { setZen(false); setCommandsVisible(true); } else setCommandsVisible(value => !value); }, [zen]);

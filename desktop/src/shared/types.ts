@@ -110,6 +110,7 @@ export type AppEvent =
   | { type: 'hostKeyCancelled'; requestId: string }
   | { type: 'transfer'; transfer: TransferInfo }
   | { type: 'externalEdits'; edits: ExternalEdit[] }
+  | { type: 'showExternalEdits' }
   | { type: 'notice'; message: string };
 
 export interface DesktopApi {

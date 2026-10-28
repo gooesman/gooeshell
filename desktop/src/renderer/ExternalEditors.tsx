@@ -17,7 +17,7 @@ export default function ExternalEditors({ edits, settings, configure }: { edits:
   const selected = edits.find(item => item.id === comparison?.id);
   const stateLabels = { watching: '监测保存', uploading: '正在回传', conflict: '文件冲突', error: '回传已暂停', paused: '已暂停' };
   return <div className="modal-body external-editors">
-    <div className="external-editors-intro"><p>在外部编辑器保存后自动回传。退出 GooeShell 后停止回传，本地草稿保留。</p><button className="text-button" onClick={configure} disabled={!!busy}>选择编辑器…</button></div>
+    <div className="external-editors-intro"><p>关闭外部编辑器后，自动回传记录仍会保留，可点击“结束回传”移出列表。退出时只提醒尚未回传的修改或异常状态；已同步的草稿保留在本机。</p><button className="text-button" onClick={configure} disabled={!!busy}>选择编辑器…</button></div>
     {error && <div className="form-error" role="alert">{error}</div>}
     {edits.length === 0 && <p className="settings-description">在文件右键菜单选择“用外部编辑器打开”。本地文件直接打开；远程文件会在这里显示回传状态。</p>}
     <div className="external-edit-list">{edits.map(edit => <article key={edit.id} className="external-edit-item" data-external-edit={edit.id}>
@@ -37,6 +37,6 @@ export default function ExternalEditors({ edits, settings, configure }: { edits:
       <div className="external-edit-columns">{(['local', 'remote'] as const).map(side => <div key={side}><strong>{side === 'local' ? '本地已保存的版本' : '服务器最新版本'}</strong><CodeEditor key={comparison.files[side].revision} initialText={comparison.files[side].text} path={selected.path} theme={settings.theme} palette={settings.editorPalette} readOnly wrap onChange={() => {}} onCursorChange={() => {}} onSave={() => {}} /></div>)}</div>
       <div className="external-edit-actions"><button className="button secondary" disabled={!!busy} onClick={() => setConfirm({ id: selected.id, action: 'reload', localRevision: comparison.files.local.revision, remoteRevision: comparison.files.remote.revision })}>采用服务器版本</button><button className="button primary" disabled={!!busy} onClick={() => setConfirm({ id: selected.id, action: 'upload', localRevision: comparison.files.local.revision, remoteRevision: comparison.files.remote.revision })}>用本地版本覆盖服务器</button><button className="text-button" onClick={() => setComparison(null)}>收起比较</button></div>
     </section>}
-    {confirm && <div className="external-edit-confirm" role="alert"><p>{confirm.action === 'finish' ? '结束自动回传并移出列表？本地草稿保留，尚未回传的修改不会再上传。' : confirm.action === 'reload' ? '用服务器版本替换本地草稿？原本地版本会备份。请在外部编辑器中重新载入文件。' : '确认用刚才比较的本地版本覆盖服务器文件？若任一版本又有修改，本次操作会停止。'}</p><div className="external-edit-actions"><button className="button secondary" disabled={!!busy} onClick={() => setConfirm(null)}>取消</button><button className="button primary" disabled={!!busy} onClick={() => perform(confirm)}>{busy ? '正在处理…' : '确认'}</button></div></div>}
+    {confirm && <div className="external-edit-confirm" role="alert"><p>{edits.find(edit => edit.id === confirm.id)?.connectionName} · {edits.find(edit => edit.id === confirm.id)?.path}</p><p>{confirm.action === 'finish' ? '结束自动回传并移出列表？本地草稿保留，尚未回传的修改不会再上传。' : confirm.action === 'reload' ? '用服务器版本替换本地草稿？原本地版本会备份。请在外部编辑器中重新载入文件。' : '确认用刚才比较的本地版本覆盖服务器文件？若任一版本又有修改，本次操作会停止。'}</p><div className="external-edit-actions"><button className="button secondary" disabled={!!busy} onClick={() => setConfirm(null)}>取消</button><button className="button primary" disabled={!!busy} onClick={() => perform(confirm)}>{busy ? '正在处理…' : '确认'}</button></div></div>}
   </div>;
 }

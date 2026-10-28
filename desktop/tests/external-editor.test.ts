@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ExternalEditorService } from '../src/main/external-editor';
+import { confirmExternalEditorExit } from '../src/main/external-editor-close';
 import { externalEditorCommand, externalEditorForFile, launchExternalEditor } from '../src/main/external-editor-launch';
 import { readLocalTextFile, writeLocalTextFile } from '../src/main/local-files';
 import { MAX_EDITABLE_TEXT } from '../src/main/text-files';
@@ -190,4 +191,76 @@ test('remote cached files retain the extension used for editor selection and reo
   assert.equal(c.launched.at(-1), py.localPath);
   settings.externalEditorByExtension['.py'] = path.resolve('Other.exe');
   assert.equal(externalEditorForFile(settings, c.launched.at(-1)!), path.resolve('Other.exe'));
+}));
+
+test('exit ignores synchronized records, including clean drafts restored after restart', async () => fixture(async c => {
+  await c.service.open(host, '/notes.md');
+  assert.equal(c.service.list().length, 1);
+  assert.deepEqual(await c.service.pendingForExit(), { edits: [], opening: 0 });
+  c.service.disconnected(host.sessionId);
+  assert.deepEqual(await c.service.pendingForExit(), { edits: [], opening: 0 });
+  await c.service.stop(); const restarted = await c.create();
+  assert.equal(restarted.list()[0].state, 'paused');
+  assert.equal(await confirmExternalEditorExit(restarted, () => { throw new Error('Clean drafts must not prompt'); }, () => {}), true);
+}));
+
+test('exit checks saved bytes immediately before polling, then clears the warning after upload', async () => fixture(async c => {
+  const edit = await c.service.open(host, '/项目/notes.md');
+  await fs.writeFile(edit.localPath, '# Saved but not polled');
+  const pending = await c.service.pendingForExit();
+  assert.equal(pending.edits.length, 1); assert.equal(pending.edits[0].path, '/项目/notes.md');
+  assert.equal(pending.edits[0].connectionName, host.name); assert.match(pending.edits[0].message, /尚未回传/);
+  assert.equal(c.writes.length, 0, 'exit checking does not upload or remove a draft');
+  await c.scan(); assert.deepEqual(await c.service.pendingForExit(), { edits: [], opening: 0 });
+}));
+
+test('exit identifies same-named files and view, cancel and leave preserve every draft', async () => fixture(async c => {
+  const first = await c.service.open(host, '/one/notes.md');
+  const second = await c.service.open({ ...host, key: 'second', name: '另一台服务器' }, '/two/notes.md');
+  await fs.writeFile(first.localPath, '# First draft'); await fs.writeFile(second.localPath, '# Second draft');
+  let shown = 0;
+  for (const choice of [0, 1, 2]) {
+    const allowed = await confirmExternalEditorExit(c.service, options => {
+      assert.match(options.detail!, /测试服务器 · \/one\/notes.md/);
+      assert.match(options.detail!, /另一台服务器 · \/two\/notes.md/);
+      assert.deepEqual(options.buttons, ['查看文件', '取消', '退出并保留草稿']);
+      assert.equal(options.cancelId, 1); return choice;
+    }, () => { shown++; });
+    assert.equal(allowed, choice === 2);
+    assert.equal(c.service.list().length, 2);
+    assert.equal(await fs.readFile(first.localPath, 'utf8'), '# First draft');
+    assert.ok(await fs.stat(path.join(path.dirname(second.localPath), 'session.json')));
+  }
+  assert.equal(shown, 1);
+}));
+
+test('exit warns during upload and conflict without waiting for the remote operation', async () => fixture(async c => {
+  const edit = await c.service.open(host, '/notes.md');
+  let release!: () => void, entered!: () => void;
+  const reached = new Promise<void>(resolve => { entered = resolve; });
+  c.block(() => { entered(); return new Promise<void>(resolve => { release = resolve; }); });
+  await fs.writeFile(edit.localPath, '# Uploading'); const uploading = c.scan(); await reached;
+  try { assert.equal((await c.service.pendingForExit()).edits[0].state, 'uploading'); }
+  finally { c.block(); release(); await uploading; }
+  await fs.writeFile(edit.localPath, '# Local'); await fs.writeFile(c.remoteFile, '# Remote'); await c.scan();
+  assert.equal((await c.service.pendingForExit()).edits[0].state, 'conflict');
+}));
+
+test('exit preserves paused unsent and temporarily unreadable drafts and reports files still opening', async () => fixture(async c => {
+  const edit = await c.service.open(host, '/notes.md'); c.service.disconnected(host.sessionId);
+  await fs.writeFile(edit.localPath, '# Offline change');
+  assert.equal((await c.service.pendingForExit()).edits.length, 1);
+  await fs.unlink(edit.localPath);
+  assert.match((await c.service.pendingForExit()).edits[0].message, /无法读取/);
+  assert.ok(await fs.stat(path.join(path.dirname(edit.localPath), 'session.json')));
+  let release!: () => void;
+  const opening = new ExternalEditorService(path.join(c.directory, 'opening'), {
+    read: () => new Promise(resolve => { release = () => { void readLocalTextFile({ path: c.remoteFile }).then(resolve); }; }),
+    write: async () => { throw new Error('No write expected'); }, launch: async () => {}, changed: () => {},
+  });
+  await opening.load(); c.services.push(opening);
+  const opened = opening.open(host, '/opening.md');
+  assert.equal((await opening.pendingForExit()).opening, 1);
+  assert.equal(await confirmExternalEditorExit(opening, options => { assert.match(options.detail!, /1 个文件正在打开/); return 1; }, () => {}), false);
+  release(); await opened;
 }));

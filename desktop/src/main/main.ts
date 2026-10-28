@@ -22,6 +22,7 @@ import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
 import {McpBridge} from './mcp-bridge';
 import {ExternalEditorService} from './external-editor';
+import {confirmExternalEditorExit} from './external-editor-close';
 import {launchExternalEditor,externalEditorCommand,externalEditorForFile} from './external-editor-launch';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
@@ -161,7 +162,18 @@ if(primaryInstance)app.whenReady().then(async()=>{
  const windowIcon=app.isPackaged?path.join(process.resourcesPath,'icon.png'):path.join(app.getAppPath(),'assets','icon.png');
  const initialTheme=(await store.settings()).theme;
  win=new BrowserWindow({icon:windowIcon,width:1460,height:940,minWidth:960,minHeight:640,frame:false,backgroundColor:initialTheme==='light'?'#ffffff':'#0b0b0b',show:false,title:'GooeShell',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false}});
- win.on('close',event=>{discardEditorApproved=false;if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}if(externalEditor.list().length&&dialog.showMessageBoxSync(win,{type:'question',title:'外部编辑尚未结束',message:'退出后将停止自动回传，所有本地草稿会保留。',detail:'外部编辑器中尚未保存的内容仍由该编辑器管理。重新打开 GooeShell 并连接原服务器后，可在外部编辑列表恢复回传。',buttons:['继续编辑','退出并保留草稿'],defaultId:0,cancelId:0,noLink:true})!==1)event.preventDefault();});
+ let checkingExternalClose=false,externalCloseApproved=false;
+ win.on('close',event=>{
+  if(checkingExternalClose){event.preventDefault();return;}
+  if(externalCloseApproved){externalCloseApproved=false;return;}
+  discardEditorApproved=false;
+  if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}
+  event.preventDefault();checkingExternalClose=true;
+  void confirmExternalEditorExit(externalEditor,options=>dialog.showMessageBoxSync(win,options),()=>sendEvent({type:'showExternalEdits'})).then(approved=>{
+   checkingExternalClose=false;
+   if(approved&&!win.isDestroyed()){externalCloseApproved=true;win.close();}else discardEditorApproved=false;
+  }).catch(()=>{checkingExternalClose=false;discardEditorApproved=false;if(!win.isDestroyed())dialog.showMessageBoxSync(win,{type:'error',message:'检查外部文件状态失败，请在底部“外部编辑”中查看文件后重试。'});});
+ });
  win.webContents.on('will-prevent-unload',event=>{if(discardEditorApproved||confirmEditorClose()){discardEditorApproved=false;event.preventDefault();}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  win.webContents.on('will-navigate',(event,url)=>{if(url!==win.webContents.getURL())event.preventDefault();});

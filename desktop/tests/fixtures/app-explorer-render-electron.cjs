@@ -127,7 +127,10 @@ async function run() {
   phase = 'external editor entry, preferences and conflicts';
   await context(row('/home/a/alpha.txt')); await click('用外部编辑器打开', '.context-menu');
   assert.deepEqual((await mutationCalls('openExternalEditor')).at(-1).request, { side: 'remote', sessionId: sessionA, path: '/home/a/alpha.txt' });
-  await click('外部编辑 1', '.statusbar'); await click('选择编辑器');
+  await evaluate(fixture + '.emit({ type: "showExternalEdits" })');
+  await until(() => evaluate(visible('.external-editors')), 'exit warning opens external files');
+  result.checks.externalExitOpensFileList = true;
+  await click('选择编辑器');
   await until(() => evaluate(visible('#external-editor-path')), 'external editor settings');
   await fill('#external-editor-path', 'C:\\Fixture\\Editor.exe'); await click('保存设置'); await noDialog();
   await click('外部编辑 1', '.statusbar'); await click('选择编辑器');

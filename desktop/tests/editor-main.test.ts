@@ -38,7 +38,7 @@ test('real Electron main preserves unsaved editors on native close and wires loc
   t.diagnostic(`editor main artifacts: ${artifacts}`);
   assert.equal(exit, 0, JSON.stringify(result, null, 2) + logs);
   assert.equal(result.success, true, JSON.stringify(result, null, 2) + logs);
-  for (const check of ['localReadWrite', 'conflictThroughIpc', 'localCopy', 'cancelSaveDialog', 'overwriteCopy', 'overwriteDifferentEncoding', 'closeCancelled', 'quitCancelled', 'busyBlocksClose', 'discardCloses', 'workerShutdownOnlyAfterDiscard']) {
+  for (const check of ['externalExitIdentifiesFiles', 'externalExitViewList', 'localReadWrite', 'conflictThroughIpc', 'localCopy', 'cancelSaveDialog', 'overwriteCopy', 'overwriteDifferentEncoding', 'closeCancelled', 'quitCancelled', 'busyBlocksClose', 'discardCloses', 'workerShutdownOnlyAfterDiscard']) {
     assert.equal(result.checks[check], true, `Missing completed check: ${check}`);
   }
 });

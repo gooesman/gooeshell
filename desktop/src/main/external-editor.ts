@@ -25,6 +25,19 @@ export class ExternalEditorService {
   private closing = false;
   constructor(private directory: string, private dependencies: Dependencies) {}
   list(): ExternalEdit[] { return [...this.jobs.values()].map(job => ({ ...job.view })); }
+  async pendingForExit(): Promise<{ edits: ExternalEdit[]; opening: number }> {
+    const edits = await Promise.all([...this.jobs.values()].map(async job => {
+      if (job.view.state === 'uploading' || job.view.state === 'conflict') return { ...job.view };
+      try {
+        const file = complete(await readLocalTextFile({ path: job.view.localPath }));
+        if (digest(file) === job.data.syncedDigest) return null;
+        return { ...job.view, message: '本地保存的修改尚未回传' };
+      } catch {
+        return { ...job.view, message: '本地草稿暂时无法读取，请查看文件状态' };
+      }
+    }));
+    return { edits: edits.filter((edit): edit is ExternalEdit => edit !== null), opening: this.opening.size };
+  }
   private emit() { this.dependencies.changed(this.list()); }
   private job(id: string) { const job = this.jobs.get(id); if (!job) throw new Error('外部编辑任务已结束'); return job; }
   connectionKey(id: string) { return this.job(id).data.connectionKey; }

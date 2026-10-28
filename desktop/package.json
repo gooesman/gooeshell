@@ -1,7 +1,7 @@
 {
   "name": "gooeshell",
   "desktopName": "gooeshell.desktop",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "private": true,
   "description": "Local terminal, SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
