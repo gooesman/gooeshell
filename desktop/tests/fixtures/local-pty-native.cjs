@@ -39,7 +39,9 @@ async function run() {
     await until(()=>output(session.id).length>0,option.id+' startup',20000);
     const cmd = option.id === 'cmd';
     const send = text => service.terminalInput(session.id, text + '\r');
-    send(cmd ? 'echo LOCAL_中文' : process.platform === 'win32' ? "[Console]::WriteLine('LOCAL_'+'中文')" : "printf 'LOCAL_%s\\n' '中文'");
+    // Console.WriteLine loses Chinese before it reaches ConPTY on Western code
+    // pages. Exercise PowerShell's Unicode host output with that code page too.
+    send(cmd ? 'echo LOCAL_中文' : process.platform === 'win32' ? "[Console]::OutputEncoding=[Text.Encoding]::GetEncoding(437); Write-Output ('LOCAL_'+'中文')" : "printf 'LOCAL_%s\\n' '中文'");
     await until(() => cmd ? (output(session.id).match(/LOCAL_中文/g) || []).length >= 2 : output(session.id).includes('LOCAL_中文'), option.id + ' Chinese');
     report.checks[option.id + ':chinese'] = true;
     send(cmd ? 'cd' : process.platform === 'win32' ? "[Console]::WriteLine('CWD='+ (Get-Location).Path)" : "printf 'CWD=%s\\n' \"$PWD\"");
