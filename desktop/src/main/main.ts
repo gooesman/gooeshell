@@ -185,7 +185,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(remoteMethods.has(method)){const result=await remote(method,...args);if(method==='confirmHostKey')hostQuestions.delete(args[0] as string);return result;}
   const value:any=args[0];
   switch(method){
-   case 'mcpStatus':return mcpBridge!.status();
+   case 'mcpStatus':return mcpBridge!.refreshStatus();
    case 'setMcpEnabled':return mcpBridge!.setEnabled(value);
    case 'listLocalShells':return localPty.listLocalShells();
    case 'createLocalSession':return localPty.createLocalSession(value);

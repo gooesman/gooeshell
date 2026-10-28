@@ -172,6 +172,15 @@ try {
   assert.deepEqual((await mcpClient.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command','start_task','read_task']);
   const mcpConnections=await mcpClient.callTool({name:'list_connections',arguments:{}});
   assert.equal(mcpConnections.isError,undefined);assert.deepEqual(JSON.parse(mcpConnections.content[0].text),[]);
+  const descriptorFile=mcpEnabled.result.value.config.args[1];
+  const descriptor=JSON.parse(await fs.readFile(descriptorFile,'utf8'));
+  await fs.writeFile(descriptorFile,JSON.stringify({...descriptor,port:1,token:'0'.repeat(64)}));
+  await call('Runtime.evaluate',{expression:'window.gooeshell.mcpStatus()',returnByValue:true,awaitPromise:true});
+  assert.deepEqual(JSON.parse(await fs.readFile(descriptorFile,'utf8')),descriptor,'Packaged settings must repair stale bridge metadata');
+  await fs.unlink(descriptorFile);
+  await until(async()=>{try{return JSON.parse(await fs.readFile(descriptorFile,'utf8')).token===descriptor.token;}catch{return false;}});
+  const recoveredSessions=await mcpClient.callTool({name:'list_sessions',arguments:{}});
+  assert.equal(recoveredSessions.isError,undefined,'Packaged adapter must recover after descriptor deletion');
   const mcpUi=await call('Runtime.evaluate',{expression:`(async()=>{
     document.querySelector('.titlebar [aria-label="设置"]').click();await new Promise(resolve=>setTimeout(resolve,50));
     [...document.querySelectorAll('.settings-tabs button')].find(button=>button.textContent==='AI 与 MCP').click();
@@ -185,7 +194,7 @@ try {
   await call('Runtime.evaluate',{expression:'window.gooeshell.setMcpEnabled(false)',returnByValue:true,awaitPromise:true});
   assert.equal((await mcpClient.callTool({name:'list_sessions',arguments:{}})).isError,true);
   await mcpClient.close();mcpClient=undefined;assert.equal(mcpErrors,'');
-  state.mcp={stdio:true,tools:6,revoked:true};
+  state.mcp={stdio:true,tools:6,revoked:true,descriptorRecovery:true};
   const fileRoot = await fs.mkdtemp(path.join(output, 'smoke-files-'));
   const selected = path.join(fileRoot, 'selected'), leaf = path.join(selected, 'new.txt');
   const keep = path.join(fileRoot, 'keep.txt'); await fs.writeFile(keep, 'outside selected tree');

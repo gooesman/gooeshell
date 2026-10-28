@@ -104,6 +104,13 @@ async function run(){
   const connections=await tool('list_connections');assert.equal(connections[0].identityName,'Fixture identity');assert(!JSON.stringify(connections).includes('fixture-secret'));
   const reused=await tool('connect',{connectionId:profile.id});assert.equal(reused.id,foregroundSession.id);assert.equal(reused.reused,true);assert.equal(authentications,1);
   const sessions=await tool('list_sessions');assert.equal(sessions[0].source,'terminal');
+  const descriptor=JSON.parse(await fs.readFile(config.args[1],'utf8'));
+  await fs.writeFile(config.args[1],JSON.stringify({...descriptor,port:1}));
+  await call('mcpStatus');
+  assert.deepEqual(JSON.parse(await fs.readFile(config.args[1],'utf8')),descriptor);
+  assert.equal((await tool('list_sessions'))[0].id,foregroundSession.id);
+  assert.equal(authentications,1,'descriptor repair keeps the foreground SSH transport');
+  report.checks.descriptorRecovery=true;
   const result=await tool('run_command',{sessionId:reused.id,command:"printf 'MCP_中文\\n'; printf 'stderr\\n' >&2; exit 7"});
   assert.equal(result.stdout,'MCP_中文\n');assert.equal(result.stderr,'stderr\n');assert.equal(result.exitCode,7);assert.equal(foreground,'');assert.equal(authentications,1);
   report.checks.identityAndTransportReuse=true;report.checks.foregroundPreserved=true;
