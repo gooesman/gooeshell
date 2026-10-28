@@ -80,6 +80,9 @@ async function run() {
     result.graphics.bundledVulkanLibraries = await fs.readdir(libraries).then(names=>names.filter(name=>/vulkan|swiftshader/i.test(name)), error=>({error:error.message}));
   }
   window = new BrowserWindow({ show: false, width: 960, height: 680, webPreferences: { preload: path.resolve('tests/fixtures/terminal-palettes-preload.cjs'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  // Compare inactive terminal panes inside a visible workspace. A hidden native
+  // window can suspend the requestAnimationFrame barriers used by this test.
+  window.showInactive();
   ipcMain.on('palette-fixture:subscription', (event, action) => {
     assert.equal(event.sender, window.webContents);
     if (action === 'add') { result.subscriptions.calls++; result.subscriptions.active++; }

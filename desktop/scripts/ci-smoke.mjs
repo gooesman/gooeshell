@@ -119,6 +119,12 @@ try {
     });
     return result.result?.value;
   });
+  // windowsHide can override the app's first show(). CodeMirror's public
+  // measure/IME flush requires a visible page, just as user editing does.
+  phase('show packaged workspace before interactive checks');
+  const visibility = await call('Runtime.evaluate', { expression: 'window.gooeshell.maximize(); true', returnByValue: true });
+  assert.equal(visibility.exceptionDetails, undefined, 'Packaged window could not be shown');
+  await until(async () => (await call('Runtime.evaluate', { expression: 'document.visibilityState', returnByValue: true })).result?.value === 'visible');
   phase('read initial settings through packaged IPC');
   const result = await call('Runtime.evaluate', {
     expression: '(async () => { const state = await window.gooeshell.initial(); return { version: state.version, profiles: state.profiles.length, theme: state.settings.theme, title: document.title, paste: { keyboard: state.settings.shortcuts.paste, mouse: state.settings.shortcuts.pasteMouse, legacySwitch: Object.hasOwn(state.settings, "rightClickPaste") } }; })()',
