@@ -175,11 +175,13 @@ try:
     os.write(shell.fd, b'\x03')
     out = shell.until()
     assert b'\x1b]133;D;130\x07' in out, out
-    # The OSC prompt marker can precede Readline accepting input. Confirm that
-    # the editable prompt has echoed a sentinel, then clear it and interrupt.
+    # Terminal echo can precede Readline consuming input. Wait for the erase
+    # redraw as well, so Ctrl+C reaches an actually empty editable prompt.
     os.write(shell.fd, b'gooeshell_prompt_ready')
     shell.until(b'gooeshell_prompt_ready')
-    os.write(shell.fd, b'\x15\x03')
+    os.write(shell.fd, b'\x15')
+    shell.until(b'\x1b[K')
+    os.write(shell.fd, b'\x03')
     out = shell.until()
     assert b']133;D;' not in out, out
     shell.run('echo resumed')
