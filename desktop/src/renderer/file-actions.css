@@ -16,6 +16,11 @@
 .toast-stack .toast { pointer-events:auto; }
 .app-shell .files-area { min-height:260px; }
 .app-shell .files-area:has(.transfer-area:not(.queue-collapsed)) { min-height:340px; }
+.queue-splitter { height:6px; flex-shrink:0; cursor:row-resize; touch-action:none; position:relative; }
+.queue-splitter::after { content:''; position:absolute; left:calc(50% - 18px); top:2px; width:36px; height:2px; border-radius:2px; background:var(--border-strong); }
+.queue-splitter:hover, .queue-splitter:focus-visible { background:var(--surface-raised); }
+.queue-splitter[hidden] { display:none; }
+.transfer-area:not(.queue-collapsed) { min-height:70px; max-height:calc(100% - 158px); }
 .file-sort-button { display:flex; align-items:center; gap:5px; width:100%; min-height:24px; padding:2px 0; text-align:left; font:inherit; color:var(--text-muted); border-radius:4px; white-space:nowrap; }
 .file-sort-button:hover,.file-sort-button.active { color:var(--text); }
 .file-sort-button:focus-visible { outline:1px solid var(--border-strong); outline-offset:2px; }

@@ -13,7 +13,7 @@
 
 GooeShell 是 Windows 优先的桌面终端工具，也提供 macOS 和 Linux 构建。它把 SSH、本地终端、远程文件管理和文本编辑整合到可折叠的界面里：平时专注终端，需要时再展开文件区或命令库。
 
-当前源码版本：**1.4.0**。可下载版本和各平台安装包以 [Releases](https://github.com/gooesman/gooeshell/releases) 为准。
+当前源码版本：**1.4.1**。可下载版本和各平台安装包以 [Releases](https://github.com/gooesman/gooeshell/releases) 为准。
 
 ![GooeShell 终端与文件工作空间](docs/images/workspace.png)
 
