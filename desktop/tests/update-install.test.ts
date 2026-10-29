@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {promises as fs} from 'node:fs';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 import {prepareWindowsUpdate,launchWindowsUpdate} from '../src/main/update-install';
@@ -27,8 +28,9 @@ for(const detached of [false,true])test(`Windows update preserves the old versio
  const child=spawn(process.execPath,['-e',"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))"],{windowsHide:true,stdio:['pipe','ignore','ignore']});
  if(detached){
   child.kill();
-  const owner=spawn(process.execPath,['-e',"const {launchWindowsUpdate}=require(process.argv[1]);launchWindowsUpdate(JSON.parse(process.argv[2]));",path.resolve('dist-main/main/update-install.js'),JSON.stringify(plan)],{windowsHide:true,stdio:'ignore'});
-  await new Promise<void>((resolve,reject)=>{owner.once('error',reject);owner.once('exit',code=>code===0?resolve():reject(new Error(`test app exited ${code}`)));});
+  const owner=spawn(process.execPath,['--import',pathToFileURL(require.resolve('tsx')).href,'-e',"const {launchWindowsUpdate}=require(process.argv[1]);launchWindowsUpdate(JSON.parse(process.argv[2]));",path.resolve(__dirname,'../src/main/update-install.ts'),JSON.stringify(plan)],{windowsHide:true,stdio:['ignore','ignore','pipe']});
+  let ownerError='';owner.stderr!.on('data',chunk=>{ownerError+=String(chunk);});
+  await new Promise<void>((resolve,reject)=>{owner.once('error',reject);owner.once('close',code=>code===0?resolve():reject(new Error(`test app exited ${code}: ${ownerError}`)));});
  }else{
   assert(child.pid);const helper=launchWindowsUpdate(plan,child.pid,false);helper.ref();const helperExit=new Promise<number|null>((resolve,reject)=>{helper.once('exit',resolve);helper.once('error',reject);});await new Promise<void>((resolve,reject)=>{helper.once('spawn',resolve);helper.once('error',reject);});
   await new Promise(resolve=>setTimeout(resolve,1500));
