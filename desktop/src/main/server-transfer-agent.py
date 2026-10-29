@@ -315,8 +315,10 @@ class Agent:
         try: self.revoke()
         finally:
             if self.lock is not None: os.close(self.lock); self.lock = None
-            if self.committed and self.stage: shutil.rmtree(self.stage); self.stage = None
-            shutil.rmtree(self.temp, ignore_errors=True)
+            try:
+                if self.committed and self.stage: shutil.rmtree(self.stage); self.stage = None
+            finally:
+                if os.path.exists(self.temp): shutil.rmtree(self.temp)
 
     def finish(self, r):
         self.close()
