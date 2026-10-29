@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {promises as fs} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {Store} from '../src/main/store';
+import {CredentialStore} from '../src/main/credential-store';
+import {IdentityStore} from '../src/main/identity-store';
+import {CommandStore} from '../src/main/command-store';
+import {collectPortableConfig,importPortableConfig,validatePortableConfig} from '../src/main/portable-config';
+import {encryptBackup,decryptBackup} from '../src/main/portable-backup';
+import {jumpCredentialProfile} from '../src/main/jump-profile';
+import type {HostProfile} from '../src/shared/types';
+
+const cipher={available:async()=>true,encrypt:async(value:string)=>Buffer.from(value),decrypt:async(value:Buffer)=>value.toString()};
+function stores(dir:string){return {store:new Store(dir),identities:new IdentityStore(dir,cipher),credentials:new CredentialStore(dir,cipher),commands:new CommandStore(dir)};}
+test('encrypted portable configuration merges without overwriting existing connections',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-config-test-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const src=stores(path.join(root,'source')),dst=stores(path.join(root,'target'));
+  const identity=await src.identities.save({name:'fixture',username:'alice',remember:'persistent',password:'fixture-identity-password'});
+  await src.store.saveGroup({id:'group-1',name:'servers',icon:'cloud',order:0});
+  const profile:HostProfile={id:'connection-1',name:'example',host:'fixture.invalid',port:22,username:'alice',auth:'password',rememberHost:true,encoding:'utf8',groupId:'group-1',loginIdentityId:identity.id};
+  await src.store.saveConnection(profile,true);
+  await src.store.setHostKeyPreference({host:'fixture.invalid',port:22,skipVerification:true});
+  await src.credentials.save(profile,{remember:'persistent',sudoUsesLogin:false,sudoPassword:'fixture-sudo'});
+  await src.commands.saveGroup({id:'command-group',name:'shell',order:0,connectionId:profile.id});
+  await src.commands.saveCommand({id:'command-1',groupId:'command-group',name:'list',command:'ls',description:'',mode:'insert',confirmBeforeRun:false,order:0});
+  const publicData=await collectPortableConfig(src.store,src.identities,src.credentials,src.commands,false);
+  assert(!JSON.stringify(publicData).includes('fixture-identity-password'));assert(!JSON.stringify(publicData).includes('fixture-sudo'));
+  const complete=await collectPortableConfig(src.store,src.identities,src.credentials,src.commands,true);
+  const encrypted=await encryptBackup(complete,'fixture-passphrase');assert(!encrypted.includes('fixture-sudo'));
+  const restored=validatePortableConfig(await decryptBackup(encrypted,'fixture-passphrase'));
+  const unavailableCipher={...cipher,available:async()=>false};const blockedStore=new Store(path.join(root,'blocked'));
+  await assert.rejects(importPortableConfig(restored,blockedStore,new IdentityStore(path.join(root,'blocked'),unavailableCipher),new CredentialStore(path.join(root,'blocked'),unavailableCipher),new CommandStore(path.join(root,'blocked')),true),/系统加密存储不可用/);
+  assert.equal((await blockedStore.connections()).length,0);
+  const result=await importPortableConfig(restored,dst.store,dst.identities,dst.credentials,dst.commands,true);
+  assert.equal(result.added,1);const imported=(await dst.store.connections())[0];assert.equal(imported.id,profile.id);
+  assert.equal((await dst.identities.snapshot(imported.loginIdentityId!)).password,'fixture-identity-password');
+  assert.equal((await dst.credentials.get(imported)).sudoPassword,'fixture-sudo');
+  const command=await dst.commands.library();assert.equal(command.groups[0].connectionId,imported.id);assert.equal(command.commands[0].command,'ls');
+  const repeated=await importPortableConfig(restored,dst.store,dst.identities,dst.credentials,dst.commands,false);
+  assert.equal(repeated.added,0);assert.equal(repeated.skipped,1);assert.equal((await dst.identities.metadata()).length,1);assert.equal((await dst.store.groups()).length,1);assert.equal((await dst.commands.library()).commands.length,1);
+  assert.deepEqual(await dst.store.hostKeyPreferences(),[],'skip-verification preferences require separate opt-in');
+  await importPortableConfig(restored,dst.store,dst.identities,dst.credentials,dst.commands,false,true);
+  assert.deepEqual(await dst.store.hostKeyPreferences(),[{host:'fixture.invalid',port:22,skipVerification:true}]);
+  const direct={...profile,id:'direct-original',loginIdentityId:undefined,groupId:undefined};await dst.store.saveConnection(direct,true);
+  const duplicate=await dst.store.importConnection({...direct,id:'direct-import',name:'must not replace'},false);assert.equal(duplicate.added,false);assert.equal(duplicate.profile.name,'example');
+  assert.throws(()=>validatePortableConfig({...restored,connections:[...restored.connections,restored.connections[0]]}),/重复标识/);
+});
+
+test('import does not replace credentials of an existing shared jump host',async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-jump-import-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const src=stores(path.join(root,'src')),dst=stores(path.join(root,'dst'));
+ const hop={id:'hop',name:'gateway',host:'gateway.invalid',port:22,username:'alice',auth:'password' as const,rememberHost:true,reuseConnection:true};
+ const profile:HostProfile={id:'new',name:'new',host:'new.invalid',port:22,username:'alice',auth:'password',rememberHost:true,encoding:'utf8',jumpHost:hop};
+ await src.store.saveConnection(profile,true);await src.credentials.save(jumpCredentialProfile(hop),{remember:'persistent',sudoUsesLogin:true,password:'imported'});
+ await dst.store.saveConnection({...profile,id:'existing',host:'existing.invalid'},true);await dst.credentials.save(jumpCredentialProfile(hop),{remember:'persistent',sudoUsesLogin:true,password:'existing'});
+ const backup=await collectPortableConfig(src.store,src.identities,src.credentials,src.commands,true);
+ await importPortableConfig(backup,dst.store,dst.identities,dst.credentials,dst.commands,false);
+ assert.equal((await dst.credentials.get(jumpCredentialProfile(hop))).password,'existing');
+});

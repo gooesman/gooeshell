@@ -1,5 +1,6 @@
 """Remote control helper. File payload travels only over the remote rsync SSH hop."""
 import base64, ctypes, fcntl, hashlib, json, os, shutil, signal, stat, subprocess, sys, tempfile, time, shlex, queue, threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 PREFIX = 'GOOESHELL_REMOTE '
 
@@ -50,30 +51,73 @@ class Agent:
         records = self.entries(path)
         total = sum(s.st_size for _, _, s in records if stat.S_ISREG(s.st_mode))
         last = 0
-        for relative, full, s in records:
+        progress_lock = threading.Lock()
+        stop_hashing = threading.Event()
+        pending = 0
+        def add_progress(count):
+            nonlocal pending
+            with progress_lock: pending += count
+        def flush_progress(force=False):
+            nonlocal pending, done, last
+            with progress_lock: count, pending = pending, 0
+            done += count
+            if force or time.monotonic() - last > .2:
+                self.emit(stage='hash', done=done, total=total)
+                last = time.monotonic()
+        def hash_file(full, s, threaded=False):
+            h = hashlib.sha256()
+            fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                opened = os.fstat(fd)
+                if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns): raise ValueError('文件在校验前发生变化')
+                while True:
+                    if stop_hashing.is_set(): raise InterruptedError('校验已停止')
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk: break
+                    h.update(chunk)
+                    add_progress(len(chunk))
+                    if not threaded: flush_progress()
+                after = os.fstat(fd)
+                if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (s.st_size, s.st_mtime_ns, s.st_ctime_ns): raise ValueError('文件在校验期间发生变化')
+            finally: os.close(fd)
+            return h.hexdigest()
+        def record(relative, s, file_hash=None):
             directory = stat.S_ISDIR(s.st_mode)
             values = [relative, 'd' if directory else 'f']
-            if content and not directory:
-                h = hashlib.sha256()
-                fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                try:
-                    opened = os.fstat(fd)
-                    if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns): raise ValueError('文件在校验前发生变化')
-                    while True:
-                        chunk = os.read(fd, 1024 * 1024)
-                        if not chunk: break
-                        h.update(chunk)
-                        done += len(chunk)
-                        if time.monotonic() - last > .2:
-                            self.emit(stage='hash', done=done, total=total)
-                            last = time.monotonic()
-                    after = os.fstat(fd)
-                    if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (s.st_size, s.st_mtime_ns, s.st_ctime_ns): raise ValueError('文件在校验期间发生变化')
-                finally: os.close(fd)
-                values += [s.st_size, h.hexdigest()]
-            elif not content:
-                values += [s.st_dev, s.st_ino, s.st_size if not directory else 0, s.st_mtime_ns, s.st_ctime_ns]
+            if content and not directory: values += [s.st_size, file_hash]
+            elif not content: values += [s.st_dev, s.st_ino, s.st_size if not directory else 0, s.st_mtime_ns, s.st_ctime_ns]
             digest.update(json.dumps(values, ensure_ascii=True, separators=(',', ':')).encode() + b'\n')
+        executor = None
+        try:
+            index = 0
+            while index < len(records):
+                relative, full, s = records[index]
+                # Small files stay serial: thread scheduling costs more than hashing them.
+                batch = []
+                if content:
+                    for item in records[index:index + 4]:
+                        if not stat.S_ISREG(item[2].st_mode) or item[2].st_size < 8 * 1024 * 1024: break
+                        batch.append(item)
+                if len(batch) > 1:
+                    if executor is None: executor = ThreadPoolExecutor(max_workers=4)
+                    futures = [executor.submit(hash_file, item[1], item[2], True) for item in batch]
+                    for item, future in zip(batch, futures):
+                        while True:
+                            try: file_hash = future.result(timeout=.2); break
+                            except FutureTimeout:
+                                if future.done(): raise
+                                flush_progress()
+                        flush_progress()
+                        record(item[0], item[2], file_hash)
+                    index += len(batch)
+                else:
+                    file_hash = hash_file(full, s) if content and stat.S_ISREG(s.st_mode) else None
+                    if content: flush_progress()
+                    record(relative, s, file_hash)
+                    index += 1
+        finally:
+            stop_hashing.set()
+            if executor is not None: executor.shutdown(wait=True)
         if content: self.emit(stage='hash', done=done, total=total)
         return dict(digest=digest.hexdigest(), total=total, directory=stat.S_ISDIR(records[0][2].st_mode), count=len(records))
 

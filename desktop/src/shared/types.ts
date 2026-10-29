@@ -1,5 +1,6 @@
 import type {FontFamilyInfo} from './font-types';
 import type {McpStatus} from './mcp';
+import type {UpdateRelease} from './update';
 export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
 export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
 export type CredentialRemember = 'never' | 'session' | 'persistent';
@@ -116,9 +117,19 @@ export type AppEvent =
   | { type: 'transfer'; transfer: TransferInfo }
   | { type: 'externalEdits'; edits: ExternalEdit[] }
   | { type: 'showExternalEdits' }
+  | { type: 'updateProgress'; received:number; total:number }
   | { type: 'notice'; message: string };
 
 export interface DesktopApi {
+  checkUpdate():Promise<UpdateRelease>;
+  downloadUpdate(name:string):Promise<{file:string;canInstall:boolean}|null>;
+  installUpdate():Promise<boolean>;
+  cancelUpdate():Promise<void>;
+  exportConfig(request:{passphrase:string;includeSecrets:boolean}):Promise<string|null>;
+  chooseConfig():Promise<boolean>;
+  discardConfigPreview():Promise<void>;
+  previewConfig(passphrase:string):Promise<{connections:number;groups:number;identities:number;commands:number;hasSecrets:boolean;skipVerificationHosts:{host:string;port:number}[]}>;
+  importConfig(options:{applySettings:boolean;applyHostPreferences:boolean}):Promise<{added:number;skipped:number;identities:number;groups:number;commands:number}>;
   mcpStatus(): Promise<McpStatus>;
   setMcpEnabled(enabled: boolean): Promise<McpStatus>;
   listLoginIdentities(): Promise<LoginIdentityList>;

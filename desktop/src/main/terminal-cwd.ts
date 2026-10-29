@@ -10,6 +10,9 @@ import base64, json, os, stat, subprocess, sys, time
 class Unsupported(Exception):
     pass
 
+class RetryLater(Exception):
+    pass
+
 def process(pid):
     try:
         with open('/proc/%d/stat' % pid, 'r') as source:
@@ -88,14 +91,14 @@ def terminal_process():
     foreground = [item for item in family if item['pid'] == leader['foreground']
                   and item['tty'] == leader['tty'] and item['sid'] == leader['sid']]
     if len(foreground) != 1 or not same_process(leader):
-        raise Unsupported('终端正在切换前台进程，请稍后重新开启跟随')
+        raise RetryLater('终端正在切换前台进程')
     return foreground[0]
 
 def cwd(info):
     try:
         result = os.readlink('/proc/%d/cwd' % info['pid'])
     except OSError:
-        raise Unsupported('无法读取当前终端目录；当前进程可能已退出或权限不足')
+        raise RetryLater('当前前台进程的目录暂时不可读取')
     if not result.startswith('/') or result.endswith(' (deleted)') or not same_process(info):
         raise Unsupported('当前终端目录已失效，请切换到有效目录后重试')
     return result
@@ -177,7 +180,7 @@ def tmux_directory(info):
             # just the directory in which tmux originally created the pane.
             front = process(pane['foreground'])
             if not front or front['tty'] != pane['tty'] or front['sid'] != pane['sid']:
-                continue
+                raise RetryLater('tmux 面板正在切换前台进程')
             if front['comm'].startswith('tmux') or front['comm'] in ('ssh', 'mosh-client', 'telnet'):
                 raise Unsupported('当前 tmux 面板内还连接了另一层终端，暂不支持继续跟随')
             return {'path': cwd(front), 'source': 'tmux'}
@@ -196,6 +199,8 @@ def detect():
 def main():
     try:
         response = {'ok': True, 'value': detect()}
+    except RetryLater as error:
+        response = {'ok': False, 'retry': True, 'error': str(error)}
     except Unsupported as error:
         response = {'ok': False, 'error': str(error)}
     except BaseException:
@@ -247,7 +252,7 @@ export function readTerminalDirectory(client: Client, signal?: AbortSignal, time
             if (!/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) throw new Error('invalid base64');
             const response = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
             if (response.ok === false && typeof response.error === 'string') {
-              finish(new Error(response.error.slice(0, 1000))); return;
+              finish(new Error((response.retry === true ? 'TERMINAL_CWD_RETRY: ' : '') + response.error.slice(0, 1000))); return;
             }
             const value = response.value;
             if (response.ok !== true || !value || typeof value.path !== 'string' || !value.path.startsWith('/') ||

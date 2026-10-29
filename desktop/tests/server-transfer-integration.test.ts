@@ -72,6 +72,13 @@ test('real Linux SSH server direct/pull transfer, verified resume and temporary 
   await transfer(unreachable,'auto');
   const directory=await control({op:'write',path:'tree/sub/中文.txt',size:200000});
   assert.equal((await transfer(path.posix.dirname(path.posix.dirname(directory)),'push')).total,200000);
+  const batched=await control({op:'write',path:'hash-batch/a.bin',size:9*1024*1024});
+  await control({op:'write',path:'hash-batch/b.bin',size:9*1024*1024});
+  await control({op:'write',path:'hash-batch/c.bin',size:9*1024*1024});
+  await control({op:'write',path:'hash-batch/z-small.bin',size:4096});
+  let sawHash=false;
+  const batchResult=await transfer(path.posix.dirname(batched),'push',{emit:info=>{if(info.verification?.method==='sha256')sawHash=true;}});
+  assert.equal(batchResult.total,27*1024*1024+4096);assert(sawHash,'parallel content verification reports progress');
   const big=await control({op:'write',path:'large.bin',size:24*1024*1024});
   let controlBytes=0;
   const meter=(endpoint:TransferEndpoint):TransferEndpoint=>({...endpoint,client:{exec(command:string,callback:Function){return endpoint.client.exec(command,(error,channel)=>{if(channel){channel.on('data',(data:Buffer)=>{controlBytes+=data.length;});channel.stderr.on('data',(data:Buffer)=>{controlBytes+=data.length;});}callback(error,channel);});}} as unknown as Client});
@@ -83,16 +90,22 @@ test('real Linux SSH server direct/pull transfer, verified resume and temporary 
   const resumed=await transfer(big,'push',{source:meter(await endpoint(descriptor.source)),target:meter(await endpoint(descriptor.target))});assert.equal(resumed.done,24*1024*1024,'new SSH connections repair corrupted partial and fully verify SHA-256');
   assert(controlBytes<512*1024,`24 MiB data must not traverse local control channels; got ${controlBytes} control bytes`);
   const corruptFile=await control({op:'write',path:'verify-corruption.txt',size:128*1024});
-  let injected=false;
+  let injected=false,corruptionSuffix='/payload';
   const tamperingTarget:TransferEndpoint={...target,client:{exec(command:string,callback:Function){return target.client.exec(command,(error,channel)=>{
     if(channel){const write=channel.write.bind(channel);(channel as any).write=(data:Buffer|string,...args:any[])=>{
       let operation='';try{operation=JSON.parse(String(data)).op;}catch{}
-      if(operation==='hash'&&!injected){injected=true;void (async()=>{const paths=await control({op:'list'});const staged=paths.find((p:string)=>p.includes('/.gooeshell-transfer-')&&p.endsWith('/payload'));assert(staged);await control({op:'corrupt',path:staged});write(data,...args);})().catch((failure:Error)=>channel.destroy(failure));return true;}
+      if(operation==='hash'&&!injected){injected=true;void (async()=>{const paths=await control({op:'list'});const staged=paths.find((p:string)=>p.includes('/.gooeshell-transfer-')&&p.endsWith(corruptionSuffix));assert(staged);await control({op:'corrupt',path:staged});write(data,...args);})().catch((failure:Error)=>channel.destroy(failure));return true;}
       return write(data,...args);
     };}callback(error,channel);
   });}} as unknown as Client};
   await assert.rejects(transfer(corruptFile,'push',{target:tamperingTarget}),/SHA-256/);assert(injected);
   assert(!(await control({op:'list'})).includes(destinationDir+'/verify-corruption.txt'),'mismatched payload never commits');
+  const batchCorrupt=await control({op:'write',path:'hash-corrupt/a.bin',size:9*1024*1024});
+  await control({op:'write',path:'hash-corrupt/b.bin',size:9*1024*1024});await control({op:'write',path:'hash-corrupt/c.bin',size:9*1024*1024});
+  injected=false;corruptionSuffix='/payload/b.bin';
+  await assert.rejects(transfer(path.posix.dirname(batchCorrupt),'push',{target:tamperingTarget}),/SHA-256/);assert(injected,'corruption in a parallel batch must be rejected');
+  assert(!(await control({op:'list'})).includes(destinationDir+'/hash-corrupt'),'corrupt directory never commits');
+  await transfer(path.posix.dirname(batchCorrupt),'push');
   await transfer(corruptFile,'push');
   await assert.rejects(transfer(file,'push'),/目标已存在/);
   const base=path.resolve('test-output');await fs.mkdir(base,{recursive:true});const catalog=await fs.mkdtemp(path.join(base,'server-queue-'));

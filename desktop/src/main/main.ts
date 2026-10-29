@@ -24,11 +24,22 @@ import {McpBridge} from './mcp-bridge';
 import {ExternalEditorService} from './external-editor';
 import {confirmExternalEditorExit} from './external-editor-close';
 import {launchExternalEditor,externalEditorCommand,externalEditorForFile} from './external-editor-launch';
+import {checkForUpdate,type UpdatePlatform} from './update-check';
+import {downloadUpdate} from './update-download';
+import {prepareWindowsUpdate,launchWindowsUpdate,type WindowsUpdatePlan} from './update-install';
+import {encryptBackup,decryptBackup} from './portable-backup';
+import {collectPortableConfig,importPortableConfig,validatePortableConfig,type PortableConfig} from './portable-config';
+import type {UpdateAsset,UpdateRelease} from '../shared/update';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
 let identityWrites:Promise<unknown>=Promise.resolve();
 let mcpBridge:McpBridge|undefined;
 let externalEditor:ExternalEditorService;
+let latestUpdate:UpdateRelease|undefined;let updateDownload:AbortController|undefined;
+let downloadedUpdate:{file:string;asset:UpdateAsset}|undefined;let pendingUpdate:WindowsUpdatePlan|undefined;let updatePreparing=false;
+let selectedBackup:string|undefined;let backupPreview:PortableConfig|undefined;
+let backupTimer:ReturnType<typeof setTimeout>|undefined;
+function clearBackupPreview(){selectedBackup=undefined;backupPreview=undefined;if(backupTimer)clearTimeout(backupTimer);backupTimer=undefined;}
 function externalHost(sessionId:string){const profile=sessionProfiles.get(sessionId);if(!profile)throw new Error('请先连接原服务器，再使用外部编辑');return{sessionId,key:JSON.stringify([profile.id,connectionIdentity(profile)]),name:profile.name||`${profile.username}@${profile.host}`};}
 function externalResumeHost(id:string){const key=externalEditor.connectionKey(id);for(const sessionId of sessionProfiles.keys()){const host=externalHost(sessionId);if(host.key===key)return host;}throw new Error('请先连接原服务器，再恢复回传');}
 const bridgeSessions=new Set<string>();
@@ -108,7 +119,7 @@ function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
  return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
 }
-function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();const deadline=setTimeout(()=>{void worker?.terminate();app.exit(0);},8000);void Promise.allSettled([localStop,bridgeStop,externalEditor?.stop()]).then(async()=>{if(workerAvailable)await remote('shutdown').catch(()=>{});await worker?.terminate();clearTimeout(deadline);app.exit(0);});}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;const updateError=(error:unknown)=>dialog.showErrorBox('更新未完成',`无法启动更新程序，原版本未被修改。${error instanceof Error?error.message:String(error)}`);if(pendingUpdate)try{launchWindowsUpdate(pendingUpdate,process.pid,true,updateError);}catch(error){updateError(error);}const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();const deadline=setTimeout(()=>{void worker?.terminate();app.exit(0);},8000);void Promise.allSettled([localStop,bridgeStop,externalEditor?.stop()]).then(async()=>{if(workerAvailable)await remote('shutdown').catch(()=>{});await worker?.terminate();clearTimeout(deadline);app.exit(0);});}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
@@ -167,12 +178,12 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(checkingExternalClose){event.preventDefault();return;}
   if(externalCloseApproved){externalCloseApproved=false;return;}
   discardEditorApproved=false;
-  if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){event.preventDefault();return;}discardEditorApproved=true;}
+  if(editorState.dirty||editorState.busy){if(!confirmEditorClose()){pendingUpdate=undefined;event.preventDefault();return;}discardEditorApproved=true;}
   event.preventDefault();checkingExternalClose=true;
   void confirmExternalEditorExit(externalEditor,options=>dialog.showMessageBoxSync(win,options),()=>sendEvent({type:'showExternalEdits'})).then(approved=>{
    checkingExternalClose=false;
-   if(approved&&!win.isDestroyed()){externalCloseApproved=true;win.close();}else discardEditorApproved=false;
-  }).catch(()=>{checkingExternalClose=false;discardEditorApproved=false;if(!win.isDestroyed())dialog.showMessageBoxSync(win,{type:'error',message:'检查外部文件状态失败，请在底部“外部编辑”中查看文件后重试。'});});
+   if(approved&&!win.isDestroyed()){externalCloseApproved=true;win.close();}else{discardEditorApproved=false;pendingUpdate=undefined;}
+  }).catch(()=>{checkingExternalClose=false;discardEditorApproved=false;pendingUpdate=undefined;if(!win.isDestroyed())dialog.showMessageBoxSync(win,{type:'error',message:'检查外部文件状态失败，请在底部“外部编辑”中查看文件后重试。'});});
  });
  win.webContents.on('will-prevent-unload',event=>{if(discardEditorApproved||confirmEditorClose()){discardEditorApproved=false;event.preventDefault();}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
@@ -185,6 +196,62 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(remoteMethods.has(method)){const result=await remote(method,...args);if(method==='confirmHostKey')hostQuestions.delete(args[0] as string);return result;}
   const value:any=args[0];
   switch(method){
+   case 'checkUpdate':{
+    latestUpdate=undefined;downloadedUpdate=undefined;
+    if(!['win32','darwin','linux'].includes(process.platform))throw new Error('当前平台尚不支持更新检查');
+    latestUpdate=await checkForUpdate(app.getVersion(),process.platform as UpdatePlatform,process.arch);return latestUpdate;
+   }
+   case 'downloadUpdate':{
+    const asset=latestUpdate?.newer&&latestUpdate.assets.find(item=>item.name===value);
+    if(!asset)throw new Error('请先检查并选择可用的新版本');
+    if(updateDownload)throw new Error('已有更新下载正在进行');
+    const controller=new AbortController();updateDownload=controller;
+    try{const result=await dialog.showSaveDialog(win,{title:'保存已校验的更新包',defaultPath:path.join(app.getPath('downloads'),asset.name)});
+     if(result.canceled||!result.filePath)return null;
+     let lastProgress=0;
+     await downloadUpdate(asset,result.filePath,controller.signal,(received,total)=>{const now=Date.now();if(received===total||now-lastProgress>=150){lastProgress=now;sendEvent({type:'updateProgress',received,total});}});downloadedUpdate={file:result.filePath,asset};return{file:result.filePath,canInstall:app.isPackaged&&process.platform==='win32'&&asset.name.endsWith('-win-x64.zip')};}
+    finally{if(updateDownload===controller)updateDownload=undefined;}
+   }
+   case 'cancelUpdate':updateDownload?.abort();return;
+   case 'installUpdate':{
+    if(!app.isPackaged||process.platform!=='win32'||!downloadedUpdate?.asset.name.endsWith('-win-x64.zip'))throw new Error('此版本需要手动安装更新包');
+    if(pendingUpdate||updatePreparing)throw new Error('更新已在准备中');
+    updatePreparing=true;
+    try{
+     const answer=await dialog.showMessageBox(win,{type:'question',title:'安装更新',message:'退出 GooeShell 并安装更新？',detail:'当前连接会断开；未保存的文件仍会按退出流程确认。程序会保留旧版本目录。',buttons:['取消','退出并更新'],defaultId:0,cancelId:0,noLink:true});
+     if(answer.response!==1)return false;
+     pendingUpdate=await prepareWindowsUpdate(downloadedUpdate.file,downloadedUpdate.asset,process.execPath,app.getPath('userData'));
+     win.close();return true;
+    }finally{updatePreparing=false;}
+   }
+   case 'exportConfig':{
+    if(!value||typeof value.passphrase!=='string'||typeof value.includeSecrets!=='boolean')throw new Error('备份选项无效');
+    const choice=await dialog.showSaveDialog(win,{title:'导出加密配置备份',defaultPath:path.join(app.getPath('documents'),'GooeShell-backup.gsbak'),filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
+    if(choice.canceled||!choice.filePath)return null;
+    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.includeSecrets));
+    const encrypted=await encryptBackup(data,value.passphrase);const temporary=path.join(path.dirname(choice.filePath),'.gooeshell-backup-'+randomUUID()+'.tmp');
+    try{await fs.writeFile(temporary,encrypted,{flag:'wx',mode:0o600});try{await fs.link(temporary,choice.filePath);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('目标备份已存在，请选择其他文件名');throw error;}return choice.filePath;}
+    finally{await fs.unlink(temporary).catch(()=>{});}
+   }
+   case 'chooseConfig':{
+    clearBackupPreview();
+    const choice=await dialog.showOpenDialog(win,{title:'选择 GooeShell 配置备份',properties:['openFile'],filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
+    if(choice.canceled||!choice.filePaths[0])return false;selectedBackup=choice.filePaths[0];return true;
+   }
+   case 'discardConfigPreview':clearBackupPreview();return;
+   case 'previewConfig':{
+    backupPreview=undefined;if(backupTimer)clearTimeout(backupTimer);backupTimer=undefined;if(!selectedBackup||typeof value!=='string')throw new Error('请先选择备份并输入密码');
+    const file=await fs.open(selectedBackup,'r');let text:string;
+    try{const stat=await file.stat();if(!stat.isFile()||stat.size>45*1024*1024)throw new Error('备份必须是小于 45 MiB 的普通文件');const data=Buffer.alloc(stat.size+1);let offset=0;while(offset<data.length){const {bytesRead}=await file.read(data,offset,data.length-offset,offset);if(!bytesRead)break;offset+=bytesRead;}if(offset!==stat.size)throw new Error('备份读取期间发生变化，请重新选择');text=data.subarray(0,offset).toString('utf8');}finally{await file.close();}
+    backupPreview=validatePortableConfig(await decryptBackup(text,value));
+    backupTimer=setTimeout(clearBackupPreview,5*60_000);backupTimer.unref();
+    const backup=backupPreview;return{connections:backup.connections.length,groups:backup.groups.length,identities:backup.identities.length,commands:backup.commands.commands.length,hasSecrets:backup.identities.some(item=>!!item.password)||backup.connections.some(item=>!!item.credentials||!!item.jumpCredentials),skipVerificationHosts:backup.hostKeyPreferences.map(({host,port})=>({host,port}))};
+   }
+   case 'importConfig':{
+    if(!value||typeof value.applySettings!=='boolean'||typeof value.applyHostPreferences!=='boolean'||!backupPreview)throw new Error('请先验证备份');
+    const backup=backupPreview;clearBackupPreview();
+    return identityMutation(()=>importPortableConfig(backup,store,identities,credentials,commands,value.applySettings,value.applyHostPreferences));
+   }
    case 'mcpStatus':return{...await mcpBridge!.refreshStatus(),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};
    case 'setMcpEnabled':return{...await mcpBridge!.setEnabled(value),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};
    case 'listLocalShells':return localPty.listLocalShells();
@@ -489,6 +556,8 @@ if(primaryInstance)app.whenReady().then(async()=>{
  const dev=process.env.GOOESHELL_DEV_URL;
  if(dev){if(!/^http:\/\/127\.0\.0\.1:5173\/?$/.test(dev))throw new Error('Invalid development URL');await win.loadURL(dev);}else await win.loadFile(path.join(__dirname,'../../dist/index.html'));
  win.show();
+ const updateFailure=path.join(app.getPath('userData'),'updates','last-error.txt');
+ try{await fs.unlink(updateFailure);void dialog.showMessageBox(win,{type:'error',title:'更新未完成',message:'更新未能完成，程序目录和配置已保留。',detail:'请关闭可能占用程序目录的其他进程后重试。'});}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')sendEvent({type:'notice',message:'无法读取更新状态，请检查应用数据目录。'});}
  await mcpBridge.load().catch(error=>sendEvent({type:'notice',message:'MCP 桥接未启动：'+(error instanceof Error?error.message:String(error))}));
  if(activateWhenReady)activateWindow();
 });

@@ -27,6 +27,7 @@ class MemorySftp extends EventEmitter {
   readonly published: string[] = [];
   readonly closeActiveReads: number[] = [];
   activeReads = 0;
+  statCalls = 0;
   maxActiveReads = 0;
   maxRead = Infinity;
   corruptAt?: number;
@@ -46,7 +47,7 @@ class MemorySftp extends EventEmitter {
   }
   realpath(name: string, callback: Callback<string>): void { this.reply(callback, () => { this.node(name); return name; }); }
   lstat(name: string, callback: Callback<Stats>): void { this.reply(callback, () => this.stat(name)); }
-  fstat(handle: Buffer, callback: Callback<Stats>): void { this.reply(callback, () => this.stat(this.name(handle))); }
+  fstat(handle: Buffer, callback: Callback<Stats>): void { this.statCalls++; this.reply(callback, () => this.stat(this.name(handle))); }
   open(name: string, flags: string | number, attrsOrCallback: unknown, callback?: Callback<Buffer>): void {
     const done = (typeof attrsOrCallback === 'function' ? attrsOrCallback : callback) as Callback<Buffer>;
     this.reply(done, () => {
@@ -88,6 +89,14 @@ class MemorySftp extends EventEmitter {
   }
   unlink(name: string, callback: Callback): void { this.reply(callback, () => { if (!this.nodes.delete(name)) throw missing(); }); }
 }
+
+test('small file verification reuses its final file snapshot', async t => {
+ for(const direction of ['upload','download'] as const){
+  const data=contents(4096),f=await fixture(t,direction,data);
+  await f.run();assert.deepEqual(await f.result(),data);
+  assert.equal(f.sftp.statCalls,direction==='upload'?2:3);
+ }
+});
 
 function contents(size: number): Buffer {
   const result = Buffer.allocUnsafe(size);
@@ -211,7 +220,7 @@ test('unsupported remote hashing uses bounded parallel readback and handles shor
     if (shortReads) f.sftp.maxRead = 10_003;
     await f.run(async () => undefined);
     assert.deepEqual(await f.result(), data);
-    assert.equal(f.sftp.maxActiveReads, 16, 'readback must overlap 16 requests without exceeding the bound');
+    assert.equal(f.sftp.maxActiveReads, 32, 'readback must overlap 32 requests without exceeding the bound');
     assert.equal(f.sftp.activeReads, 0);
     assert.ok(f.sftp.closeActiveReads.every(count => count === 0));
     const bytesRead = f.sftp.reads.reduce((sum, read) => sum + (read.returned || 0), 0);
@@ -234,7 +243,7 @@ test('failed parallel verification drains every outstanding read before closing 
   const data = contents(40 * CHUNK), f = await fixture(t, 'upload', data, data.subarray(0, 32 * CHUNK));
   f.sftp.failReadAt = 0; f.sftp.readDelay = call => call.position === 0 ? 1 : 30;
   await assert.rejects(f.run(async () => undefined), /injected read failure/);
-  assert.equal(f.sftp.maxActiveReads, 16); assert.equal(f.sftp.activeReads, 0);
+  assert.equal(f.sftp.maxActiveReads, 32); assert.equal(f.sftp.activeReads, 0);
   assert.deepEqual(f.sftp.closeActiveReads, [0]); assert.equal(f.sftp.handles.size, 0);
   assert.equal(f.sftp.writes.length, 0); await f.assertUnpublished();
 });

@@ -36,7 +36,7 @@ function volume(sessionId: string, side = 'remote') {
 let held: (() => void) | undefined;
 const control = {
   renderSamples: [] as number[],
-  calls, denyNext: '', denyPath: '', holdNext: '', held: false, cwd: {} as Record<string, string>,
+  calls, denyNext: '', denyPath: '', holdNext: '', held: false, cwd: {} as Record<string, string>, cwdFailures: {} as Record<string, number>,
   chosenFiles: [] as string[], transfers: [] as TransferInfo[], external: [] as ExternalEdit[],
   release: () => { held?.(); held = undefined; control.held = false; },
   emit: (event: AppEvent) => listeners.forEach(listener => listener(event)),
@@ -127,7 +127,7 @@ Object.assign(api, {
     if (entry.type === 'directory' && !request.recursive) throw new Error('目录删除必须明确递归');
     for (const path of entries.keys()) if (path === request.path || (entry.type === 'directory' && path.startsWith(request.path + separator))) entries.delete(path);
   },
-  terminalCwd: async ({ sessionId }: { sessionId: string }) => { calls.push({ method: 'terminalCwd', request: { sessionId } }); return { path: control.cwd[sessionId] || rootFor(sessionId), source: 'shell' }; },
+  terminalCwd: async ({ sessionId }: { sessionId: string }) => { calls.push({ method: 'terminalCwd', request: { sessionId } }); if(control.cwdFailures[sessionId]>0){control.cwdFailures[sessionId]--;throw new Error('TERMINAL_CWD_RETRY: 当前前台进程的目录暂时不可读取');}return { path: control.cwd[sessionId] || rootFor(sessionId), source: 'shell' }; },
 });
 (window as any).appExplorerFixture = control;
 createRoot(document.getElementById('root')!).render(<React.StrictMode><React.Profiler id="explorer-app" onRender={(_id, _phase, duration) => control.renderSamples.push(duration)}><App /></React.Profiler></React.StrictMode>);

@@ -65,6 +65,12 @@ test('directory probe releases its channel when disconnected, timed out, or unsu
   await assert.rejects(unavailable, /Python 3/);
 });
 
+test('a temporarily inaccessible foreground directory is explicitly retryable', async () => {
+  const fixture = probe(), pending = readTerminalDirectory(fixture.client);
+  fixture.result({ok:false,retry:true,error:'当前前台进程的目录暂时不可读取'});
+  await assert.rejects(pending, /TERMINAL_CWD_RETRY/);
+});
+
 test('real SSH probes use each terminal own authenticated transport and coalesce concurrent queries', { timeout: 15000 }, async t => {
   const key = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' });
   const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'gooeshell-cwd-ssh-'));
@@ -116,5 +122,5 @@ test('Linux PTYs follow separate shell directories and each tmux client active p
   const output = execFileSync(wsl ? 'wsl.exe' : 'python3',
     wsl ? ['-d', 'Ubuntu-24.04', '--', 'python3', '-I', '-c', fixture] : ['-I', '-c', fixture],
     { input: TERMINAL_CWD_PYTHON, encoding: 'utf8', timeout: 40_000, maxBuffer: 1024 * 1024, windowsHide: true });
-  assert.deepEqual(JSON.parse(output), { shell: true, separateConnections: true, tmux: true, activePane: true, nestedSsh: true, ambiguousPty: true });
+  assert.deepEqual(JSON.parse(output), { shell: true, separateConnections: true, tmux: true, activePane: true, nestedSsh: true, ambiguousPty: true, temporaryPermission: true });
 });

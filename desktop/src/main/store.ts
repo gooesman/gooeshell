@@ -130,7 +130,7 @@ function putConnection(catalog:ConnectionCatalog,profile:HostProfile,favorite?:b
   return safe;
 }
 const preferenceEndpoint=(value:{host:string;port:number})=>JSON.stringify([value.host.toLowerCase(),value.port]);
-function cleanHostKeyPreference(input:HostKeyPreference):HostKeyPreference{
+export function cleanHostKeyPreference(input:HostKeyPreference):HostKeyPreference{
   if(!input||typeof input!=='object'||typeof input.host!=='string'||!input.host.trim()||input.host.length>255||/[\0\r\n]/.test(input.host)||!Number.isInteger(input.port)||input.port<1||input.port>65535||typeof input.skipVerification!=='boolean')throw new Error('请填写有效的服务器地址、端口和指纹选项');
   return{host:input.host.trim().toLowerCase(),port:input.port,skipVerification:input.skipVerification};
 }
@@ -193,6 +193,17 @@ export class Store {
   async saveConnection(profile:HostProfile,favorite:boolean):Promise<HostProfile>{
     const safe=cleanProfile(profile);if(typeof favorite!=='boolean')throw new Error('连接收藏选项无效');
     return this.catalog(catalog=>putConnection(catalog,safe,favorite),true);
+  }
+  /** Backup imports never replace an existing connection, even if a connection is added concurrently. */
+  async importConnection(profile:HostProfile,favorite:boolean):Promise<{profile:HostProfile;added:boolean}>{
+    const safe=cleanProfile(profile);if(typeof favorite!=='boolean')throw new Error('连接收藏选项无效');
+    return this.catalog(catalog=>{
+      const idMatch=catalog.records.find(record=>record.profile.id===safe.id);
+      const existing=catalog.records.find(record=>connectionConfigurationIdentity(record.profile)===connectionConfigurationIdentity(safe));
+      if(existing)return{profile:existing.profile,added:false};
+      if(idMatch)safe.id=randomUUID();
+      validateGroup(catalog,safe);catalog.records.push({profile:safe,favorite});return{profile:safe,added:true};
+    },true);
   }
   async history():Promise<ConnectionHistoryEntry[]>{return this.catalog(catalog=>{
     const profiles=new Map(catalog.records.map(record=>[record.profile.id,record.profile]));

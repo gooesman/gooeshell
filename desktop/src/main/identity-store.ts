@@ -74,11 +74,12 @@ export class IdentityStore {
     if(!record)throw new Error('LOGIN_IDENTITY_NOT_FOUND: 所选登录身份已不存在，请重新选择。');
     return{id:record.id,username:record.username,version:record.version,remember:record.remember,...(includePassword?{password:await this.secret(record)}:{})};
   });}
-  private async saveInternal(input:SaveLoginIdentityInput,profiles:HostProfile[],canCommit:()=>boolean=()=>true):Promise<LoginIdentitySummary>{
+  private async saveInternal(input:SaveLoginIdentityInput,profiles:HostProfile[],canCommit:()=>boolean=()=>true,newId?:string):Promise<LoginIdentitySummary>{
     if(!input||typeof input!=='object'||!['session','persistent'].includes(input.remember))throw new Error('登录身份保存选项无效');
     const name=text(input.name,'名称'),username=text(input.username,'用户名');password(input.password);
-    const catalog=await this.read();const id=input.id===undefined?randomUUID():text(input.id,'标识');
+    const catalog=await this.read();const id=input.id===undefined?(newId??randomUUID()):text(input.id,'标识');
     const previous=catalog.identities.find(item=>item.id===id);
+    if(newId&&previous)throw new Error('LOGIN_IDENTITY_CONFLICT: 导入身份标识已存在');
     if(input.id!==undefined&&!previous)throw new Error('LOGIN_IDENTITY_NOT_FOUND: 此登录身份已被删除，请重新加载。');
     if(previous&&input.expectedVersion!==previous.version)throw new Error('LOGIN_IDENTITY_CONFLICT: 此登录身份已被修改，请重新加载后再保存。');
     if(!previous&&input.expectedVersion!==undefined)throw new Error('LOGIN_IDENTITY_CONFLICT: 新登录身份不能携带旧版本。');
@@ -96,6 +97,12 @@ export class IdentityStore {
     return this.summary(record,profiles);
   }
   save(input:SaveLoginIdentityInput,profiles:HostProfile[]=[]){return this.serial(()=>this.saveInternal(input,profiles));}
+  importIdentity(input:SaveLoginIdentityInput&{sourceId:string}):Promise<LoginIdentitySummary>{return this.serial(async()=>{
+    const sourceId=text(input.sourceId,'标识'),catalog=await this.read();
+    const existing=catalog.identities.find(item=>item.id===sourceId);
+    if(existing&&existing.name===input.name&&existing.username===input.username)return this.summary(existing,[]);
+    return this.saveInternal({name:input.name,username:input.username,remember:input.remember,...(input.password!==undefined?{password:input.password}:{})},[],()=>true,existing?undefined:sourceId);
+  });}
   /** Successful authentication may replace a shared password only at the version it actually used. */
   updatePasswordIfUnchanged(snapshot:LoginIdentitySnapshot,newPassword:string|undefined,canCommit:()=>boolean):Promise<boolean>{return this.serial(async()=>{
     if(!canCommit()||newPassword===undefined)return false;

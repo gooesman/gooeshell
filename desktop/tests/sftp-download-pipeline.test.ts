@@ -74,7 +74,7 @@ test('download reorders short reads with a bounded window and commits exact cont
   await f.run();
   assert.deepEqual(await fs.readFile(f.destination), f.bytes);
   assert.equal(f.info.done, f.bytes.length);
-  assert.equal(f.sftp.maximum, 16);
+  assert.equal(f.sftp.maximum, 32, 'verification readback uses its separate bounded window');
   assert.equal(f.sftp.payloadMaximum, 16, 'new payload reads must overlap, independently of parallel verification');
   assert.deepEqual(f.sftp.closes, [0]);
   assert.equal(f.sftp.reads.filter(read => !read.checking && read.position < CHUNK).length, 9);

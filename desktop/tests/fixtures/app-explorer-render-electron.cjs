@@ -535,6 +535,12 @@ async function run() {
   phase = 'per terminal directory tracking';
   await evaluate(`${fixture}.cwd[${JSON.stringify(sessionA)}] = '/home/a/locked'`); await click('跟随终端目录'); await pathIs('/home/a/locked');
   assert.equal(await evaluate(`document.querySelector('[aria-label="跟随终端目录"]').getAttribute('aria-pressed')`), 'true');
+  await evaluate(`${fixture}.cwdFailures[${JSON.stringify(sessionA)}] = 1`);
+  await until(()=>evaluate(`document.querySelector(${JSON.stringify(pane('remote')+' .file-pane-footer')}).textContent.includes('暂时无法读取')`),'temporary cwd error');
+  assert.equal(await evaluate(`document.querySelector('[aria-label="跟随终端目录"]').getAttribute('aria-pressed')`), 'true');
+  assert.equal(await evaluate(`document.querySelector('.toast-stack')?.textContent.includes('TERMINAL_CWD_RETRY')`),false);
+  await until(()=>evaluate(`document.querySelector(${JSON.stringify(pane('remote')+' .file-pane-footer')}).textContent.includes('跟随终端目录')`),'automatic cwd recovery');
+  await pathIs('/home/a/locked');result.checks.directoryTrackingRecoversAfterForegroundPermission=true;
   await host('B'); await pathIs('/home/b');
   assert.equal(await evaluate(`document.querySelector('[aria-label="跟随终端目录"]').getAttribute('aria-pressed')`), 'false');
   await evaluate(`${fixture}.cwd[${JSON.stringify(sessionB)}] = '/home/b/docs'`); await delay(1250); await pathIs('/home/b');

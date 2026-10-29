@@ -1,4 +1,4 @@
-import { constants, promises as fs } from 'node:fs';
+import { constants, promises as fs, type Stats as LocalStats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -9,7 +9,7 @@ import type { RemoteTransferHash } from './remote-transfer-hash';
 
 const CHUNK = 64 * 1024;
 const DOWNLOAD_CONCURRENCY = 16;
-const VERIFY_CONCURRENCY = 16;
+const VERIFY_CONCURRENCY = 32;
 const HASH_CHUNK = 1024 * 1024;
 const MAX_ENTRIES = 50_000;
 const activeTargets = new Set<string>();
@@ -155,7 +155,7 @@ async function compare(
   signal: AbortSignal, update: (done: number) => void,
 ): Promise<void> {
   let next = 0, done = 0, failed = false;
-  // Fixed slots bound memory to 2 MiB and overlap network round trips. Always
+  // Fixed slots bound memory to 4 MiB and overlap network round trips. Always
   // drain active reads before the caller closes either file handle on failure.
   const results = await Promise.allSettled(Array.from({ length: Math.min(VERIFY_CONCURRENCY, Math.ceil(length / CHUNK)) }, async () => {
     const left = Buffer.allocUnsafe(CHUNK), right = Buffer.allocUnsafe(CHUNK);
@@ -198,7 +198,7 @@ async function verify(
   local: FileHandle, sftp: SFTPWrapper, remote: Buffer, remotePath: string, length: number,
   signal: AbortSignal, info: TransferInfo, emit: (force?: boolean) => void,
   stage: 'resume' | 'final', remoteHash?: RemoteTransferHash,
-): Promise<void> {
+): Promise<{localAfter:LocalStats;remoteAfter:Stats}|undefined> {
   cancelled(signal);
   if (!length) return;
   const start = (method: 'sha256' | 'readback') => {
@@ -251,6 +251,7 @@ async function verify(
     throw new Error('文件在校验期间改变，保留 .part');
   }
   update(length); cancelled(signal);
+  return {localAfter,remoteAfter};
 }
 
 interface Item { source: string; destination: string; directory: boolean; size: number; }
@@ -376,9 +377,9 @@ async function upload(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tran
       position += count; info.done = completedBefore + position; emit();
     }
     progress.phase('checking');
-    await verify(local, sftp, remote, partial, before.size, signal, info, emit, 'final', remoteHash);
-    const after = await local.stat();
-    const remoteAfter = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
+    const verified = await verify(local, sftp, remote, partial, before.size, signal, info, emit, 'final', remoteHash);
+    const after = verified?.localAfter ?? await local.stat();
+    const remoteAfter = verified?.remoteAfter ?? await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || remoteAfter.size !== before.size) throw new Error('文件在传输/校验期间改变，保留 .part');
     await remoteClose(sftp, remote); remote = undefined;
     cancelled(signal);
@@ -415,8 +416,8 @@ async function download(sftp: SFTPWrapper, item: Item, resume: boolean, info: Tr
       bytes => progress.transferred(bytes), position => { info.done = completedBefore + position; emit(); });
     progress.phase('checking');
     await local.sync();
-    await verify(local, sftp, remote, item.source, before.size, signal, info, emit, 'final', remoteHash);
-    const after = await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
+    const verified = await verify(local, sftp, remote, item.source, before.size, signal, info, emit, 'final', remoteHash);
+    const after = verified?.remoteAfter ?? await sftpCall<Stats>(cb => sftp.fstat(remote!, cb));
     const currentPath = await fs.lstat(partial);
     if (before.size !== after.size || before.mtime !== after.mtime || currentPath.ino !== opened.ino || currentPath.dev !== opened.dev || currentPath.size !== before.size) throw new Error('文件在传输/校验期间改变，保留 .part');
     cancelled(signal);

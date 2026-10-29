@@ -334,18 +334,23 @@ export default function App() {
   useEffect(() => {
     const sessionId = activeSsh?.id;
     if (!sessionId || !remoteConnected || !following[sessionId] || !filesVisible || zen) return;
-    let cancelled = false, timer: ReturnType<typeof setTimeout>;
+    let cancelled = false, timer: ReturnType<typeof setTimeout>, retryDelay = 2000;
     const poll = async () => {
       try {
         const result = await api.terminalCwd({sessionId});
         if (cancelled || activeRef.current !== sessionId || !followingRef.current[sessionId]) return;
+        retryDelay = 2000;
         setFollowStatus(previous => ({...previous, [sessionId]: result.source === 'tmux' ? '跟随 tmux 当前窗格' : '跟随终端目录'}));
         if (result.path !== listingsRef.current.remote.path) await loadFiles('remote', result.path);
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || activeRef.current !== sessionId || !followingRef.current[sessionId]) return;
+        if (/TERMINAL_CWD_RETRY:/.test(errorText(error))) {
+          retryDelay = Math.min(10000, retryDelay * 2);
+          setFollowStatus(previous => ({...previous, [sessionId]: '暂时无法读取前台目录，将自动恢复'})); return;
+        }
         followingRef.current = {...followingRef.current, [sessionId]: false}; setFollowing(followingRef.current);
         setFollowStatus(previous => ({...previous, [sessionId]: '目录跟随已暂停'})); notify(errorText(error), true);
-      } finally { if (!cancelled) timer = setTimeout(() => void poll(), 2000); }
+      } finally { if (!cancelled) timer = setTimeout(() => void poll(), retryDelay); }
     };
     void poll(); return () => { cancelled = true; clearTimeout(timer); };
   }, [activeSsh?.id, remoteConnected, following[activeSsh?.id || ''], filesVisible, zen, loadFiles, notify]);
@@ -402,7 +407,7 @@ export default function App() {
     {((!active && manager.pending[activeId]) || manager.hasUntargetedPending) && !connection && !manager.authPrompt && <div className="connection-pending" role="status"><span>正在连接服务器…</span><button className="button small secondary" onClick={() => void manager.cancel(!active && manager.pending[activeId] ? activeId : undefined)}>取消连接</button></div>}
     {groupDraft && <Modal title={groups.some(group => group.id === groupDraft.id) ? '编辑连接分组' : '新建连接分组'} compact close={() => { if (!catalogBusy) setGroupDraft(null); }} footer={<><button className="button secondary" disabled={catalogBusy} onClick={() => setGroupDraft(null)}>取消</button><button className="button primary" form="connection-group-form" type="submit" disabled={catalogBusy || !groupDraft.name.trim()}>保存分组</button></>}><form id="connection-group-form" className="modal-body" onSubmit={async event => { event.preventDefault(); setCatalogBusy(true); setCatalogError(''); try { await api.saveGroup(groupDraft); await manager.refresh(); setGroupDraft(null); } catch (error) { setCatalogError(errorText(error)); } finally { setCatalogBusy(false); } }}><div className="form-field"><label htmlFor="connection-group-name">分组名称</label><input id="connection-group-name" autoFocus maxLength={80} value={groupDraft.name} onChange={event => setGroupDraft({...groupDraft,name:event.target.value})}/></div><div className="form-field" style={{marginTop:18}}><label htmlFor="connection-group-icon">图标</label><select id="connection-group-icon" value={groupDraft.icon} onChange={event => setGroupDraft({...groupDraft,icon:event.target.value as ConnectionGroup['icon']})}>{connectionIcons.map(icon => <option key={icon.id} value={icon.id}>{icon.name}</option>)}</select></div>{catalogError && <div className="form-error" role="alert">{catalogError}</div>}</form></Modal>}
     {deleteTarget && <Modal title={deleteTarget.group ? '删除分组' : '删除连接'} compact close={() => { if (!catalogBusy) setDeleteTarget(null); }} footer={<><button className="button secondary" disabled={catalogBusy} onClick={() => setDeleteTarget(null)}>取消</button><button className="button primary" disabled={catalogBusy} onClick={async () => { setCatalogBusy(true); setCatalogError(''); try { if (deleteTarget.group) await api.deleteGroup(deleteTarget.group.id); else { await manager.cancelProfile(deleteTarget.profile!.id); await api.deleteConnection(deleteTarget.profile!.id); } await manager.refresh(); setDeleteTarget(null); } catch (error) { setCatalogError(errorText(error)); } finally { setCatalogBusy(false); } }}>确认删除</button></>}><div className="modal-body"><p>{deleteTarget.group ? `删除“${deleteTarget.group.name}”后，其中的连接将移到未分组。` : `删除“${deleteTarget.profile?.name}”的连接配置、最近记录与已记住的密码。当前打开的终端会继续运行，专属命令保留在命令库中。`}</p>{catalogError && <div className="form-error" role="alert">{catalogError}</div>}</div></Modal>}
-    {settingsOpen && <SettingsDialog initialTab={settingsPage} onIdentitiesChange={async () => { await manager.refresh(); window.dispatchEvent(new Event('gooeshell:identities-changed')); }} clearHistory={async () => { await api.clearConnectionHistory(); setHistory([]); notify('最近连接已清空'); }} settings={settings} save={async value => { await api.saveSettings(value); setSettings(value); notify('设置已保存'); }} close={() => setSettingsOpen(false)} />}
+    {settingsOpen && <SettingsDialog initialTab={settingsPage} onConfigImported={async next => { await manager.refresh(); await refreshCommands(); setHostKeyPreferences((await api.initial()).hostKeyPreferences); if (next) setSettings(next); window.dispatchEvent(new Event("gooeshell:identities-changed")); }} onIdentitiesChange={async () => { await manager.refresh(); window.dispatchEvent(new Event('gooeshell:identities-changed')); }} clearHistory={async () => { await api.clearConnectionHistory(); setHistory([]); notify('最近连接已清空'); }} settings={settings} save={async value => { await api.saveSettings(value); setSettings(value); notify('设置已保存'); }} close={() => setSettingsOpen(false)} />}
     {serverTransferDraft && <ServerTransferDialog sourceSessionId={serverTransferDraft.sessionId} sources={serverTransferDraft.sources} sessions={sessions.filter(isSshSession).filter(session=>!closed[session.id])} close={()=>setServerTransferDraft(null)} submit={async requests=>{for(const request of requests)await queueServerTransfer(request);}}/>}
     {transferDraft && <TransferDialog draft={transferDraft} disconnected={!!closed[transferDraft.sessionId] || !sessions.some(session => session.id === transferDraft.sessionId)} close={() => setTransferDraft(null)} submit={(mode, destinationDir) => void submitTransfer({ ...transferDraft, destinationDir }, mode)} />}
     {externalOpen && <Modal title="外部编辑" wide close={() => setExternalOpen(false)}><Suspense fallback={<div className="modal-body">正在加载…</div>}><ExternalEditors edits={externalEdits} settings={settings} configure={() => { setExternalOpen(false); setSettingsPage('editor'); setSettingsOpen(true); }} /></Suspense></Modal>}

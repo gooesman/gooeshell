@@ -47,8 +47,9 @@ def worker(pipe, initial):
                 time.sleep(.2)
                 drain()
                 pipe.send(True)
-            elif action == 'probe':
-                result = subprocess.run(['python3', '-I', '-c', HELPER, 'FIXTURE'], capture_output=True, timeout=6, check=True)
+            elif action in ('probe', 'probe-denied'):
+                denied = "import os,errno\n_original_readlink=os.readlink\ndef _deny_cwd(path):\n if str(path).startswith('/proc/') and str(path).endswith('/cwd'): raise PermissionError(errno.EACCES, 'fixture')\n return _original_readlink(path)\nos.readlink=_deny_cwd\n" if action == 'probe-denied' else ''
+                result = subprocess.run(['python3', '-I', '-c', denied + HELPER, 'FIXTURE'], capture_output=True, timeout=6, check=True)
                 line = next(line for line in result.stdout.decode().splitlines() if line.startswith('FIXTURE:'))
                 pipe.send(json.loads(base64.b64decode(line.split(':', 1)[1])))
             elif action == 'ambiguous':
@@ -94,6 +95,8 @@ try:
     send(first, 'input', 'cd -- ' + folders[2] + '\r')
     assert send(first, 'probe')['value']['path'] == folders[2]
     assert send(second, 'probe')['value']['path'] == folders[1]
+    assert send(first, 'probe-denied')['retry'] is True
+    assert send(first, 'probe')['value']['path'] == folders[2]
     tmux('new-session', '-d', '-s', 'one', '-c', folders[0], 'bash --noprofile --norc')
     tmux('new-session', '-d', '-s', 'two', '-c', folders[1], 'bash --noprofile --norc')
     send(first, 'input', 'tmux -L ' + SOCKET + ' attach-session -t one\r')
@@ -107,6 +110,8 @@ try:
     assert send(second, 'probe')['value']['path'] == folders[1]
     tmux('select-pane', '-t', 'one:0.0')
     assert send(first, 'probe')['value']['path'] == folders[0]
+    assert send(first, 'probe-denied')['retry'] is True
+    assert send(first, 'probe')['value']['path'] == folders[0]
     tmux('detach-client', '-s', 'one')
     send(first, 'input', '')
     # A nested SSH foreground process must not masquerade as the outer shell cwd.
@@ -118,7 +123,7 @@ try:
     send(first, 'input', '\x03')
     send(first, 'ambiguous')
     assert '唯一识别' in send(first, 'probe')['error']
-    print(json.dumps({'shell': True, 'separateConnections': True, 'tmux': True, 'activePane': True, 'nestedSsh': True, 'ambiguousPty': True}))
+    print(json.dumps({'shell': True, 'separateConnections': True, 'tmux': True, 'activePane': True, 'nestedSsh': True, 'ambiguousPty': True, 'temporaryPermission': True}))
 finally:
     subprocess.run(['tmux', '-L', SOCKET, 'kill-server'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for child, pipe in workers:
