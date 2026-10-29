@@ -26,6 +26,7 @@ for(const detached of [false,true])test(`Windows update preserves the old versio
  await assert.rejects(fs.stat(path.join(root,'escape.txt')),{code:'ENOENT'});
  const plan=await prepareWindowsUpdate(archive,asset,path.join(old,'GooeShell.exe'),data);
  const child=spawn(process.execPath,['-e',"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))"],{windowsHide:true,stdio:['pipe','ignore','ignore']});
+ t.after(()=>{if(child.exitCode===null && child.signalCode===null)child.kill();});
  if(detached){
   child.kill();
   const owner=spawn(process.execPath,['--import',pathToFileURL(require.resolve('tsx')).href,'-e',"const {launchWindowsUpdate}=require(process.argv[1]);launchWindowsUpdate(JSON.parse(process.argv[2]));",path.resolve(__dirname,'../src/main/update-install.ts'),JSON.stringify(plan)],{windowsHide:true,stdio:['ignore','ignore','pipe']});
@@ -52,4 +53,8 @@ for(const detached of [false,true])test(`Windows update preserves the old versio
  const failed=await new Promise<number|null>((resolve,reject)=>{blocker.once('error',reject);blocker.once('exit',resolve);});
  assert.equal(failed,1);assert.equal(await fs.readFile(path.join(old,'resources','app.asar'),'utf8'),'new');
  assert.match(await fs.readFile(path.join(data,'updates','last-error.txt'),'utf8'),/Update failed/);
+ const badProbe=launchWindowsUpdate({...plan,stage:blockedStage,backup:path.join(root,'unused-backup')},Number.NaN,false);badProbe.ref();
+ const probeExit=await new Promise<number|null>((resolve,reject)=>{badProbe.once('error',reject);badProbe.once('exit',resolve);});
+ assert.equal(probeExit,1);assert.equal(await fs.readFile(path.join(old,'resources','app.asar'),'utf8'),'new');
+ assert.match(await fs.readFile(plan.helper+'.log','utf8'),/Process status check failed/);
 });

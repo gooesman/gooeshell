@@ -41,9 +41,8 @@ set "GOOESHELL_CAN_RESTART=1"
 set /a attempts=0
 echo Waiting for application exit.
 :wait
-"%SystemRoot%\System32\tasklist.exe" /fi "PID eq %GOOESHELL_PID%" /nh > "%GOOESHELL_PID_REPORT%" 2>&1
-if errorlevel 1 goto tasklist_failed
-"%SystemRoot%\System32\findstr.exe" /c:" %GOOESHELL_PID% " "%GOOESHELL_PID_REPORT%" >nul
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { $p = [Diagnostics.Process]::GetProcessById([int]$env:GOOESHELL_PID); if ($p.HasExited) { exit 1 }; exit 0 } catch [ArgumentException] { exit 1 } catch { exit 2 }" > "%GOOESHELL_PID_REPORT%" 2>&1
+if errorlevel 2 goto status_failed
 if errorlevel 1 goto replace
 set /a attempts+=1
 if %attempts% GEQ 120 goto failed
@@ -81,7 +80,7 @@ echo Update failed.
 echo Update failed. Review the update log and retry.>"%GOOESHELL_UPDATE_ERROR%"
 if defined GOOESHELL_CAN_RESTART if exist "%GOOESHELL_CURRENT%\GooeShell.exe" start "" /b "%GOOESHELL_CURRENT%\GooeShell.exe"
 exit /b 1
-:tasklist_failed
+:status_failed
 echo Process status check failed.
 goto failed
 `;
