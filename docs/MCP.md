@@ -6,6 +6,22 @@
 
 桥接运行期间每 5 秒检查一次本机状态文件；打开 MCP 设置时也会立即检查。状态文件缺失、损坏或被旧记录覆盖时，恢复当前端口和令牌，不重启 SSH 连接、不重复执行命令。应用退出后不再恢复文件，重新启动时生成新的令牌；客户端每次调用都会读取最新记录。连接失败会显示本机端口和检查方法，不返回令牌。
 
+## Windows 客户端读到旧端口
+
+如果 GooeShell 已运行，重启和重新复制配置后客户端仍报告同一个旧端口，先对照桌面文本编辑器与客户端读取的 `mcp-bridge.json`。只核对端口，不公开其中的访问令牌。
+
+已在 Windows 商店版 Codex 中确认过一种情况：程序读取 `%APPDATA%\gooeshell\mcp-bridge.json` 时，实际命中自己包目录 `LocalCache\Roaming\gooeshell\mcp-bridge.json` 中的过期副本；GooeShell 更新的则是真实 Roaming 目录。两者路径看似相同，但端口和令牌不同，所以桥接自身的文件修复不能更新客户端私有副本。
+
+可在客户端执行环境的 PowerShell 中查看实际文件位置：
+
+```powershell
+fsutil hardlink list "$env:APPDATA\gooeshell\mcp-bridge.json"
+```
+
+若结果指向 `AppData\Local\Packages\OpenAI.Codex_…\LocalCache\Roaming\gooeshell`，并确认它与桌面程序读取的记录不同，先备份，再移出该目录中这一份过期的 `mcp-bridge.json`。客户端随后可重新读取真实文件；本次恢复无需修改 MCP 配置或重启 SSH。不要清理整个包缓存或复制令牌到配置里，也不要通过客户端手工改写 Roaming 下的桥接记录，以免重新生成私有副本。无法确认文件位置时先保留原文件排查。
+
+## 可用操作
+
 | 操作 | 参数 | 结果 |
 | --- | --- | --- |
 | `list_connections` | 无 | 保存的连接编号、名称、地址、用户名和登录身份名称 |
