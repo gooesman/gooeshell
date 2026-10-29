@@ -7,7 +7,8 @@ import {execFileSync,spawn} from 'node:child_process';
 import {prepareWindowsUpdate,launchWindowsUpdate} from '../src/main/update-install';
 
 for(const detached of [false,true])test(`Windows update preserves the old version after the app exits (${detached?'detached':'attached'} helper)`,{skip:process.platform!=='win32',timeout:90000},async t=>{
- const root=await fs.mkdtemp(path.join(process.cwd(),'.build','update-test-中文 & ! % '));
+ const base=path.join(process.cwd(),'.build');await fs.mkdir(base,{recursive:true});
+ const root=await fs.mkdtemp(path.join(base,'update-test-中文 & ! % '));
  t.after(()=>fs.rm(root,{recursive:true,force:true,maxRetries:10,retryDelay:200}));
  const old=path.join(root,'application'),source=path.join(root,'source'),data=path.join(root,'data'),archive=path.join(root,'update.zip');
  await fs.mkdir(path.join(old,'resources'),{recursive:true});await fs.mkdir(path.join(source,'resources'),{recursive:true});
