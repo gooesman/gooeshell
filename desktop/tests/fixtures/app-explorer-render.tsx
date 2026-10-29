@@ -101,6 +101,11 @@ api.transfer = async request => {
   const transfer: TransferInfo = { id: `fixture-transfer-${control.transfers.length + 1}`, sessionId: request.sessionId, direction: request.direction, mode: request.mode, source: request.source, destination: request.destinationDir + separator + name, name, state: 'queued', done: 0, total: 0 };
   control.transfers.push(transfer); control.emit({ type: 'transfer', transfer: { ...transfer } }); return transfer.id;
 };
+api.serverTransfer = async request => {
+  calls.push({method:'serverTransfer',request:{...request}});
+  const transfer:TransferInfo={id:`fixture-server-transfer-${control.transfers.length+1}`,sessionId:request.sessionId,targetSessionId:request.targetSessionId,direction:'server',source:request.source,destination:request.destinationDir+'/'+request.source.split('/').at(-1),name:request.source.split('/').at(-1)!,state:'queued',done:0,total:0};
+  control.transfers.push(transfer);control.emit({type:'transfer',transfer:{...transfer}});return transfer.id;
+};
 api.cancelTransfer = async id => {
   calls.push({ method: 'cancelTransfer', request: { id } });
   if (control.denyNext === 'cancelTransfer') { control.denyNext = ''; throw new Error('fixture cancel failed'); }

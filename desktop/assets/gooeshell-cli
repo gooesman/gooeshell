@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+cli_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -x "$cli_dir/../../MacOS/GooeShell" ]; then
+  runtime="$cli_dir/../../MacOS/GooeShell"
+else
+  runtime="$cli_dir/../../gooeshell"
+fi
+ELECTRON_RUN_AS_NODE=1 exec "$runtime" "$cli_dir/../app.asar/dist-main/main/cli.js" "$@"

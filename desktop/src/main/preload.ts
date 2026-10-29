@@ -19,7 +19,7 @@ const api: DesktopApi = {
   confirmHostKey:(id,d)=>call('confirmHostKey',id,d),localList:p=>call('localList',p),remoteList:r=>call('remoteList',r),
   terminalCwd:r=>call('terminalCwd',r),
   chooseFiles:o=>call('chooseFiles',o),showInFolder:p=>call('showInFolder',p),transfer:r=>call('transfer',r),
-  cancelTransfer:id=>call('cancelTransfer',id),readFile:r=>call('readFile',r),writeFile:r=>call('writeFile',r),
+  serverTransfer:r=>call('serverTransfer',r),cancelTransfer:id=>call('cancelTransfer',id),readFile:r=>call('readFile',r),writeFile:r=>call('writeFile',r),
   readTextFile:r=>call('readTextFile',r),writeTextFile:r=>call('writeTextFile',r),saveTextCopy:r=>call('saveTextCopy',r),
   openExternalEditor:r=>call('openExternalEditor',r),externalEdits:()=>call('externalEdits'),externalEditAction:r=>call('externalEditAction',r),compareExternalEdit:id=>call('compareExternalEdit',id),
   editorState:state=>ipcRenderer.send('gooeshell:editor-state',state),

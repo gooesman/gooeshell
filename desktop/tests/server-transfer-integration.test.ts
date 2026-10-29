@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn,execFileSync} from 'node:child_process';
+import {createInterface} from 'node:readline';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {Client} from 'ssh2';
+import {performServerTransfer,type TransferEndpoint} from '../src/main/server-transfer';
+import type {TransferInfo} from '../src/shared/types';
+import {randomUUID} from 'node:crypto';
+import {promises as fs} from 'node:fs';
+import {SshService} from '../src/main/ssh-service';
+import {readBridgeLog} from '../src/main/bridge-log';
+import {startBridgeTask,stopBridgeTask,readBridgeTask} from '../src/main/bridge-task';
+import {executeBridgeCommand,quote} from '../src/main/bridge-command';
+
+const enabled=process.env.GOOESHELL_SERVER_TRANSFER_TEST==='1';
+test('real Linux SSH server direct/pull transfer, verified resume and temporary authorization cleanup',{skip:enabled?false:'Set GOOESHELL_SERVER_TRANSFER_TEST=1 (Linux root/sudo or WSL root)',timeout:180000},async t=>{
+  const fixture=path.resolve('../test-support/ssh/direct_fixture.py');
+  const win=process.platform==='win32';
+  const linuxFile=win?execFileSync('wsl.exe',['-d','Ubuntu-24.04','--exec','wslpath','-a',fixture],{encoding:'utf8',windowsHide:true}).trim():fixture;
+  const child=spawn(win?'wsl.exe':'sudo',win?['-d','Ubuntu-24.04','-u','root','--exec','python3','-u',linuxFile]:['-n','python3','-u',linuxFile],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let errors='';child.stderr.on('data',data=>{errors+=data.toString();});
+  const lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();
+  const next=async()=>{const result=await lines.next();assert(!result.done,'Fixture exited: '+errors);return JSON.parse(result.value);};
+  const control=async(request:unknown)=>{child.stdin.write(JSON.stringify(request)+'\n');const result=await next();if(result.error)throw new Error(result.error);return result.value;};
+  t.after(async()=>{child.stdin.end();await new Promise<void>(resolve=>{if(child.exitCode!==null)return resolve();const timer=setTimeout(()=>child.kill(),8000);child.once('close',()=>{clearTimeout(timer);resolve();});});});
+  const descriptor=await next();const clients:Client[]=[];
+  const address=win?execFileSync('wsl.exe',['-d','Ubuntu-24.04','--exec','hostname','-I'],{encoding:'utf8',windowsHide:true}).trim().split(/\s+/)[0]:'127.0.0.1';
+  const endpoint=async(data:any)=>{const client=new Client();clients.push(client);let fingerprint='';await new Promise<void>((resolve,reject)=>{client.once('ready',resolve).once('error',reject).connect({...data,host:address,readyTimeout:15000,hostVerifier:(key:Buffer)=>{fingerprint='SHA256:'+createHash('sha256').update(key).digest('base64').replace(/=+$/,'');return true;}});});return{client,host:data.host,port:data.port,username:data.username,fingerprint};};
+  t.after(()=>{for(const client of clients)client.destroy();});
+  const source=await endpoint(descriptor.source),target=await endpoint(descriptor.target);
+  const signal=new AbortController().signal;
+  const logPath=await control({op:'write',path:'test.log',text:'中文😀\nnext line\n'});
+  const first=await readBridgeLog(source.client,{sessionId:'source',path:logPath,offset:0,maxBytes:1},'utf8',signal);
+  assert.equal(first.output,'中');assert.equal(first.nextOffset,3);
+  const rest=await readBridgeLog(source.client,{sessionId:'source',path:logPath,offset:first.nextOffset,cursor:first.cursor,maxBytes:16384},'utf8',signal);
+  assert.equal(rest.output,'文😀\nnext line\n');assert.equal(rest.reset,false);
+  await control({op:'write',path:'test.log',text:'replaced longer contents after copytruncate regrowth\n'});
+  assert.equal((await readBridgeLog(source.client,{sessionId:'source',path:logPath,offset:rest.nextOffset,cursor:rest.cursor,maxBytes:16384},'utf8',signal)).reset,true);
+  const binaryLog=await control({op:'write',path:'binary.log',text:'\0'.repeat(16384)});
+  assert.equal((await readBridgeLog(source.client,{sessionId:'source',path:binaryLog,offset:0,maxBytes:16384},'utf8',signal)).output.length,16384,'bounded log framing handles escaped control bytes');
+  const started=await startBridgeTask(source.client,{sessionId:'source',command:'sleep 60 & child=$!; echo "$child" > '+quote(descriptor.source.home+'/child.pid')+'; wait',sudo:false},'utf8',signal);
+  const sibling=await startBridgeTask(source.client,{sessionId:'source',command:'sleep 60',sudo:false},'utf8',signal);
+  const pid=await executeBridgeCommand(source.client,{sessionId:'source',command:'cat '+quote(descriptor.source.home+'/child.pid'),sudo:false,timeoutMs:5000},'utf8',signal);
+  assert.match(pid.stdout.trim(),/^\d+$/);
+  const stopped=await stopBridgeTask(source.client,{sessionId:'source',taskId:started.taskId},'utf8',signal);
+  assert.equal(stopped.state,'exited');assert.notEqual(stopped.exitCode,0);
+  assert.equal((await readBridgeTask(source.client,{sessionId:'source',taskId:sibling.taskId,tailLines:20},'utf8',signal)).state,'running','stopping one task must not kill another pane');
+  assert.equal((await stopBridgeTask(source.client,{sessionId:'source',taskId:sibling.taskId},'utf8',signal)).state,'exited');
+  const childState=await executeBridgeCommand(source.client,{sessionId:'source',command:'ps -o stat= -p '+pid.stdout.trim(),sudo:false,timeoutMs:5000},'utf8',signal);
+  assert(!childState.stdout.trim()||childState.stdout.trim().startsWith('Z'),'descendant must not remain running');
+  assert.equal((await readBridgeTask(source.client,{sessionId:'source',taskId:started.taskId,tailLines:20},'utf8',signal)).state,'exited');
+  const destinationDir=descriptor.target.home+'/destination';
+  const initial=await control({op:'inspect'});
+  const transfer=async(file:string,route:'auto'|'push'|'pull',options:{source?:TransferEndpoint;target?:TransferEndpoint;abort?:AbortController;emit?:(info:TransferInfo)=>void}={})=>{
+    const info:TransferInfo={id:randomUUID(),sessionId:'source',targetSessionId:'target',direction:'server',name:path.posix.basename(file),source:file,destination:destinationDir,total:0,done:0,state:'queued'};
+    await performServerTransfer(options.source||source,options.target||target,{sessionId:'source',targetSessionId:'target',source:file,destinationDir,route},info,(options.abort||new AbortController()).signal,()=>options.emit?.({...info}));return info;
+  };
+  const file=await control({op:'write',path:"a quoted' 中文.txt",size:128*1024});
+  assert.equal((await transfer(file,'push')).route,'push');
+  const pulled=await control({op:'write',path:"reverse 中文's.txt",size:256*1024});
+  assert.equal((await transfer(pulled,'pull')).route,'pull');
+  const fallback=await control({op:'write',path:'fallback.txt',size:1024});
+  assert.equal((await transfer(fallback,'auto',{target:{...target,port:1}})).route,'pull');
+  const authFallback=await control({op:'write',path:'fallback-auth.txt',size:1024});
+  await control({op:'chmod',side:'target',path:'.ssh/authorized_keys',mode:0o400});
+  try{assert.equal((await transfer(authFallback,'auto')).route,'pull','authentication failure on push falls back to pull');}
+  finally{await control({op:'chmod',side:'target',path:'.ssh/authorized_keys',mode:0o600});}
+  const unreachable=await control({op:'write',path:'both-unreachable.txt',size:1024});
+  await assert.rejects(transfer(unreachable,'auto',{source:{...source,port:1},target:{...target,port:1}}),/未使用本机中转/);
+  await transfer(unreachable,'auto');
+  const directory=await control({op:'write',path:'tree/sub/中文.txt',size:200000});
+  assert.equal((await transfer(path.posix.dirname(path.posix.dirname(directory)),'push')).total,200000);
+  const big=await control({op:'write',path:'large.bin',size:24*1024*1024});
+  let controlBytes=0;
+  const meter=(endpoint:TransferEndpoint):TransferEndpoint=>({...endpoint,client:{exec(command:string,callback:Function){return endpoint.client.exec(command,(error,channel)=>{if(channel){channel.on('data',(data:Buffer)=>{controlBytes+=data.length;});channel.stderr.on('data',(data:Buffer)=>{controlBytes+=data.length;});}callback(error,channel);});}} as unknown as Client});
+  const abort=new AbortController();let progressed=false,speed=false;
+  await assert.rejects(transfer(big,'push',{source:meter(source),target:meter(target),abort,emit:info=>{if(info.bytesPerSecond!>0)speed=true;if(info.state==='transferring'&&info.done>1024*1024){progressed=true;abort.abort();}}}));
+  assert(progressed,'cancel after actual partial file transfer');assert(speed,'real transfer speed observed');
+  const partials=await control({op:'list'});const partial=partials.find((p:string)=>p.endsWith('/.gooeshell-partial/payload'));assert(partial,'remote partial retained: '+JSON.stringify(partials));
+  await control({op:'corrupt',path:partial});
+  const resumed=await transfer(big,'push',{source:meter(await endpoint(descriptor.source)),target:meter(await endpoint(descriptor.target))});assert.equal(resumed.done,24*1024*1024,'new SSH connections repair corrupted partial and fully verify SHA-256');
+  assert(controlBytes<512*1024,`24 MiB data must not traverse local control channels; got ${controlBytes} control bytes`);
+  const corruptFile=await control({op:'write',path:'verify-corruption.txt',size:128*1024});
+  let injected=false;
+  const tamperingTarget:TransferEndpoint={...target,client:{exec(command:string,callback:Function){return target.client.exec(command,(error,channel)=>{
+    if(channel){const write=channel.write.bind(channel);(channel as any).write=(data:Buffer|string,...args:any[])=>{
+      let operation='';try{operation=JSON.parse(String(data)).op;}catch{}
+      if(operation==='hash'&&!injected){injected=true;void (async()=>{const paths=await control({op:'list'});const staged=paths.find((p:string)=>p.includes('/.gooeshell-transfer-')&&p.endsWith('/payload'));assert(staged);await control({op:'corrupt',path:staged});write(data,...args);})().catch((failure:Error)=>channel.destroy(failure));return true;}
+      return write(data,...args);
+    };}callback(error,channel);
+  });}} as unknown as Client};
+  await assert.rejects(transfer(corruptFile,'push',{target:tamperingTarget}),/SHA-256/);assert(injected);
+  assert(!(await control({op:'list'})).includes(destinationDir+'/verify-corruption.txt'),'mismatched payload never commits');
+  await transfer(corruptFile,'push');
+  await assert.rejects(transfer(file,'push'),/目标已存在/);
+  const base=path.resolve('test-output');await fs.mkdir(base,{recursive:true});const catalog=await fs.mkdtemp(path.join(base,'server-queue-'));
+  const keyPath=path.join(catalog,'fixture-key');await fs.writeFile(keyPath,descriptor.source.privateKey,{mode:0o600});
+  const service=new SshService(event=>{if(event.type==='hostKey')service.confirmHostKey(event.requestId,'once');},path.join(catalog,'known-hosts.json'));
+  t.after(async()=>{await service.shutdown();await fs.unlink(keyPath);});
+  const connect=async(data:any,id:string)=>service.connect({profile:{id,name:id,host:address,port:data.port,username:data.username,auth:'key',privateKeyPath:keyPath,rememberHost:false,encoding:'utf8'},bridgeOnly:true});
+  const a=await connect(descriptor.source,'a'),b=await connect(descriptor.target,'b');
+  const queueFile=await control({op:'write',path:'queued.txt',size:128*1024});
+  const request={sessionId:a.id,targetSessionId:b.id,source:queueFile,destinationDir};
+  const firstId=service.serverTransfer(request),cancelId=service.serverTransfer(request);service.cancelTransfer(cancelId);
+  assert.equal(service.readTransfer(cancelId).state,'cancelled');
+  const deadline=Date.now()+15000;
+  while(!['completed','failed'].includes(service.readTransfer(firstId).state)){assert(Date.now()<deadline,'queued service transfer timed out');await new Promise(resolve=>setTimeout(resolve,50));}
+  assert.equal(service.readTransfer(firstId).state,'completed',JSON.stringify(service.readTransfer(firstId)));
+  assert.equal(service.readTransfer(firstId).done,128*1024);
+  const final=await control({op:'inspect'});assert.deepEqual(final.keys,initial.keys,'only task authorization removed, existing keys preserved');assert.deepEqual(final.metadata,initial.metadata,'authorization cleanup preserves file mode and extended attributes');assert.deepEqual(final.stages,[]);assert.deepEqual(final.temps,[],'temporary private keys removed');
+  t.diagnostic('push, reverse pull, automatic fallback, Unicode/quote paths, directory tree, mid-file cancel, corrupted resume, no-overwrite and credential cleanup passed');
+});

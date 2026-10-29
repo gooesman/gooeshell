@@ -515,6 +515,24 @@ async function run() {
 
   phase = 'per terminal directory tracking';
   await host('A'); await pathIs('/home/a');
+  phase='server transfer target selection and shared progress queue';
+  await context(row('/home/a/created-dir'));await click('传输到其他服务器','.context-menu');
+  await until(()=>evaluate('document.querySelector("#server-transfer-directory")?.value==="/home/b"'),'target root');
+  await click('docs/','.server-transfer-directories');
+  await until(()=>evaluate('document.querySelector("#server-transfer-directory")?.value==="/home/b/docs"'),'selected target directory');
+  await evaluate('(()=>{const select=document.querySelector("#server-transfer-route");select.value="pull";select.dispatchEvent(new Event("change",{bubbles:true}));})()');
+  await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');await delay(100);
+  await fs.writeFile(report+'.server-transfer.png',(await window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());
+  await click('开始传输','[aria-label="传输到其他服务器"]');await noDialog();
+  assert.deepEqual((await mutationCalls('serverTransfer')).at(-1).request,{sessionId:sessionA,targetSessionId:sessionB,source:'/home/a/created-dir',destinationDir:'/home/b/docs',route:'pull'});
+  const serverId=await evaluate(`${fixture}.transfers.at(-1).id`);
+  await evaluate(`(()=>{const item=${fixture}.transfers.at(-1);Object.assign(item,{route:'pull',state:'transferring',done:1024,total:11264,bytesPerSecond:1024});${fixture}.emit({type:'transfer',transfer:{...item}});})()`);
+  await until(()=>evaluate(`document.querySelector(${JSON.stringify(transferRow(serverId))})?.textContent.includes('反向拉取')`),'server transfer route');
+  assert.match(await evaluate(`document.querySelector(${JSON.stringify(transferRow(serverId))}).textContent`),/1\.0 KB\/s.*10 秒/);
+  await context(transferRow(serverId));await click('强制停止','.context-menu');
+  await until(()=>evaluate(`document.querySelector(${JSON.stringify(transferRow(serverId)+' .transfer-status')}).textContent==='已取消'`),'server transfer cancelled');
+  await click('收起传输队列');result.checks.serverTransferUsesExplicitTargetAndQueue=true;
+  phase = 'per terminal directory tracking';
   await evaluate(`${fixture}.cwd[${JSON.stringify(sessionA)}] = '/home/a/locked'`); await click('跟随终端目录'); await pathIs('/home/a/locked');
   assert.equal(await evaluate(`document.querySelector('[aria-label="跟随终端目录"]').getAttribute('aria-pressed')`), 'true');
   await host('B'); await pathIs('/home/b');

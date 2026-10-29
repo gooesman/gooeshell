@@ -1,7 +1,7 @@
 {
   "name": "gooeshell",
   "desktopName": "gooeshell.desktop",
-  "version": "1.3.5",
+  "version": "1.4.0",
   "private": true,
   "description": "Local terminal, SSH and SFTP workspace for Windows, macOS and Linux",
   "homepage": "https://github.com/gooesman/gooeshell",
@@ -14,7 +14,8 @@
   "main": "dist-main/main/main.js",
   "scripts": {
     "postinstall": "node node_modules/electron/install.js && node scripts/prepare-native-pty.mjs",
-    "build:main": "node scripts/prepare-native-pty.mjs && tsc -p tsconfig.main.json",
+    "build:main": "node scripts/prepare-native-pty.mjs && tsc -p tsconfig.main.json && node scripts/copy-main-assets.mjs",
+    "cli": "tsx src/main/cli.ts",
     "build": "npm run build:main && tsc -p tsconfig.json && vite build",
     "dev": "node scripts/dev.mjs",
     "start": "electron .",
@@ -111,6 +112,14 @@
       "maintainer": "gooesman"
     },
     "extraResources": [
+      {
+        "from": "assets/gooeshell-cli.cmd",
+        "to": "cli/gooeshell-cli.cmd"
+      },
+      {
+        "from": "assets/gooeshell-cli",
+        "to": "cli/gooeshell-cli"
+      },
       {
         "from": "../docs/MCP.md",
         "to": "docs/MCP.md"

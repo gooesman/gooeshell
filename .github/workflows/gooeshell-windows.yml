@@ -57,7 +57,12 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r ../test-support/ssh/requirements.txt
       - name: Install Linux display and Chinese font dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 fonts-noto-cjk tmux
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 fonts-noto-cjk tmux openssh-server rsync
+      - name: Real server-to-server SSH transfer and cleanup regression
+        if: runner.os == 'Linux'
+        env:
+          GOOESHELL_SERVER_TRANSFER_TEST: '1'
+        run: node node_modules/tsx/dist/cli.mjs --test tests/server-transfer-integration.test.ts
       - name: SSH, SFTP, permissions and application tests
         run: node scripts/ci-tests.mjs
       - name: Build native desktop packages

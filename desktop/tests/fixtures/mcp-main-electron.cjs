@@ -147,8 +147,10 @@ async function run(){
     const parallel=await Promise.all([0,7].map(code=>tool('start_task',{sessionId:reused.id,command:`printf PARALLEL_${code}; exit ${code}`})));
     assert.notEqual(parallel[0].paneId,parallel[1].paneId);assert.deepEqual((await Promise.all(parallel.map(finished))).map(task=>task.exitCode),[0,7]);
     const running=await tool('start_task',{sessionId:reused.id,command:'sleep 30'});assert.equal(running.state,'running');assert.equal(running.exitCode,null);
-    await tool('run_command',{sessionId:reused.id,command:`tmux show-options -p -v -t '${running.paneId}' @gooeshell_mcp_pid | xargs kill -TERM`});
-    const signaled=await finished(running);assert.equal(signaled.exitCode,143,'terminated task preserves the shell status instead of inventing success');
+    const signaled=await tool('stop_task',{sessionId:reused.id,taskId:running.taskId});assert.equal(signaled.state,'exited');assert.equal(signaled.exitCode,143,'terminated task preserves the shell status instead of inventing success');
+    await tool('run_command',{sessionId:reused.id,command:`printf 'first log\\n中文 log\\n' > '${linuxRoot}/follow.log'`});
+    const log=await tool('read_log',{sessionId:reused.id,path:linuxRoot+'/follow.log',maxBytes:6});assert.equal(log.output,'first ');
+    const logRest=await tool('read_log',{sessionId:reused.id,path:linuxRoot+'/follow.log',offset:log.nextOffset,cursor:log.cursor});assert.match(logRest.output,/中文 log/);assert.equal(logRest.reset,false);
     await tool('run_command',{sessionId:reused.id,command:`rm -f '${linuxRoot}/cached'`});
     const privileged=await finished(await tool('start_task',{sessionId:reused.id,command:'printf PRIVATE_PIPE_SUDO_OK',sudo:true}));assert.equal(privileged.exitCode,0);assert.match(privileged.output,/PRIVATE_PIPE_SUDO_OK/);
     await tool('run_command',{sessionId:reused.id,command:`touch '${linuxRoot}/cached'`});

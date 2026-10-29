@@ -108,7 +108,7 @@ function confirmEditorClose():boolean{
  if(editorState.busy){dialog.showMessageBoxSync(win,{type:'info',title:'文件操作尚未完成',message:'请等待文件操作完成后再关闭。',buttons:['继续等待']});return false;}
  return dialog.showMessageBoxSync(win,{type:'question',title:'未保存的修改',message:'编辑器中有未保存的修改。',detail:'关闭后将丢弃这些修改。可以返回编辑器保存，或另存到本地。',buttons:['返回编辑器','放弃修改并关闭'],defaultId:0,cancelId:0,noLink:true})===1;
 }
-function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();void Promise.all([localStop,bridgeStop,externalEditor?.stop()]).finally(()=>{if(worker)worker.postMessage({method:'shutdown',args:[]});setTimeout(()=>{void worker?.terminate();app.exit(0);},300);});}
+function shutdown(){if(shuttingDown)return;shuttingDown=true;const localStop=localPty?.shutdown()??Promise.resolve();const bridgeStop=mcpBridge?.stop()??Promise.resolve();credentials?.clearMemory();identities?.clearMemory();localKeys?.clear();sessionLoginPasswords.clear();verifiedKeys.clear();sessionProfiles.clear();const deadline=setTimeout(()=>{void worker?.terminate();app.exit(0);},8000);void Promise.allSettled([localStop,bridgeStop,externalEditor?.stop()]).then(async()=>{if(workerAvailable)await remote('shutdown').catch(()=>{});await worker?.terminate();clearTimeout(deadline);app.exit(0);});}
 const pending=new Map<string,{resolve:(v:any)=>void,reject:(e:Error)=>void}>();
 function remote(method:string,...args:unknown[]):Promise<any>{return new Promise((resolve,reject)=>{if(!workerAvailable){reject(new Error('连接服务暂不可用，请重新启动应用。'));return;}const id=randomUUID();pending.set(id,{resolve,reject});try{worker.postMessage({id,method,args});}catch(error){pending.delete(id);reject(error);}});}
 function localPath(value:unknown):string{if(typeof value!=='string'||!value||value.includes('\0'))throw new Error('文件路径无效');return path.resolve(value);}
@@ -120,7 +120,7 @@ async function fonts():Promise<string[]>{
  if(process.platform!=='win32')return availableFontFamilies((await systemFontCatalog()).map(font=>font.family));
  return new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-NonInteractive','-Command',"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Add-Type -AssemblyName System.Drawing; (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name | ConvertTo-Json -Compress"],{windowsHide:true,timeout:10000,maxBuffer:1024*1024},(err,out)=>{try{const data=JSON.parse(out);resolve(availableFontFamilies(Array.isArray(data)?data:typeof data==='string'?[data]:[]));}catch{resolve(known);}}));
 }
-const remoteMethods=new Set(['confirmHostKey','remoteList','terminalCwd','transfer','cancelTransfer','chmod','runFile']);
+const remoteMethods=new Set(['confirmHostKey','remoteList','terminalCwd','transfer','serverTransfer','cancelTransfer','chmod','runFile']);
 if(primaryInstance)app.whenReady().then(async()=>{
  app.setAboutPanelOptions({applicationName:'GooeShell'});
  configureApplicationMenu();
@@ -185,8 +185,8 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(remoteMethods.has(method)){const result=await remote(method,...args);if(method==='confirmHostKey')hostQuestions.delete(args[0] as string);return result;}
   const value:any=args[0];
   switch(method){
-   case 'mcpStatus':return mcpBridge!.refreshStatus();
-   case 'setMcpEnabled':return mcpBridge!.setEnabled(value);
+   case 'mcpStatus':return{...await mcpBridge!.refreshStatus(),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};
+   case 'setMcpEnabled':return{...await mcpBridge!.setEnabled(value),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};
    case 'listLocalShells':return localPty.listLocalShells();
    case 'createLocalSession':return localPty.createLocalSession(value);
    case 'disconnect':if(localPty.has(value)){localPty.disconnect(value);return;}return remote('disconnect',value);
@@ -463,6 +463,10 @@ if(primaryInstance)app.whenReady().then(async()=>{
     bridgeSessions.add(connected.id);return{...bridgeDescription(connected.id,connected.profile),reused:false};
    }finally{signal.removeEventListener('abort',cancel);}
   }
+  if(name==='read_transfer')return remote('readTransfer',args.transferId);
+  if(name==='stop_transfer'){await remote('cancelTransfer',args.transferId);return{transferId:args.transferId,cancelRequested:true};}
+  if(name==='transfer_file')return{transferId:await remote('transfer',args)};
+  if(name==='transfer_between_servers')return{transferId:await remote('serverTransfer',args)};
   const profile=sessionProfiles.get(args.sessionId);if(!profile)throw new Error('SSH 会话已断开，请先调用 connect');
   let password:string|undefined;
   if(args.sudo){const saved=await credentials.get(profile);password=saved.sudoUsesLogin?(profile.loginIdentityId?sessionLoginPasswords.get(args.sessionId):saved.password):saved.sudoPassword;}
@@ -470,7 +474,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(sessionProfiles.get(args.sessionId)!==profile)throw new Error('SSH 会话已断开，请重新连接');
   const requestId=randomUUID(),cancel=()=>{void remote('cancelBridgeExec',requestId).catch(()=>{});};
   signal.addEventListener('abort',cancel,{once:true});
-  const method=name==='start_task'?'bridgeStartTask':name==='read_task'?'bridgeReadTask':'bridgeExec';
+  const method=({start_task:'bridgeStartTask',read_task:'bridgeReadTask',stop_task:'bridgeStopTask',read_log:'bridgeReadLog'} as Record<string,string>)[name]||'bridgeExec';
   try{return await remote(method,{...args,requestId,password});}finally{signal.removeEventListener('abort',cancel);}
  },async()=>{if(shuttingDown){bridgeSessions.clear();return;}await Promise.all([...bridgeSessions].map(id=>remote('disconnect',id).catch(()=>{})));bridgeSessions.clear();});
  ipcMain.on('gooeshell:terminal',(event,method,args)=>{

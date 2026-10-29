@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
 import type {Client} from 'ssh2';
 import type {BridgeTaskStart,BridgeTaskRead,BridgeTaskResult} from '../shared/mcp';
 import {bridgeScript,executeBridgeChannel,quote} from './bridge-command';
@@ -12,13 +13,15 @@ export function taskLaunch(command:BridgeTaskStart,taskId:string,password?:strin
   // FD 3 is an owner-only FIFO, never a terminal. Close it before executing the
   // user command, including when sudo has cached credentials or NOPASSWD.
   const execute=command.sudo?'exec sudo '+(password===undefined?'-n':"-S -p ''")+' -- /bin/sh -c '+quote(script)+' <&3 3<&-':'exec /bin/sh -c '+quote(script)+' 3<&-';
-  const runner='exec 3< "$1/input"; rm -f -- "$1/input"; rmdir -- "$1"; ('+execute+') & child=$!; exec 3<&-; '+
+  const grouped='python3 -c '+quote("import os,sys;os.setsid();os.execl('/bin/sh','sh','-c',sys.argv[1])")+' '+quote(execute);
+  const runner='exec 3< "$1/input"; rm -f -- "$1/input"; rmdir -- "$1"; '+grouped+' & child=$!; exec 3<&-; '+
     'tmux set-option -p -t "$TMUX_PANE" @gooeshell_mcp_pid "$child"; '+
-    'interrupted=0; trap \'kill -TERM "$child" 2>/dev/null || :; interrupted=1\' HUP INT TERM; '+
-    'wait "$child"; status=$?; if [ "$interrupted" = 1 ]; then wait "$child"; status=$?; fi; '+
+    'interrupted=0; killer=; trap \'interrupted=1; kill -TERM -"$child" 2>/dev/null || :; (sleep 3; kill -KILL -"$child" 2>/dev/null || :) & killer=$!\' HUP INT TERM; '+
+    'wait "$child"; status=$?; if [ "$interrupted" = 1 ]; then wait "$child"; status=$?; kill -KILL -"$child" 2>/dev/null || :; [ -z "$killer" ] || kill "$killer" 2>/dev/null || :; fi; '+
     'tmux set-option -p -t "$TMUX_PANE" @gooeshell_mcp_exit_code "$status"; exit "$status"';
   return `set -eu
 command -v tmux >/dev/null 2>&1 || { printf '后台任务需要服务器安装 tmux；普通命令可使用 run_command\\n' >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { printf '托管后台任务需要 Python 3\\n' >&2; exit 1; }
 umask 077
 directory=$(mktemp -d /tmp/gooeshell-task.XXXXXXXXXX)
 pane=''
@@ -40,11 +43,32 @@ tmux set-option -w -t "$window" remain-on-exit on
 tmux set-option -w -t "$window" automatic-rename off
 tmux set-option -p -t "$pane" @gooeshell_mcp_task ${taskId}
 tmux set-option -p -t "$pane" @gooeshell_mcp_exit_code -
+tmux set-option -p -t "$pane" @gooeshell_mcp_stop_supported 1
 # NOPASSWD sudo may close the pipe without reading; SIGPIPE is harmless here.
 cat > "$directory/input" || :
 delivered=1
 printf 'GOOESHELL_TASK %s %s\\n' "$window" "$pane"
 `;
+}
+export async function stopBridgeTask(client:Client,request:Pick<BridgeTaskRead,'sessionId'|'taskId'>,encoding:string,signal:AbortSignal):Promise<BridgeTaskResult>{
+  if(!taskIdPattern.test(request.taskId))throw new Error('后台任务参数无效');
+  const command=`set -eu
+pane=$(tmux list-panes -a -F '#{@gooeshell_mcp_task} #{pane_id}' | awk '$1 == "${request.taskId}" {print $2; exit}')
+[ -n "$pane" ] || { printf '任务窗格不存在\\n' >&2; exit 1; }
+[ "$(tmux show-option -p -v -t "$pane" @gooeshell_mcp_stop_supported)" = 1 ] || { printf '旧任务不支持托管停止，请在终端内停止\\n' >&2; exit 1; }
+if [ "$(tmux display-message -p -t "$pane" '#{pane_dead}')" != 1 ]; then
+  pid=$(tmux display-message -p -t "$pane" '#{pane_pid}')
+  kill -TERM "$pid"
+fi
+`;
+  const result=await executeBridgeChannel(client,command,encoding,signal,15000);
+  if(result.exitCode!==0)throw new Error(result.stderr.trim()||'停止任务失败');
+  for(let attempt=0;attempt<20;attempt++){
+    const state=await readBridgeTask(client,{...request,tailLines:200},encoding,signal);
+    if(state.state==='exited')return state;
+    await delay(250,undefined,{signal});
+  }
+  throw new Error('已请求停止，但尚未确认进程退出，请继续 read_task 检查');
 }
 export async function startBridgeTask(client:Client,request:BridgeTaskStart,encoding:string,signal:AbortSignal,password?:string):Promise<BridgeTaskResult>{
   const taskId=randomUUID();

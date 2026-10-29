@@ -67,7 +67,7 @@ const preview:DesktopApi={
  connect:async r=>{const profile=resolvedPreview(r.profile);previewHistory=[{profile,connectedAt:Date.now()},...previewHistory.filter(entry=>entry.profile.host.toLowerCase()!==profile.host.toLowerCase()||entry.profile.port!==profile.port||entry.profile.username!==profile.username)].slice(0,30);const id='preview-'+Date.now();setTimeout(()=>emit({type:'terminal',sessionId:id,data:btoa('\r\n  GooeShell graphical preview\r\n  No server is connected in this browser preview.\r\n\r\n'),bytes:0}),400);return{id,profile};},
  disconnect:async id=>emit({type:'sessionClosed',sessionId:id,message:'已关闭演示会话'}),confirmHostKey:async()=>{},
  localList:async p=>previewListing(p||'C:\\Users\\developer',true),remoteList:async r=>previewListing(r.path==='.'?'/home/developer':r.path,false),
- chooseFiles:async()=>[],showInFolder:unavailable,transfer:unavailable,cancelTransfer:async()=>{},
+ chooseFiles:async()=>[],showInFolder:unavailable,transfer:unavailable,serverTransfer:unavailable,cancelTransfer:async()=>{},
  readFile:async()=>({text:'# 界面预览\n这里显示文件内容。桌面程序支持真实文件读取和保存。\n',truncated:false}),writeFile:unavailable,chmod:unavailable,runFile:unavailable,mkdir:unavailable,rename:unavailable,createFile:unavailable,removeFile:unavailable,terminalCwd:unavailable,
  readTextFile:async r=>{
   const key=r.side+':'+r.path;let file=previewTexts.get(key);

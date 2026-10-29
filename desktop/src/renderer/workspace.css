@@ -69,3 +69,9 @@
 .command-load-error { padding:12px; font-size:12px; color:var(--text-muted); overflow-wrap:anywhere; }
 .command-load-error button { margin-left:8px; }
 @media (max-width:1100px) { .commands-dock { flex-basis:280px; } }
+.server-transfer-dialog { display:flex; flex-direction:column; gap:16px; }
+.server-transfer-path { display:flex; gap:8px; }
+.server-transfer-path input { min-width:0; flex:1; }
+.server-transfer-directories { height:140px; overflow:auto; border:1px solid var(--border); border-radius:10px; padding:6px; }
+.server-transfer-directories button { display:block; width:100%; text-align:left; padding:7px 10px; border:0; border-radius:6px; color:var(--text); background:transparent; }
+.server-transfer-directories button:hover { background:var(--surface-selected); }

@@ -22,7 +22,7 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   t.after(async()=>{await client.close();await bridge.stop();});
   await bridge.load();assert.equal(bridge.status().enabled,false);
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command','start_task','read_task']);
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command','start_task','read_task','stop_task','read_log','transfer_file','transfer_between_servers','read_transfer','stop_transfer']);
   assert.equal((await client.callTool({name:'list_connections',arguments:{}})).isError,true,'disabled bridge cannot be used');
   await bridge.setEnabled(true);
   const descriptor=JSON.parse(await fs.readFile(bridge.file,'utf8')),url=`http://127.0.0.1:${descriptor.port}/call`;

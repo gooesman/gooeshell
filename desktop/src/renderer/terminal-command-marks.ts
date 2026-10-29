@@ -92,15 +92,23 @@ export class TerminalCommandMarks {
     const nodes:HTMLButtonElement[]=[],nextButtons=new Map<string,HTMLButtonElement>();
     for(const [pixel,{record,count}] of buckets){
       const key=`${this.position}:${record.id}`;
-      const button=this.buttons.get(key)||document.createElement('button');
-      button.type='button';button.className='command-status-mark';button.dataset.commandMark=String(record.id);
-      button.dataset.commandLine=String(record.marker.line);button.dataset.command=(record.command||'').slice(0,512);button.dataset.status=record.status;
-      button.setAttribute('aria-current',String(record.id===selected?.id));
-      button.style.top=`${rect.top-root.top+pixel}px`;
-      button.title=description(record)+(count>1?`\n附近还有 ${count-1} 条命令，可用上下命令快捷键逐条定位`:'');
-      button.setAttribute('aria-label',`${labels[record.status]}：${record.command?.slice(0,120)||'命令'}，定位命令开始`);
-      button.onclick=event=>{event.preventDefault();event.stopPropagation();this.tracker.jump(record);};
-      button.oncontextmenu=event=>{event.preventDefault();event.stopPropagation();this.openMenu(record,event.clientX,event.clientY);};
+      let button=this.buttons.get(key);
+      if(!button){
+        button=document.createElement('button');button.type='button';button.className='command-status-mark';button.dataset.commandMark=String(record.id);
+        button.onclick=event=>{event.preventDefault();event.stopPropagation();this.tracker.jump(record);};
+        button.oncontextmenu=event=>{event.preventDefault();event.stopPropagation();this.openMenu(record,event.clientX,event.clientY);};
+      }
+      // Output redraws frequently; unchanged accessibility/text attributes must
+      // not invalidate every marker's DOM and layout on each terminal frame.
+      const line=String(record.marker.line),command=(record.command||'').slice(0,512),current=String(record.id===selected?.id);
+      if(button.dataset.commandLine!==line)button.dataset.commandLine=line;
+      if(button.dataset.command!==command)button.dataset.command=command;
+      if(button.dataset.status!==record.status)button.dataset.status=record.status;
+      if(button.getAttribute('aria-current')!==current)button.setAttribute('aria-current',current);
+      const top=`${rect.top-root.top+pixel}px`,title=description(record)+(count>1?`\n附近还有 ${count-1} 条命令，可用上下命令快捷键逐条定位`:''),label=`${labels[record.status]}：${record.command?.slice(0,120)||'命令'}，定位命令开始`;
+      if(button.style.top!==top)button.style.top=top;
+      if(button.title!==title)button.title=title;
+      if(button.getAttribute('aria-label')!==label)button.setAttribute('aria-label',label);
       nodes.push(button);nextButtons.set(key,button);
     }
     const keys=[...nextButtons.keys()].join(',');

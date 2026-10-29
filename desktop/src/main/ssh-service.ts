@@ -6,7 +6,7 @@ import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper, type 
 import iconv from 'iconv-lite';
 import type {
   AppEvent, CommandResult, ConnectRequest, FileListing, HostKeyDecision, HostProfile, JumpHostProfile,
-  EditableTextFile, EditorEncoding, RemoteRequest, SshSessionInfo, TextFile, TextWriteResult, TransferInfo, TransferRequest,
+  EditableTextFile, EditorEncoding, RemoteRequest, SshSessionInfo, TextFile, TextWriteResult, TransferInfo, TransferRequest, ServerTransferRequest,
 } from '../shared/types';
 import { runRemoteOperation } from './remote-helper';
 import { isSftpClosed, performSftpTransfer, remoteClose, remoteStat, sftpCall, trackSftp } from './sftp-transfer';
@@ -20,8 +20,10 @@ import { installPublicKey } from './ssh-key-install';
 import { createTransferHash } from './transfer-hash-probe';
 import { SHELL_INTEGRATION_COMMAND } from './shell-integration';
 import {executeBridgeCommand} from './bridge-command';
-import {startBridgeTask,readBridgeTask} from './bridge-task';
-import type {BridgeCommand,BridgeTaskStart,BridgeTaskRead} from '../shared/mcp';
+import {startBridgeTask,readBridgeTask,stopBridgeTask} from './bridge-task';
+import {readBridgeLog} from './bridge-log';
+import {performServerTransfer} from './server-transfer';
+import type {BridgeCommand,BridgeTaskStart,BridgeTaskRead,BridgeLogRead} from '../shared/mcp';
 
 const HIGH_WATER = 512 * 1024;
 const LOW_WATER = 128 * 1024;
@@ -69,7 +71,7 @@ interface JumpTransport {
   established: boolean;
   failure?: Error;
 }
-interface TransferJob { info: TransferInfo; abort: AbortController; client?: Client }
+interface TransferJob { info: TransferInfo; abort: AbortController; client?: Client; completion?:Promise<unknown> }
 interface HostQuestion { resolve: (decision: HostKeyDecision) => void; timer: NodeJS.Timeout; ownerId: string }
 interface ConnectAttempt { cancelled:boolean;session?:Session; }
 
@@ -847,6 +849,34 @@ export class SshService {
     } catch (error) { throw remoteError(error); }
   }
 
+  private transferRecords=new Map<string,TransferInfo>();
+  private serverTransferQueue:Promise<unknown>=Promise.resolve();
+  readTransfer(id:string):TransferInfo{
+    const info=this.transferRecords.get(id);if(!info)throw new Error('传输任务不存在或已过期');
+    return structuredClone(info);
+  }
+  private transferEvent(info:TransferInfo){
+    this.transferRecords.set(info.id,structuredClone(info));
+    if(this.transferRecords.size>200){for(const [id,value] of this.transferRecords){if(['completed','cancelled','failed'].includes(value.state)){this.transferRecords.delete(id);break;}}}
+    this.emit({type:'transfer',transfer:{...info}});
+  }
+  serverTransfer(request:ServerTransferRequest):string{
+    const source=this.session(request.sessionId),target=this.session(request.targetSessionId);
+    if(source.id===target.id)throw new Error('请选择另一台目标服务器');
+    for(const value of [request.source,request.destinationDir])if(!value?.startsWith('/')||value.length>2048||/[\0\r\n]/.test(value))throw new Error('服务器路径必须是无换行的绝对路径');
+    if(request.route!==undefined&&!['auto','push','pull'].includes(request.route))throw new Error('传输路线无效');
+    if(!source.terminalClient||!target.terminalClient||!source.fingerprint||!target.fingerprint)throw new Error('请先完成两台服务器的连接与指纹确认');
+    if([...this.jobs.values()].filter(job=>job.info.direction==='server').length>=100)throw new Error('服务器传输队列已满，请等待现有任务完成');
+    const endpoint=(session:Session)=>({client:session.terminalClient!,host:session.profile.host.replace(/^\[|\]$/g,''),port:session.profile.port,username:session.profile.username,fingerprint:session.fingerprint!});
+    const info:TransferInfo={id:randomUUID(),sessionId:source.id,targetSessionId:target.id,direction:'server',name:path.posix.basename(request.source),source:request.source,destination:request.destinationDir,total:0,done:0,state:'queued'};
+    const job:TransferJob={info,abort:new AbortController()};this.jobs.set(info.id,job);
+    let last=0;const emit=(force=false)=>{const now=performance.now();if(force||now-last>100){last=now;this.transferEvent(info);}};
+    emit(true);
+    const run=this.serverTransferQueue.catch(()=>{}).then(async()=>{job.abort.signal.throwIfAborted();info.state='checking';emit(true);await performServerTransfer(endpoint(source),endpoint(target),request,info,job.abort.signal,()=>emit());});
+    this.serverTransferQueue=run.then(()=>{info.state='completed';},error=>{info.state=job.abort.signal.aborted?'cancelled':'failed';info.error=(error instanceof Error?error.message:String(error))+(job.abort.signal.aborted?'；请检查目标目录，未提交时可重新发起续传':'');}).finally(()=>{info.bytesPerSecond=undefined;this.jobs.delete(info.id);emit(true);});
+    job.completion=this.serverTransferQueue;
+    return info.id;
+  }
   transfer(request: TransferRequest): string {
     const session = this.session(request.sessionId);
     if (request.elevated) throw new Error('本版暂不支持 sudo 大文件传输。请先传入自己有权限的目录；没有执行任何上传或下载。');
@@ -860,7 +890,7 @@ export class SshService {
     let last = 0;
     const emit = (force = false) => {
       const now = performance.now();
-      if (force || now - last > 100) { last = now; this.emit({ type: 'transfer', transfer: { ...info } }); }
+      if (force || now - last > 100) { last = now; this.transferEvent(info); }
     };
     emit(true);
     void (async () => {
@@ -894,6 +924,7 @@ export class SshService {
     const job = this.jobs.get(id);
     if (!job || job.abort.signal.aborted) return;
     job.abort.abort();
+    if(job.info.direction==='server'&&job.info.state==='queued'){job.info.state='cancelled';this.jobs.delete(id);this.transferEvent(job.info);}
     job.info.bytesPerSecond = undefined;
     this.emit({ type: 'transfer', transfer: { ...job.info } });
     if (job.info.mode !== 'archive') job.client?.destroy();
@@ -907,6 +938,12 @@ export class SshService {
   }
   bridgeReadTask(request:BridgeTaskRead&{requestId:string}){
     return this.bridgeOperation(request,(client,encoding,signal)=>readBridgeTask(client,request,encoding,signal));
+  }
+  bridgeStopTask(request:BridgeTaskRead&{requestId:string}){
+    return this.bridgeOperation(request,(client,encoding,signal)=>stopBridgeTask(client,request,encoding,signal));
+  }
+  bridgeReadLog(request:BridgeLogRead&{requestId:string}){
+    return this.bridgeOperation(request,(client,encoding,signal)=>readBridgeLog(client,request,encoding,signal));
   }
   private async bridgeOperation<T>(request:{sessionId:string;requestId:string},run:(client:Client,encoding:string,signal:AbortSignal)=>Promise<T>):Promise<T>{
     const session=this.session(request.sessionId);
@@ -1003,7 +1040,7 @@ export class SshService {
     session.closed = true;
     session.abort.abort();
     this.cancelQuestions(session.id);
-    for (const [id, job] of this.jobs) if (job.info.sessionId === session.id) this.cancelTransfer(id);
+    for (const [id, job] of this.jobs) if (job.info.sessionId === session.id || job.info.targetSessionId === session.id) this.cancelTransfer(id);
     for (const client of session.clients) client.destroy();
     session.clients.clear();
     for (const stream of session.forwards) stream.destroy();
@@ -1016,16 +1053,26 @@ export class SshService {
     if (!session.ephemeral) this.emit({ type: 'sessionClosed', sessionId: session.id, message: reason });
   }
 
-  disconnect(id: string): void {
+  private stopServerTransfers(sessionId?:string){
+    const pending:Promise<unknown>[]=[];
+    for(const [id,job] of this.jobs){
+      if(job.info.direction!=='server'||sessionId&&job.info.sessionId!==sessionId&&job.info.targetSessionId!==sessionId)continue;
+      const started=job.info.state!=='queued';this.cancelTransfer(id);
+      if(started&&job.completion)pending.push(job.completion);
+    }
+    return pending;
+  }
+  disconnect(id: string): Promise<void>|void {
     const session = this.sessions.get(id);
-    if (session) this.finishSession(session, '已断开连接');
+    if(session){const pending=this.stopServerTransfers(id);if(pending.length)return Promise.allSettled(pending).then(()=>this.finishSession(session,'已断开连接'));this.finishSession(session,'已断开连接');}
   }
 
-  shutdown(): void {
+  shutdown(): Promise<void>|void {
     this.stopped = true;
+    const pending=this.stopServerTransfers();
     for(const id of this.attempts.keys())this.cancelConnect(id);
     for(const id of this.keyAttempts.keys())this.cancelSshKeyPush(id);
-    for (const session of this.sessions.values()) this.finishSession(session, '应用正在退出');
-    for (const jump of this.jumps) this.closeJump(jump, '应用正在退出');
+    const finish=()=>{for (const session of this.sessions.values()) this.finishSession(session, '应用正在退出');for (const jump of this.jumps) this.closeJump(jump, '应用正在退出');};
+    if(pending.length)return Promise.allSettled(pending).then(finish);finish();
   }
 }

@@ -8,6 +8,10 @@ const { createHash } = require('node:crypto');
 const url = process.env.GOOESHELL_TABS_RENDER_URL, report = process.env.GOOESHELL_TABS_RENDER_REPORT, userData = process.env.GOOESHELL_TABS_RENDER_DATA;
 if (!url || new URL(url).hostname !== '127.0.0.1' || !report || !userData) throw new Error('Explicit isolated paths required');
 app.setPath('userData', userData); app.commandLine.appendSwitch('force-device-scale-factor', '1');
+// The inactive test window can be fully covered by the user's workspace.
+// Keep its animation frames running so the pixel comparison tests rendering,
+// rather than depending on the operating system's window occlusion state.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 const domFallback = process.env.GOOESHELL_TABS_RENDER_DOM === '1';
 const host = { platform: process.platform, arch: process.arch, githubActions: process.env.GITHUB_ACTIONS, runnerEnvironment: process.env.RUNNER_ENVIRONMENT };
 // Exercise a real WebGL atlas on CI, including hosts without a physical GPU.
@@ -25,6 +29,8 @@ if (angleBackend !== 'default' && !domFallback) {
   else app.commandLine.appendSwitch('ignore-gpu-blocklist');
 }
 const result = { mode: domFallback ? 'dom' : 'webgl', checks: {}, rendererErrors: [], graphics: { host, requestedAngleBackend: angleBackend }, subscriptions: { calls: 0, active: 0, maximum: 0 } }; let window, phase = 'initial';
+const progress = setInterval(() => { void fs.writeFile(report + '.progress.json', JSON.stringify({ phase, checks: result.checks, graphics: result.graphics })).catch(() => {}); }, 1000);
+progress.unref();
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = code => window.webContents.executeJavaScript(code);
 const flush = async () => { await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); await wait(70); };
@@ -103,13 +109,18 @@ async function run() {
   }
   phase = 'load terminal fixture';
   await window.loadURL(url); window.setMenu(null);
+  phase = 'wait for first terminal font';
   await until(() => evaluate('window.__fixtureTerminals?.length===1&&window.__fixtureTerminals[0].options.fontFamily.includes("GooeshellTerminal")'), 'first composite font');
+  phase = 'wait for initial animation frames';
   await flush();
+  phase = 'check first terminal renderer';
   await requireRenderer('initialContexts', 1);
+  phase = 'write initial terminal content';
   result.graphics.featureStatus = app.getGPUFeatureStatus();
   const firstText = '\x1b[?1049h\x1b[?1006h\x1b[?2004h\x1b[?25l\x1b[H' +
     ['FIRST_TERMINAL_0123456789', '\x1b[34m中文甲乙ΓθΩЖЯй∆∑☃\x1b[0m', '\x1b[32m国界山河路桥水天地\x1b[0m', '╭──────────────╮', '│ SAME BUFFER  │', '╰──────────────╯'].join('\r\n');
   await write(0, firstText);
+  phase = 'capture first terminal';
   const before = await capture('before');
   phase = 'mount another same-font terminal';
   await evaluate('window.__tabsSetCount(2)');
@@ -148,6 +159,7 @@ async function run() {
   await until(() => result.subscriptions.active === 0, 'unsubscribe after last terminal closes');
   result.checks.bridgeUnsubscribed = true; result.success = true;
 }
-run().catch(async error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); if (window && !window.isDestroyed()) try { await fs.writeFile(report + '.failure.png', (await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); } catch {} }).finally(async () => {
+run().catch(async error => { result.success = false; result.phase = phase; result.error = error.stack || String(error); if (window && !window.isDestroyed()) try { const shot = await Promise.race([window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true }), wait(3000).then(() => null)]); if (shot) await fs.writeFile(report + '.failure.png', shot.toPNG()); } catch {} }).finally(async () => {
+  clearInterval(progress);
   await finishRendererFixture(app, report, result, result.status === 'unsupported' ? 77 : undefined);
 });

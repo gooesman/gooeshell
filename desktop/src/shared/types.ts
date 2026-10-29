@@ -69,8 +69,13 @@ export interface TransferRequest {
   sessionId: string; direction: 'upload' | 'download'; source: string; destinationDir: string;
   resume: boolean; mode?: 'direct' | 'archive'; sudoPassword?: string; elevated?: boolean;
 }
+export interface ServerTransferRequest {
+  sessionId: string; targetSessionId: string; source: string; destinationDir: string;
+  route?: 'auto' | 'push' | 'pull';
+}
 export interface TransferInfo {
-  id: string; sessionId: string; direction: 'upload' | 'download'; name: string;
+  id: string; sessionId: string; direction: 'upload' | 'download' | 'server'; name: string;
+  targetSessionId?: string; route?: 'push' | 'pull';
   source: string; destination: string; total: number; done: number;
   bytesPerSecond?: number;
   verification?: { done: number; total: number; method: 'sha256' | 'readback'; stage: 'resume' | 'final' };
@@ -160,6 +165,7 @@ export interface DesktopApi {
   chooseFiles(options: { directory?: boolean; multiple?: boolean; title?: string; defaultPath?: string }): Promise<string[]>;
   showInFolder(path: string): Promise<void>;
   transfer(request: TransferRequest): Promise<string>;
+  serverTransfer(request: ServerTransferRequest): Promise<string>;
   cancelTransfer(id: string): Promise<void>;
   readFile(request: RemoteRequest & { side: 'local' | 'remote' }): Promise<TextFile>;
   writeFile(request: RemoteRequest & { side: 'local' | 'remote'; text: string }): Promise<void>;
