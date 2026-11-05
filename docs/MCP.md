@@ -32,12 +32,23 @@ fsutil hardlink list "$env:APPDATA\gooeshell\mcp-bridge.json"
 | `read_task` | `sessionId`、`taskId`；可选 `tailLines`（默认 200，范围 1–1000） | `running` / `finishing` / `exited`、`exitCode`、`signal`、最近合并输出及截断标记 |
 | `stop_task` | `sessionId`、`taskId` | 停止受管任务并等待真实退出；早期未启用托管停止的任务需手动停止 |
 | `read_log` | `sessionId`、绝对 `path`；可选 `offset`、`cursor`、`maxBytes` | 最多 16 KiB 的 UTF-8 增量、下一偏移量、游标、EOF 和轮转 / 截断重置状态 |
+| `read_remote_text` | `sessionId`、绝对 `path`；可选 `encoding` | 读取远程文本、版本、编码、BOM 与换行信息 |
+| `write_remote_text` | `sessionId`、`path`、`text`、`encoding`、`expectedRevision`；可选 `bom` | 创建或完整保存远程文本；版本不一致时拒绝覆盖 |
+| `edit_remote_text` | `sessionId`、`path`、`expectedRevision`、`oldText`、`newText`；可选 `encoding` | 精确替换一处原文，保留其余内容和编码；原文必须恰好出现一次 |
 | `transfer_file` | `sessionId`、`direction`、`source`、`destinationDir`；可选 `resume`、`mode` | 本机上传 / 下载进入队列，返回 `transferId` |
 | `transfer_between_servers` | `sessionId`、`targetSessionId`、绝对 `source`、绝对 `destinationDir`；可选 `route` | 直推 / 反向拉取进入队列，返回 `transferId` |
 | `read_transfer` | `transferId` | 传输、校验、速度和路线状态；最近 200 项在程序运行期间保留 |
 | `stop_transfer` | `transferId` | 请求取消；之后使用 `read_transfer` 确认结束 |
 
 首次服务器指纹继续在 GooeShell 窗口中确认。没有可用密码时会返回 `AUTH_REQUIRED`，请在应用中连接或保存该连接的凭据，再重试；不用把密码写进聊天内容。
+
+## 在服务器上编辑文本
+
+AI 可以使用 `read_remote_text` 读取目标文件，然后使用返回的 `revision` 调用 `edit_remote_text` 做精确替换；也可以使用 `write_remote_text` 和读取结果中的 `revision`、`encoding`、`bom` 保存完整内容。创建新文件时使用 `expectedRevision="missing"`，如果文件已存在则拒绝覆盖。保存成功返回新的版本和字节数，接下来的修改需使用新版本。工具通过既有 SSH/SFTP 连接直接读写服务器文件，不需要在本机创建脚本文件。
+
+文件改变、删除或替换后会返回 `TEXT_CONFLICT`，应重新读取和比较，不能盲目重试覆盖。精确替换的原文不存在或出现多次时返回 `TEXT_MATCH_ERROR`；可以提供更多上下文后重试。原文件的编码、BOM 和未修改部分的换行会保留；非 UTF-8 且没有 BOM 的文件，需要显式指定 `encoding`。单个文件最多编辑 2 MiB，更大文件只能预览；单次 MCP 桥接请求最多 256 KiB，因此大文件宜分次做精确替换。CLI 使用相同操作，名称改用连字符，例如 `read-remote-text`。
+
+这三个操作使用连接用户的普通文件权限，不使用 sudo，只支持普通文本文件；需要提权时使用现有终端或桌面编辑器的 sudo 操作。新建文件采用普通编辑器的 0600 权限，不自动加执行位。远程权限、服务器的 SFTP 原子替换支持、ACL / 扩展属性，以及外部进程在最终检查与替换之间写入的竞争窗口，仍受现有编辑器的限制。若请求中断或超时，保存结果可能未知，应先重新读取再决定下一步。
 
 ## 执行命令
 

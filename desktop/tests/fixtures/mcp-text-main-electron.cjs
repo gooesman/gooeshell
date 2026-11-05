@@ -1,0 +1,41 @@
+const {app,safeStorage}=require('electron');
+const {promises:fs,mkdirSync}=require('node:fs');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+const {randomUUID}=require('node:crypto');
+const {Client}=require('@modelcontextprotocol/sdk/client/index.js');
+const {StdioClientTransport}=require('@modelcontextprotocol/sdk/client/stdio.js');
+const artifacts=process.env.GOOESHELL_MCP_TEXT_ARTIFACTS,ready=process.env.GOOESHELL_MCP_TEXT_READY;
+if(!artifacts||!path.isAbsolute(artifacts)||!path.basename(artifacts).startsWith('mcp-text-main-')||!ready)throw new Error('Isolated fixture required');
+const userData=path.join(artifacts,'user-data');mkdirSync(userData,{recursive:true});app.setPath('userData',userData);
+safeStorage.isEncryptionAvailable=()=>false;safeStorage.isAsyncEncryptionAvailable=async()=>false;
+let window,client;const report={success:false,error:''};
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const until=async predicate=>{const end=Date.now()+12000;while(!await predicate()){if(Date.now()>end)throw new Error('Fixture UI timed out');await delay(25);}};
+const evaluate=code=>window.webContents.executeJavaScript(code);
+const call=(method,...args)=>evaluate(`window.gooeshell[${JSON.stringify(method)}](...${JSON.stringify(args)})`);
+async function run(){
+  await until(()=>evaluate('Boolean(window.gooeshell && document.querySelector(".connection-home"))'));
+  const lines=(await fs.readFile(ready,'utf8')).trim().split(/\r?\n/),v=Object.fromEntries(lines.map(line=>{const i=line.indexOf('=');return[line.slice(0,i),line.slice(i+1)];}));
+  assert.equal(v.fixture,'gooeshell-sftp-v1');assert.equal(v.host,'127.0.0.1');
+  assert.equal(await fs.readFile(path.join(v.root,'fixture.token'),'utf8'),v.token);
+  const name=randomUUID(),dir=path.join(v.root,'remote',name);await fs.mkdir(dir);
+  await evaluate("window.gooeshell.onEvent(event=>{if(event.type==='hostKey')window.gooeshell.confirmHostKey(event.requestId,'once');});true");
+  const profile={id:'text-fixture',name:'Text fixture',host:v.host,port:Number(v.port),username:v.username,auth:'password',rememberHost:false,encoding:'utf8'};
+  const session=await call('connect',{profile,password:v.password,attemptId:'mcp-text',bridgeOnly:true});
+  await call('setMcpEnabled',true);const config=(await call('mcpStatus')).config;
+  client=new Client({name:'mcp-text-main-test',version:'1.0'});await client.connect(new StdioClientTransport({...config,env:{...config.env},stderr:'pipe'}));
+  const tool=async(name,args)=>{const result=await client.callTool({name,arguments:args});if(result.isError)throw new Error(result.content[0].text);return JSON.parse(result.content[0].text);};
+  const base={sessionId:session.id,path:`/${name}/脚本.sh`};
+  await tool('write_remote_text',{...base,text:'echo hello\n',encoding:'utf8',expectedRevision:'missing'});
+  const initial=await tool('read_remote_text',base);assert.equal(initial.text,'echo hello\n');
+  await tool('edit_remote_text',{...base,expectedRevision:initial.revision,oldText:'hello',newText:'你好'});
+  assert.equal(await fs.readFile(path.join(dir,'脚本.sh'),'utf8'),'echo 你好\n');
+  const stale=await client.callTool({name:'edit_remote_text',arguments:{...base,expectedRevision:initial.revision,oldText:'你好',newText:'wrong'}});
+  assert.equal(stale.isError,true);assert.match(stale.content[0].text,/TEXT_CONFLICT/);
+  report.success=true;
+}
+app.on('browser-window-created',(_event,created)=>{window=created;window.on('show',()=>window.hide());window.webContents.once('did-finish-load',()=>void run().catch(error=>{report.error=error.stack||String(error);}).finally(async()=>{
+  if(client)await client.close().catch(()=>{});await fs.writeFile(path.join(artifacts,'result.json'),JSON.stringify(report));app.exit(report.success?0:1);
+}));});
+require('../../dist-main/main/main.js');

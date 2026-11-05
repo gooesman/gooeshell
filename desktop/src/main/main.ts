@@ -21,6 +21,7 @@ import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
 import {McpBridge} from './mcp-bridge';
+import {bridgeRemoteText} from './bridge-remote-text';
 import {ExternalEditorService} from './external-editor';
 import {confirmExternalEditorExit} from './external-editor-close';
 import {launchExternalEditor,externalEditorCommand,externalEditorForFile} from './external-editor-launch';
@@ -535,6 +536,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(name==='transfer_file')return{transferId:await remote('transfer',args)};
   if(name==='transfer_between_servers')return{transferId:await remote('serverTransfer',args)};
   const profile=sessionProfiles.get(args.sessionId);if(!profile)throw new Error('SSH 会话已断开，请先调用 connect');
+  if(name==='read_remote_text'||name==='write_remote_text'||name==='edit_remote_text')return bridgeRemoteText(name,args,signal,remote,()=>sessionProfiles.get(args.sessionId)===profile);
   let password:string|undefined;
   if(args.sudo){const saved=await credentials.get(profile);password=saved.sudoUsesLogin?(profile.loginIdentityId?sessionLoginPasswords.get(args.sessionId):saved.password):saved.sudoPassword;}
   signal.throwIfAborted();

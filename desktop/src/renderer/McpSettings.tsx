@@ -22,7 +22,7 @@ export default function McpSettings({onBusyChange}:{onBusyChange:(busy:boolean)=
     {status?.available===false&&<p className="settings-description">请在桌面程序中启用此功能。</p>}
     {status?.config&&<><div className="form-field"><label htmlFor="mcp-config">客户端配置</label><textarea id="mcp-config" readOnly rows={12} value={json} style={{width:'100%',resize:'vertical',fontFamily:'monospace',fontSize:11}}/></div><div className="field-inline" style={{marginTop:12}}><button type="button" className="button secondary" disabled={busy} onClick={()=>void copy(true)}>复制 Codex 配置</button><button type="button" className="button secondary" disabled={busy} onClick={()=>void copy(false)}>复制通用 JSON 配置</button></div></>}
     {status?.cliPath&&<div style={{marginTop:12}}><button type="button" className="button secondary" onClick={()=>void copyCli()}>复制 CLI 命令</button><p className="settings-description">CLI 与 MCP 复用相同连接和权限。--help 查看用法，read-log / read-task / read-transfer 支持 --watch 持续读取。</p></div>}
-    <p className="settings-description" style={{marginTop:18}}>可用操作：连接与会话、短命令、后台任务启动 / 读取 / 停止、持续读取日志文件、本机文件上传下载、服务器间直推 / 反向拉取，以及传输进度和取消。普通命令无需 tmux；后台任务需要 tmux 与 Python 3，在 gooeshell-ai 会话中保留输出和真实退出状态。sudo 密码不会输入窗格。每次命令使用独立 Shell，工作目录需显式指定。认证缺失时请在连接设置中保存凭据，首次服务器指纹仍在 GooeShell 中确认。</p>
+    <p className="settings-description" style={{marginTop:18}}>可用操作：连接与会话、短命令、后台任务、日志读取、远程文本创建与版本校验编辑、本机文件上传下载、服务器间直传，以及传输进度和取消。普通命令无需 tmux；后台任务需要 tmux 与 Python 3，在 gooeshell-ai 会话中保留输出和真实退出状态。sudo 密码不会输入窗格。每次命令使用独立 Shell，工作目录需显式指定。认证缺失时请在连接设置中保存凭据，首次服务器指纹仍在 GooeShell 中确认。</p>
     {message&&<p role="status" className="settings-description">{message}</p>}{error&&<div className="form-error" role="alert">{error}</div>}
   </>;
 }

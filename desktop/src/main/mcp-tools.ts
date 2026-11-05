@@ -33,6 +33,18 @@ export const mcpTools = {
     description:'Read a bounded UTF-8 log chunk from an absolute regular file path. Continue with nextOffset and cursor; rotated/truncated files reset to offset 0 and report reset=true. This reads a file, not tmux scrollback. Poll no faster than once per second. Does not use sudo.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/'),offset:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),cursor:z.string().max(128).optional(),maxBytes:z.number().int().min(1).max(16384).default(16384)}),readOnly:true,
   },
+  read_remote_text: {
+    description:'Read a remote regular text file using the existing SSH/SFTP connection. Returns text, revision, encoding, BOM and line-ending metadata. Files larger than 2 MiB are previews and cannot be saved. Keep the revision and encoding for a subsequent edit. Does not use sudo.',
+    schema:z.strictObject({sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/'),encoding:z.enum(['utf8','utf8-bom','utf16le','utf16be','gb18030','big5']).optional()}),readOnly:true,
+  },
+  write_remote_text: {
+    description:'Create or replace a remote regular text file using SSH/SFTP. For creation use expectedRevision="missing"; for replacement first read the file and provide its revision, encoding and BOM. A changed file is rejected. The entire MCP request is limited to 256 KiB. Does not use sudo.',
+    schema:z.strictObject({sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/'),text:z.string().max(2*1024*1024),encoding:z.enum(['utf8','utf8-bom','utf16le','utf16be','gb18030','big5']),bom:z.boolean().optional(),expectedRevision:z.union([z.literal('missing'),z.string().regex(/^v1:[a-f0-9]{64}$/)])}),readOnly:false,
+  },
+  edit_remote_text: {
+    description:'Replace exactly one occurrence in an existing remote text file, preserving its detected encoding, BOM and other content. First read the file and supply its revision. Missing or repeated matches and changed files are rejected. Optional encoding is needed for non-UTF-8 files without a BOM. Does not use sudo.',
+    schema:z.strictObject({sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/'),expectedRevision:z.string().regex(/^v1:[a-f0-9]{64}$/),oldText:z.string().min(1).max(131072),newText:z.string().max(131072),encoding:z.enum(['utf8','utf8-bom','utf16le','utf16be','gb18030','big5']).optional()}),readOnly:false,
+  },
   transfer_file: {
     description:'Start a local upload/download using GooeShell SFTP with resumable content verification. Absolute source/destinationDir paths, no sudo. Returns transferId; use read_transfer/stop_transfer. This operation transfers data through this computer.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),direction:z.enum(['upload','download']),source:z.string().min(1).max(2048),destinationDir:z.string().min(1).max(2048),resume:z.boolean().default(true),mode:z.enum(['direct','archive']).default('direct')}),readOnly:false,
