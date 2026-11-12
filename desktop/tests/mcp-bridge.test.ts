@@ -22,7 +22,7 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   t.after(async()=>{await client.close();await bridge.stop();});
   await bridge.load();assert.equal(bridge.status().enabled,false);
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer']);
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer']);
   assert.equal((await client.callTool({name:'list_connections',arguments:{}})).isError,true,'disabled bridge cannot be used');
   await bridge.setEnabled(true);
   const descriptor=JSON.parse(await fs.readFile(bridge.file,'utf8')),url=`http://127.0.0.1:${descriptor.port}/call`;
@@ -33,6 +33,7 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   assert.equal(hostStatus,403);
   assert.equal((await request({tool:'__proto__',arguments:{}})).status,400);
   assert.equal((await request({tool:'connect',arguments:{connectionId:'fixture',password:'must-not-be-accepted'}})).status,400);
+  assert.equal((await request({tool:'create_connection',arguments:{host:'fixture.invalid',username:'test',password:'must-not-be-accepted'}})).status,400);
   assert.equal((await request({tool:'start_task',arguments:{sessionId:'fixture',command:'true',password:'must-not-be-accepted'}})).status,400);
   assert.equal((await request({tool:'read_task',arguments:{sessionId:'fixture',taskId:'bad; kill-server'}})).status,400);
   assert.equal(calls.length,0,'untrusted and invalid requests never reach connection logic');
@@ -64,10 +65,11 @@ test('enabled MCP bridge repairs stale or missing descriptors without changing l
   await fs.unlink(bridge.file);await bridge.setEnabled(true);
   assert.deepEqual(JSON.parse(await fs.readFile(bridge.file,'utf8')),original,'enabling an existing bridge repairs a deleted descriptor');
   await fs.writeFile(bridge.file,'{broken');
-  const deadline=Date.now()+8000;
+  // A transient Windows sharing violation can delay repair until the next 5s check.
+  const deadline=Date.now()+14000;
   while(await fs.readFile(bridge.file,'utf8')==='{broken'){
     assert.ok(Date.now()<deadline,'background check must repair the descriptor without opening settings');
-    await new Promise(resolve=>setTimeout(resolve,50));
+    await new Promise(resolve=>setTimeout(resolve,200));
   }
   assert.deepEqual(JSON.parse(await fs.readFile(bridge.file,'utf8')),original);
   const response=await fetch(`http://127.0.0.1:${original.port}/call`,{method:'POST',headers:{authorization:'Bearer '+original.token},body:JSON.stringify({tool:'list_sessions',arguments:{}})});

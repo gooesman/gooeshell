@@ -1,5 +1,12 @@
 import {z} from 'zod';
 
+const connectionText=z.string().trim().min(1).max(255).regex(/^[^\x00-\x1f\x7f]+$/);
+const connectionEndpoint=z.strictObject({
+  host:connectionText,port:z.number().int().min(1).max(65535).default(22),username:connectionText.optional(),
+  auth:z.enum(['password','key','agent']).default('password'),privateKeyPath:z.string().trim().min(1).max(2048).regex(/^[^\x00-\x1f\x7f]+$/).optional(),
+  loginIdentityId:connectionText.optional(),rememberHost:z.boolean().default(true),
+});
+
 export const mcpTools = {
   list_connections: {
     description:'List saved GooeShell SSH connections and login identity names. Credentials remain in GooeShell.',
@@ -8,6 +15,14 @@ export const mcpTools = {
   list_sessions: {
     description:'List live SSH sessions. source=terminal belongs to the user; source=mcp is a background bridge connection.',
     schema:z.strictObject({}), readOnly:true,
+  },
+  list_connection_options: {
+    description:'List saved connection groups and shared login identities (ID, name, username and whether a password is saved). No passwords or private keys are returned.',
+    schema:z.strictObject({}),readOnly:true,
+  },
+  create_connection: {
+    description:'Save a new SSH connection to GooeShell without connecting. Defaults to the sidebar; uses an existing shared login identity or a username and password/key/agent authentication. Never accepts passwords, passphrases or private key contents. Optional jumpHost uses the same rules. Call list_connection_options for identity and group IDs. Equivalent existing configurations are returned unchanged with created=false. Connection and host-key verification happen separately.',
+    schema:connectionEndpoint.extend({name:connectionText.optional(),groupId:connectionText.optional(),icon:z.enum(['server','cloud','database','router','code','folder']).optional(),encoding:z.enum(['utf8','gb18030','big5']).default('utf8'),favorite:z.boolean().default(true),shellIntegration:z.boolean().default(false),jumpHost:connectionEndpoint.extend({name:connectionText.optional(),reuseConnection:z.boolean().default(true)}).optional()}),readOnly:false,
   },
   connect: {
     description:'Reuse an existing SSH session or connect a saved connection using its GooeShell credentials and jump host. Missing credentials and host key confirmation must be handled in GooeShell; do not request passwords through this tool.',

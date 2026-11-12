@@ -21,11 +21,12 @@ async function run(){
   assert.equal(await fs.readFile(path.join(v.root,'fixture.token'),'utf8'),v.token);
   const name=randomUUID(),dir=path.join(v.root,'remote',name);await fs.mkdir(dir);
   await evaluate("window.gooeshell.onEvent(event=>{if(event.type==='hostKey')window.gooeshell.confirmHostKey(event.requestId,'once');});true");
-  const profile={id:'text-fixture',name:'Text fixture',host:v.host,port:Number(v.port),username:v.username,auth:'password',rememberHost:false,encoding:'utf8'};
-  const session=await call('connect',{profile,password:v.password,attemptId:'mcp-text',bridgeOnly:true});
+  const identity=await call('saveLoginIdentity',{name:'Isolated identity',username:v.username,password:v.password,remember:'session'});
   await call('setMcpEnabled',true);const config=(await call('mcpStatus')).config;
   client=new Client({name:'mcp-text-main-test',version:'1.0'});await client.connect(new StdioClientTransport({...config,env:{...config.env},stderr:'pipe'}));
   const tool=async(name,args)=>{const result=await client.callTool({name,arguments:args});if(result.isError)throw new Error(result.content[0].text);return JSON.parse(result.content[0].text);};
+  const profile=await tool('create_connection',{name:'Text fixture',host:v.host,port:Number(v.port),loginIdentityId:identity.id,rememberHost:false});
+  assert.equal(profile.created,true);const session=await tool('connect',{connectionId:profile.connectionId});assert.equal(session.source,'mcp');
   const base={sessionId:session.id,path:`/${name}/脚本.sh`};
   await tool('write_remote_text',{...base,text:'echo hello\n',encoding:'utf8',expectedRevision:'missing'});
   const initial=await tool('read_remote_text',base);assert.equal(initial.text,'echo hello\n');

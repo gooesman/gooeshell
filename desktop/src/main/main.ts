@@ -21,6 +21,7 @@ import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
 import {McpBridge} from './mcp-bridge';
+import {createBridgeConnection} from './bridge-create-connection';
 import {bridgeRemoteText} from './bridge-remote-text';
 import {ExternalEditorService} from './external-editor';
 import {confirmExternalEditorExit} from './external-editor-close';
@@ -518,6 +519,8 @@ if(primaryInstance)app.whenReady().then(async()=>{
    return profiles.map(profile=>({connectionId:profile.id,name:profile.name,host:profile.host,port:profile.port,username:profile.username,auth:profile.auth,identityName:library.identities.find(identity=>identity.id===profile.loginIdentityId)?.name,hasJumpHost:!!profile.jumpHost}));
   }
   if(name==='list_sessions')return[...sessionProfiles].map(([id,profile])=>bridgeDescription(id,profile));
+  if(name==='list_connection_options')return{groups:(await store.groups()).map(({id,name})=>({id,name})),identities:(await identities.metadata()).map(({id,name,username,hasPassword})=>({id,name,username,hasPassword}))};
+  if(name==='create_connection')return identityMutation(async()=>{const result=await createBridgeConnection(store,identities,args,signal);if(result.created)sendEvent({type:'connectionsChanged'});return result;});
   if(name==='connect'){
    const stored=(await store.connections()).find(profile=>profile.id===args.connectionId);if(!stored)throw new Error('保存的连接不存在，请在 Gooeshell 中先保存连接');
    const profile=(await resolveIdentityMetadata(identities,[stored]))[0];

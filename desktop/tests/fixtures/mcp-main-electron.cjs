@@ -100,6 +100,16 @@ async function run(){
   transport=new StdioClientTransport({...config,env:{...config.env},stderr:'pipe'});
   let stderr='';transport.stderr.on('data',bytes=>stderr+=bytes.toString());
   client=new Client({name:'gooeshell-packaged-fixture',version:'1.0.0'});await client.connect(transport);
+  phase='create a saved connection without connecting';
+  await call('saveGroup',{id:'mcp-group',name:'MCP 测试组',icon:'folder',order:0});
+  const choices=await tool('list_connection_options');assert(choices.groups.some(item=>item.id==='mcp-group'));assert(choices.identities.some(item=>item.id===identity.id&&item.username==='fixture-user'&&item.hasPassword));assert(!JSON.stringify(choices).includes('fixture-secret'));
+  const callsBeforeCreate=authentications;
+  const created=await tool('create_connection',{name:'MCP 新连接',host:'mcp-created.invalid',loginIdentityId:identity.id,groupId:'mcp-group'});
+  assert.equal(created.created,true);assert.equal(created.username,'fixture-user');assert.equal(authentications,callsBeforeCreate);
+  await until(()=>evaluate(`document.querySelector('#server-sidebar')?.innerText.includes('MCP 新连接')`),'new connection in sidebar');
+  const again=await tool('create_connection',{name:'不应覆盖',host:'mcp-created.invalid',loginIdentityId:identity.id});assert.equal(again.created,false);assert.equal(again.connectionId,created.connectionId);assert.equal(again.name,'MCP 新连接');
+  assert.equal((await client.callTool({name:'create_connection',arguments:{host:'bad.invalid',username:'test',password:'never-accept'}})).isError,true);
+  report.checks.createConnection=true;
   phase='stored identity and existing SSH transport reuse';
   const connections=await tool('list_connections');assert.equal(connections[0].identityName,'Fixture identity');assert(!JSON.stringify(connections).includes('fixture-secret'));
   const reused=await tool('connect',{connectionId:profile.id});assert.equal(reused.id,foregroundSession.id);assert.equal(reused.reused,true);assert.equal(authentications,1);

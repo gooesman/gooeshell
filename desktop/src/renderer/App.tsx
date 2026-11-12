@@ -179,6 +179,8 @@ export default function App() {
     setTransferMenu({id, x: event.clientX, y: event.clientY});
   };
   const manager = useConnections({ sessions, setSessions, tabs, setTabs, activeId, setActiveId, closed, notify, sudoSubmit: settings.sudoPasswordSubmit });
+  const managerRef = useRef(manager); managerRef.current = manager;
+  useEffect(() => api.onEvent(event => { if (event.type === 'connectionsChanged') void managerRef.current.refresh().catch(error => notify(errorText(error), true)); }), [notify]);
   const localManager = useLocalSessions({ sessions, setSessions, tabs, setTabs, activeId, setActiveId, closed });
   const reopenSession = (session: SessionInfo) => isLocalSession(session) ? localManager.reopen(session) : manager.reconnect(session);
   const openLocal = async (request: CreateLocalSessionRequest, tabId?: string) => { if (await localManager.open(request, tabId)) setConnection(null); };

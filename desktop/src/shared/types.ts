@@ -110,6 +110,7 @@ export interface CommandLibrary { groups: CommandGroup[]; commands: SavedCommand
 export interface SendCommandRequest { sessionId: string; commandId: string; mode: 'insert' | 'execute'; allowOtherConnection: boolean; expectedCommand: string; expectedGroupId: string; expectedConnectionId?: string; expectedConfirmBeforeRun: boolean; bracketedPaste: boolean; }
 export type HostKeyDecision = 'once' | 'save' | 'reject';
 export type AppEvent =
+  | { type: 'connectionsChanged' }
   | { type: 'terminal'; sessionId: string; data: string; bytes: number }
   | { type: 'sessionClosed'; sessionId: string; message: string }
   | { type: 'hostKey'; requestId: string; host: string; port: number; fingerprint: string; previousFingerprint?: string; saveAllowed?: boolean; role?: 'jump' | 'target'; via?: string }
