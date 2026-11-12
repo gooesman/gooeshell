@@ -86,7 +86,7 @@ async function run(){
   await evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='复制 Codex 配置').click()`);
   await until(()=>copied.includes('[mcp_servers.gooeshell]'),'Codex configuration');
   assert(copied.includes('ELECTRON_RUN_AS_NODE'));assert(!copied.includes('Bearer'));
-  const image=await Promise.race([window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true}),delay(2000)]);
+  const image=await Promise.race([window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true}).catch(error=>{if(String(error).includes('UnknownVizError')){report.screenshotError=String(error);return null;}throw error;}),delay(2000)]);
   if(image)await fs.writeFile(path.join(artifacts,'settings.png'),image.toPNG());
   await evaluate(`[...document.querySelectorAll('.settings-dialog .modal-footer button')].find(button=>button.textContent==='关闭').click()`);
   report.checks.settingsAndConfig=true;
