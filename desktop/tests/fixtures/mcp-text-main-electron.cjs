@@ -20,13 +20,16 @@ async function run(){
   assert.equal(v.fixture,'gooeshell-sftp-v1');assert.equal(v.host,'127.0.0.1');
   assert.equal(await fs.readFile(path.join(v.root,'fixture.token'),'utf8'),v.token);
   const name=randomUUID(),dir=path.join(v.root,'remote',name);await fs.mkdir(dir);
-  await evaluate("window.gooeshell.onEvent(event=>{if(event.type==='hostKey')window.gooeshell.confirmHostKey(event.requestId,'once');});true");
+  await evaluate("window.fixtureHostKeyQuestions=0;window.gooeshell.onEvent(event=>{if(event.type==='hostKey'){window.fixtureHostKeyQuestions++;window.gooeshell.confirmHostKey(event.requestId,'reject');}});true");
   const identity=await call('saveLoginIdentity',{name:'Isolated identity',username:v.username,password:v.password,remember:'session'});
   await call('setMcpEnabled',true);const config=(await call('mcpStatus')).config;
   client=new Client({name:'mcp-text-main-test',version:'1.0'});await client.connect(new StdioClientTransport({...config,env:{...config.env},stderr:'pipe'}));
   const tool=async(name,args)=>{const result=await client.callTool({name,arguments:args});if(result.isError)throw new Error(result.content[0].text);return JSON.parse(result.content[0].text);};
   const profile=await tool('create_connection',{name:'Text fixture',host:v.host,port:Number(v.port),loginIdentityId:identity.id,rememberHost:false});
   assert.equal(profile.created,true);const session=await tool('connect',{connectionId:profile.connectionId});assert.equal(session.source,'mcp');
+  assert.equal(await evaluate('window.fixtureHostKeyQuestions'),0);await assert.rejects(fs.stat(path.join(userData,'known-hosts.json')),{code:'ENOENT'});
+  const persisted=await tool('connect',{connectionId:profile.connectionId,hostKeyPolicy:'save'});assert.equal(persisted.reused,false);
+  assert.equal(await evaluate('window.fixtureHostKeyQuestions'),0);assert.equal(Object.keys(JSON.parse(await fs.readFile(path.join(userData,'known-hosts.json'),'utf8')).hosts).length,1);
   const base={sessionId:session.id,path:`/${name}/脚本.sh`};
   await tool('write_remote_text',{...base,text:'echo hello\n',encoding:'utf8',expectedRevision:'missing'});
   const initial=await tool('read_remote_text',base);assert.equal(initial.text,'echo hello\n');
@@ -34,6 +37,13 @@ async function run(){
   assert.equal(await fs.readFile(path.join(dir,'脚本.sh'),'utf8'),'echo 你好\n');
   const stale=await client.callTool({name:'edit_remote_text',arguments:{...base,expectedRevision:initial.revision,oldText:'你好',newText:'wrong'}});
   assert.equal(stale.isError,true);assert.match(stale.content[0].text,/TEXT_CONFLICT/);
+  const local=path.join(artifacts,'ai-upload.txt');await fs.writeFile(local,'AI transfer fixture');
+  const transfer=await tool('transfer_file',{sessionId:session.id,direction:'upload',source:local,destinationDir:`/${name}`});
+  assert.equal((await tool('show_in_app',{kind:'transfer',transferId:transfer.transferId})).requested,true);
+  await until(()=>evaluate(`Boolean(document.querySelector('[data-transfer-id="${transfer.transferId}"]'))`));
+  assert.equal(await evaluate(`!document.querySelector('#file-manager').hidden&&!document.querySelector('#transfer-queue-body').hidden`),true);
+  let progress;await until(async()=>{progress=await tool('read_transfer',{transferId:transfer.transferId});return ['completed','failed','cancelled'].includes(progress.state);});
+  assert.equal(progress.state,'completed');assert.equal(await fs.readFile(path.join(dir,'ai-upload.txt'),'utf8'),'AI transfer fixture');
   report.success=true;
 }
 app.on('browser-window-created',(_event,created)=>{window=created;window.on('show',()=>window.hide());window.webContents.once('did-finish-load',()=>void run().catch(error=>{report.error=error.stack||String(error);}).finally(async()=>{

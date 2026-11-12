@@ -160,6 +160,17 @@ test('jump and target trust precede their own credentials; shell, SFTP and resum
   assert.equal(f.counters().jumpConnections,2,'last close releases the pooled hop');f.service.disconnect(reconnect.id);f.idle();
 });
 
+test('MCP automatic trust applies to both jump and target without changing interactive trust', {timeout:20000}, async t=>{
+  const f=await fixture(t);
+  const once=await f.service.connect(f.request({bridgeOnly:true,bridgeHostKeyDecision:'once'}));
+  assert.equal(f.questions().length,0);await assert.rejects(fs.stat(f.knownFile),{code:'ENOENT'});f.service.disconnect(once.id);
+  const saved=await f.service.connect(f.request({bridgeOnly:true,bridgeHostKeyDecision:'save'}));
+  assert.equal(f.questions().length,0);
+  const trust=JSON.parse(await fs.readFile(f.knownFile,'utf8'));
+  assert(trust.hosts[`[127.0.0.1]:${f.profile.jumpHost!.port}`]);assert.equal(Object.keys(trust.hosts).filter(key=>key.startsWith('via:')).length,1);
+  f.service.disconnect(saved.id);f.idle();
+});
+
 test('concurrent reusable connections share one hop; closing or failing one target leaves the other usable', {timeout:15000}, async t=>{
   const f=await fixture(t);const [first,second]=await Promise.all([f.service.connect(f.automatic()),f.service.connect(f.automatic())]);
   assert.equal(f.counters().jumpConnections,1);assert.equal(f.counters().jumpAuth,1);assert.equal(f.counters().targetAuth,2);

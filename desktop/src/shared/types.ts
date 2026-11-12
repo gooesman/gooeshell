@@ -1,5 +1,5 @@
 import type {FontFamilyInfo} from './font-types';
-import type {McpStatus} from './mcp';
+import type {McpStatus,AiView,AiActivity,BridgeTaskResult} from './mcp';
 import type {UpdateRelease} from './update';
 export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
 export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
@@ -59,7 +59,7 @@ export interface LocalSessionInfo { kind: 'local'; id: string; tabId?: string; n
 export type SessionInfo = SshSessionInfo | LocalSessionInfo;
 export interface LocalShellInfo { id: string; name: string; path?: string; available: boolean; isDefault: boolean; }
 export interface CreateLocalSessionRequest { shell?: string; cwd?: string; cols?: number; rows?: number; }
-export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; jumpPassword?: string; jumpPassphrase?: string; skipJumpHostKeyVerification?: boolean; bridgeOnly?: boolean; }
+export interface ConnectRequest { profile: HostProfile; password?: string; passphrase?: string; skipHostKeyVerification?: boolean; credentials?: CredentialUpdate; attemptId?: string; jumpPassword?: string; jumpPassphrase?: string; skipJumpHostKeyVerification?: boolean; bridgeOnly?: boolean; bridgeHostKeyDecision?: 'once' | 'save'; }
 export interface FileEntry {
   name: string; path: string; type: 'directory' | 'file' | 'symlink';
   size: number; modified: number; mode?: number; owner?: string; group?: string;
@@ -111,6 +111,9 @@ export interface SendCommandRequest { sessionId: string; commandId: string; mode
 export type HostKeyDecision = 'once' | 'save' | 'reject';
 export type AppEvent =
   | { type: 'connectionsChanged' }
+  | { type: 'aiActivity'; activity: AiActivity }
+  | { type: 'aiOutput'; id: string; text: string }
+  | { type: 'aiShow'; view: AiView }
   | { type: 'terminal'; sessionId: string; data: string; bytes: number }
   | { type: 'sessionClosed'; sessionId: string; message: string }
   | { type: 'hostKey'; requestId: string; host: string; port: number; fingerprint: string; previousFingerprint?: string; saveAllowed?: boolean; role?: 'jump' | 'target'; via?: string }
@@ -122,6 +125,7 @@ export type AppEvent =
   | { type: 'notice'; message: string };
 
 export interface DesktopApi {
+  readAiView(request: Extract<AiView,{kind:'task'|'log'}> & {offset?:number;cursor?:string}):Promise<BridgeTaskResult | {output:string;nextOffset:number;cursor:string;reset:boolean;eof:boolean}>;
   checkUpdate():Promise<UpdateRelease>;
   downloadUpdate(name:string):Promise<{file:string;canInstall:boolean}|null>;
   installUpdate():Promise<boolean>;

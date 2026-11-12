@@ -21,6 +21,7 @@ import {systemFontCatalog} from './font-catalog';
 import {configureApplicationMenu} from './application-menu';
 import {LocalPtyService} from './local-pty-service';
 import {McpBridge} from './mcp-bridge';
+import {parseMcpCall} from './mcp-tools';
 import {createBridgeConnection} from './bridge-create-connection';
 import {bridgeRemoteText} from './bridge-remote-text';
 import {ExternalEditorService} from './external-editor';
@@ -420,12 +421,13 @@ if(primaryInstance)app.whenReady().then(async()=>{
      const {jumpProfile:jump,hopUpdate:jumpCredentials,targetUpdate,preparedCredentials,preparedJump,password,passphrase,jumpPassword,jumpPassphrase}=authentication;
      if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
      const preferences=await store.hostKeyPreferences();
-     const skipHostKeyVerification=preferences.some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
-     const skipJumpHostKeyVerification=!!jump&&preferences.some(preference=>preference.host===jump.host.toLowerCase()&&preference.port===jump.port&&preference.skipVerification);
+     const bridgeHostKeyDecision=value.bridgeOnly===true&&['once','save'].includes(value.bridgeHostKeyDecision)?value.bridgeHostKeyDecision:undefined;
+     const skipHostKeyVerification=!bridgeHostKeyDecision&&preferences.some(preference=>preference.host===profile.host.toLowerCase()&&preference.port===profile.port&&preference.skipVerification);
+     const skipJumpHostKeyVerification=!bridgeHostKeyDecision&&!!jump&&preferences.some(preference=>preference.host===jump.host.toLowerCase()&&preference.port===jump.port&&preference.skipVerification);
      const effectiveProfile={...profile,...(skipHostKeyVerification?{rememberHost:false}:{}),...(profile.jumpHost&&skipJumpHostKeyVerification?{jumpHost:{...profile.jumpHost,rememberHost:false}}:{})};
      if(attempt.cancelled)throw new Error('CONNECTION_CANCELLED: 已取消连接');
      attempt.started=true;
-     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId,jumpPassword,jumpPassphrase,skipJumpHostKeyVerification,bridgeOnly:value.bridgeOnly===true});
+     const connected=await remote('connect',{profile:effectiveProfile,password,passphrase,skipHostKeyVerification,attemptId,jumpPassword,jumpPassphrase,skipJumpHostKeyVerification,bridgeOnly:value.bridgeOnly===true,bridgeHostKeyDecision});
      if(attempt.cancelled){await remote('disconnect',connected.id);throw new Error('CONNECTION_CANCELLED: 已取消连接');}
      if(closedSessions.has(connected.id))throw new Error('服务器在连接完成前关闭了终端，请重新连接。');
      sessionProfiles.set(connected.id,profile);
@@ -457,6 +459,12 @@ if(primaryInstance)app.whenReady().then(async()=>{
     }finally{if(attemptId&&connectAttempts.get(attemptId)===attempt)connectAttempts.delete(attemptId);}
    }
    case 'localList':return localList(value||os.homedir());
+   case 'readAiView':{
+    if(!value||!['task','log'].includes(value.kind)||!sessionProfiles.has(value.sessionId))throw new Error('SSH 会话已断开或查看请求无效');
+    const task=value.kind==='task';
+    const parsed=parseMcpCall(task?'read_task':'read_log',task?{sessionId:value.sessionId,taskId:value.taskId,tailLines:200}:{sessionId:value.sessionId,path:value.path,offset:value.offset??0,...(value.cursor?{cursor:value.cursor}:{})});
+    return remote(task?'bridgeReadTask':'bridgeReadLog',{...parsed.args,requestId:randomUUID()});
+   }
    case 'chooseFiles':{const result=await dialog.showOpenDialog(win,{title:value?.title,defaultPath:typeof value?.defaultPath==='string'?value.defaultPath:undefined,properties:value?.directory?['openDirectory']:value?.multiple?['openFile','multiSelections']:['openFile']});return result.canceled?[]:result.filePaths;}
    case 'showInFolder':shell.showItemInFolder(localPath(value));return;
    case 'readFile':return value.side==='local'?readLocalText(value.path):remote('readFile',value);
@@ -521,15 +529,20 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(name==='list_sessions')return[...sessionProfiles].map(([id,profile])=>bridgeDescription(id,profile));
   if(name==='list_connection_options')return{groups:(await store.groups()).map(({id,name})=>({id,name})),identities:(await identities.metadata()).map(({id,name,username,hasPassword})=>({id,name,username,hasPassword}))};
   if(name==='create_connection')return identityMutation(async()=>{const result=await createBridgeConnection(store,identities,args,signal);if(result.created)sendEvent({type:'connectionsChanged'});return result;});
+  if(name==='show_in_app'){
+   if(args.kind==='transfer')await remote('readTransfer',args.transferId);
+   else if(args.kind!=='activity'&&!sessionProfiles.has(args.sessionId))throw new Error('SSH 会话已断开，请先调用 connect');
+   signal.throwIfAborted();sendEvent({type:'aiShow',view:args});return{requested:true,view:args};
+  }
   if(name==='connect'){
    const stored=(await store.connections()).find(profile=>profile.id===args.connectionId);if(!stored)throw new Error('保存的连接不存在，请在 Gooeshell 中先保存连接');
    const profile=(await resolveIdentityMetadata(identities,[stored]))[0];
    const existing=[...sessionProfiles].find(([,live])=>live.id===profile.id&&connectionConfigurationIdentity(live)===connectionConfigurationIdentity(profile));
-   if(existing)return{...bridgeDescription(...existing),reused:true};
+   if(existing&&args.hostKeyPolicy!=='save')return{...bridgeDescription(...existing),reused:true};
    const attemptId=randomUUID();const cancel=()=>{void invoke('cancelConnect',[attemptId]).catch(()=>{});};
    signal.addEventListener('abort',cancel,{once:true});
    try{
-    signal.throwIfAborted();const connected=await invoke('connect',[{profile,attemptId,bridgeOnly:true}]);
+    signal.throwIfAborted();const connected=await invoke('connect',[{profile,attemptId,bridgeOnly:true,bridgeHostKeyDecision:args.hostKeyPolicy}]);
     if(signal.aborted){await remote('disconnect',connected.id);signal.throwIfAborted();}
     bridgeSessions.add(connected.id);return{...bridgeDescription(connected.id,connected.profile),reused:false};
    }finally{signal.removeEventListener('abort',cancel);}
@@ -547,7 +560,14 @@ if(primaryInstance)app.whenReady().then(async()=>{
   const requestId=randomUUID(),cancel=()=>{void remote('cancelBridgeExec',requestId).catch(()=>{});};
   signal.addEventListener('abort',cancel,{once:true});
   const method=({start_task:'bridgeStartTask',read_task:'bridgeReadTask',stop_task:'bridgeStopTask',read_log:'bridgeReadLog'} as Record<string,string>)[name]||'bridgeExec';
-  try{return await remote(method,{...args,requestId,password});}finally{signal.removeEventListener('abort',cancel);}
+  const activity=name==='run_command'||name==='start_task'?{id:requestId,sessionId:args.sessionId,connectionName:profile.name||`${profile.username}@${profile.host}`,kind:name==='run_command'?'command' as const:'task' as const,command:args.command,cwd:args.cwd,sudo:args.sudo,state:'running' as const}:undefined;
+  if(activity)sendEvent({type:'aiActivity',activity});
+  try{
+   const result=await remote(method,{...args,requestId,password});
+   if(activity)sendEvent({type:'aiActivity',activity:{...activity,state:'finished',output:name==='run_command'?[result.stdout,result.stderr].filter(Boolean).join(''):result.output,exitCode:result.exitCode,truncated:result.truncated,...(result.taskId?{taskId:result.taskId}:{})}});
+   return result;
+  }catch(error){if(activity)sendEvent({type:'aiActivity',activity:{...activity,state:'failed',output:error instanceof Error?error.message:String(error)}});throw error;}
+  finally{signal.removeEventListener('abort',cancel);}
  },async()=>{if(shuttingDown){bridgeSessions.clear();return;}await Promise.all([...bridgeSessions].map(id=>remote('disconnect',id).catch(()=>{})));bridgeSessions.clear();});
  ipcMain.on('gooeshell:terminal',(event,method,args)=>{
   if(!trusted(event)||!['terminalInput','terminalBinaryInput','terminalResize','terminalAck'].includes(method)||!Array.isArray(args))return;

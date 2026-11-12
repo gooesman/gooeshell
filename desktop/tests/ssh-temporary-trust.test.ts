@@ -166,3 +166,20 @@ test('automatic identity mode accepts a replacement on a new session but refuses
   assert.equal(f.passwords(),passwordCount+1);assert.equal(questions.length,0);service.disconnect(replacement.id);
   await assert.rejects(fs.stat(f.knownFile),{code:'ENOENT'});
 }));
+
+test('MCP automatic trust accepts once without saving and saves only when requested',{timeout:15000},async()=>fixture(async f=>{
+  const profile={...f.profile,rememberHost:true};
+  const existing=trustRecord(profile);await fs.writeFile(f.knownFile,existing);
+  const once=f.service();
+  const first=await once.service.connect({profile,password:'loopback-test-only',bridgeOnly:true,bridgeHostKeyDecision:'once'});
+  assert.equal(once.questions.length,0);assert.equal(await fs.readFile(f.knownFile,'utf8'),existing);
+  once.service.disconnect(first.id);
+  const saved=f.service();
+  const second=await saved.service.connect({profile,password:'loopback-test-only',bridgeOnly:true,bridgeHostKeyDecision:'save'});
+  assert.equal(saved.questions.length,0);
+  const record=JSON.parse(await fs.readFile(f.knownFile,'utf8')).hosts[`[${profile.host}]:${profile.port}`];
+  assert.match(record.fingerprint,/^SHA256:/);assert.notEqual(record.fingerprint,JSON.parse(existing).hosts[`[${profile.host}]:${profile.port}`].fingerprint);
+  saved.service.disconnect(second.id);
+  const interactive=f.service();const dialog=await pendingQuestion(interactive.service,interactive.questions,{...profile,rememberHost:false});
+  interactive.service.confirmHostKey(dialog.question.requestId,'once');const result=await dialog.result;assert.ok(result.session);interactive.service.disconnect(result.session.id);
+}));

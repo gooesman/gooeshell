@@ -25,8 +25,8 @@ export const mcpTools = {
     schema:connectionEndpoint.extend({name:connectionText.optional(),groupId:connectionText.optional(),icon:z.enum(['server','cloud','database','router','code','folder']).optional(),encoding:z.enum(['utf8','gb18030','big5']).default('utf8'),favorite:z.boolean().default(true),shellIntegration:z.boolean().default(false),jumpHost:connectionEndpoint.extend({name:connectionText.optional(),reuseConnection:z.boolean().default(true)}).optional()}),readOnly:false,
   },
   connect: {
-    description:'Reuse an existing SSH session or connect a saved connection using its GooeShell credentials and jump host. Missing credentials and host key confirmation must be handled in GooeShell; do not request passwords through this tool.',
-    schema:z.strictObject({connectionId:z.string().min(1).max(255)}), readOnly:false,
+    description:'Reuse an existing SSH session or connect a saved connection using its GooeShell credentials and jump host. hostKeyPolicy defaults to once: automatically accept without verifying or saving the server and jump host fingerprints. Use save only when the user explicitly requests persistent trust; this accepts and saves the presented fingerprints, replacing previous values. Missing credentials must be handled in GooeShell; never ask for passwords through this tool.',
+    schema:z.strictObject({connectionId:z.string().min(1).max(255),hostKeyPolicy:z.enum(['once','save']).default('once')}), readOnly:false,
   },
   run_command: {
     description:'Run a short command through an existing SSH connection on an independent channel. Each call has a fresh /bin/sh; use cwd for its working directory. sudo=true privately uses GooeShell credentials. Returns the actual command stdout, stderr and exit status. For background or longer work use start_task/read_task; do not infer task completion from tmux send-keys returning successfully. Never type credentials into terminal panes.',
@@ -75,6 +75,15 @@ export const mcpTools = {
   stop_transfer: {
     description:'Cancel a transfer by transferId. Remote partials are retained for verification/resume. Check read_transfer until cancelled/failed/completed; requesting cancellation alone does not prove that cleanup has finished.',
     schema:z.strictObject({transferId:z.string().uuid()}),readOnly:false,
+  },
+  show_in_app: {
+    description:'Show AI command activity, a managed tmux task, a remote log or a transfer in the GooeShell window. Task and log views refresh while open; transfer opens the existing queue. This does not type into or alter the user terminal. Showing a view is not proof that a task succeeded.',
+    schema:z.discriminatedUnion('kind',[
+      z.strictObject({kind:z.literal('activity')}),
+      z.strictObject({kind:z.literal('task'),sessionId:z.string().min(1).max(255),taskId:z.string().uuid()}),
+      z.strictObject({kind:z.literal('log'),sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/')}),
+      z.strictObject({kind:z.literal('transfer'),transferId:z.string().uuid()}),
+    ]),readOnly:false,
   },
 };
 export type McpToolName = keyof typeof mcpTools;

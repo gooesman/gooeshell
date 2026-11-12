@@ -58,7 +58,8 @@ const server=new Server({hostKeys:[key]},peer=>{
     session.on('shell',accept=>{shells++;const stream=accept();stream.write('FIXTURE>');stream.on('data',bytes=>foreground+=bytes.toString());});
     session.on('exec',(accept,_reject,info)=>{
       commands.push(info.command);lastInput='';const stream=accept();stream.on('data',bytes=>lastInput+=bytes.toString());
-      if(realShell){
+      if(info.command.includes('AI_STREAM_TEST'))stream.on('end',()=>{stream.write('AI_STREAM_FIRST');setTimeout(()=>{if(!stream.destroyed){stream.write('_END');stream.exit(0);stream.end();}},1200);});
+      else if(realShell){
         const run=linux('/usr/bin/env',[`MCP_FIXTURE_ROOT=${linuxRoot}`,`PATH=${linuxRoot}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,'/bin/sh','-c',info.command]);
         const child=spawn(run.program,run.args,{windowsHide:true,stdio:['pipe','pipe','pipe']});children.add(child);
         child.stdin.on('error',()=>{});stream.pipe(child.stdin);child.stdout.on('data',bytes=>stream.write(bytes));child.stderr.on('data',bytes=>stream.stderr.write(bytes));
@@ -123,6 +124,17 @@ async function run(){
   report.checks.descriptorRecovery=true;
   const result=await tool('run_command',{sessionId:reused.id,command:"printf 'MCP_中文\\n'; printf 'stderr\\n' >&2; exit 7"});
   assert.equal(result.stdout,'MCP_中文\n');assert.equal(result.stderr,'stderr\n');assert.equal(result.exitCode,7);assert.equal(foreground,'');assert.equal(authentications,1);
+  phase='AI activity and live output';
+  assert.equal((await tool('show_in_app',{kind:'activity'})).requested,true);
+  await until(()=>evaluate(`document.querySelector('.ai-activity')?.innerText.includes('MCP_中文')`),'command in activity');
+  const streaming=tool('run_command',{sessionId:reused.id,command:'AI_STREAM_TEST'});
+  await until(()=>evaluate(`document.querySelector('.ai-activity')?.innerText.includes('AI_STREAM_FIRST')`),'streaming output');
+  assert.equal((await streaming).stdout,'AI_STREAM_FIRST_END');
+  assert.equal((await tool('show_in_app',{kind:'log',sessionId:reused.id,path:'/tmp/fixture.log'})).requested,true);
+  await until(()=>evaluate(`document.querySelector('.ai-watch')?.innerText.includes('/tmp/fixture.log')`),'requested log view');
+  await evaluate(`document.querySelector('[aria-label="收起 AI 活动"]').click()`);
+  assert.equal(foreground,'','AI activity must not type into the user terminal');
+  report.checks.aiActivity=true;
   report.checks.identityAndTransportReuse=true;report.checks.foregroundPreserved=true;
   phase='managed sudo password';
   await tool('run_command',{sessionId:reused.id,command:'printf SUDO_OK',sudo:true});assert.equal(lastInput,'fixture-secret\n');
@@ -157,10 +169,18 @@ async function run(){
     const parallel=await Promise.all([0,7].map(code=>tool('start_task',{sessionId:reused.id,command:`printf PARALLEL_${code}; exit ${code}`})));
     assert.notEqual(parallel[0].paneId,parallel[1].paneId);assert.deepEqual((await Promise.all(parallel.map(finished))).map(task=>task.exitCode),[0,7]);
     const running=await tool('start_task',{sessionId:reused.id,command:'sleep 30'});assert.equal(running.state,'running');assert.equal(running.exitCode,null);
+    await tool('show_in_app',{kind:'task',sessionId:reused.id,taskId:running.taskId});
+    await until(()=>evaluate(`document.querySelector('.ai-watch')?.innerText.includes('运行中')`),'live task view');
     const signaled=await tool('stop_task',{sessionId:reused.id,taskId:running.taskId});assert.equal(signaled.state,'exited');assert.equal(signaled.exitCode,143,'terminated task preserves the shell status instead of inventing success');
+    await until(()=>evaluate(`document.querySelector('.ai-watch')?.innerText.includes('退出码 143')`),'task exit in view');
     await tool('run_command',{sessionId:reused.id,command:`printf 'first log\\n中文 log\\n' > '${linuxRoot}/follow.log'`});
     const log=await tool('read_log',{sessionId:reused.id,path:linuxRoot+'/follow.log',maxBytes:6});assert.equal(log.output,'first ');
     const logRest=await tool('read_log',{sessionId:reused.id,path:linuxRoot+'/follow.log',offset:log.nextOffset,cursor:log.cursor});assert.match(logRest.output,/中文 log/);assert.equal(logRest.reset,false);
+    await tool('show_in_app',{kind:'log',sessionId:reused.id,path:linuxRoot+'/follow.log'});
+    await until(()=>evaluate(`document.querySelector('.ai-watch')?.innerText.includes('中文 log')`),'live log first chunk');
+    await tool('run_command',{sessionId:reused.id,command:`echo NEW_LOG_LINE >> '${linuxRoot}/follow.log'`});
+    await until(()=>evaluate(`document.querySelector('.ai-watch')?.innerText.includes('NEW_LOG_LINE')`),'live log update');
+    await evaluate(`document.querySelector('[aria-label="收起 AI 活动"]').click()`);report.checks.liveTaskAndLog=true;
     await tool('run_command',{sessionId:reused.id,command:`rm -f '${linuxRoot}/cached'`});
     const privileged=await finished(await tool('start_task',{sessionId:reused.id,command:'printf PRIVATE_PIPE_SUDO_OK',sudo:true}));assert.equal(privileged.exitCode,0);assert.match(privileged.output,/PRIVATE_PIPE_SUDO_OK/);
     await tool('run_command',{sessionId:reused.id,command:`touch '${linuxRoot}/cached'`});

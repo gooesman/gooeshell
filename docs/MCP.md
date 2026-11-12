@@ -28,7 +28,7 @@ fsutil hardlink list "$env:APPDATA\gooeshell\mcp-bridge.json"
 | `list_sessions` | 无 | 当前 SSH 会话编号；`source=terminal` 属于普通终端，`source=mcp` 属于桥接 |
 | `list_connection_options` | 无 | 可用于新建连接的分组和共享登录身份的编号、名称、用户名及密码是否已保存，不包含密码 |
 | `create_connection` | `host`；可选 `name`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`groupId`、`icon`、`encoding`、`favorite`、`shellIntegration` 和 `jumpHost` | 保存 SSH 连接并返回编号与 `created`；默认收藏，不建立连接 |
-| `connect` | `connectionId` | 优先复用同配置的已连接会话；否则使用保存的身份在后台建立连接 |
+| `connect` | `connectionId`；可选 `hostKeyPolicy`：`once`（默认）或 `save` | 优先复用同配置的已连接会话；否则使用保存的身份在后台建立连接 |
 | `run_command` | `sessionId`、`command`；可选 `cwd`、`sudo`、`timeoutMs` | `stdout`、`stderr`、`exitCode`、`signal`、`truncated` |
 | `start_task` | `sessionId`、`command`；可选 `cwd`、`sudo` | `taskId`、tmux 会话/窗口/窗格编号、当前真实状态与退出码 |
 | `read_task` | `sessionId`、`taskId`；可选 `tailLines`（默认 200，范围 1–1000） | `running` / `finishing` / `exited`、`exitCode`、`signal`、最近合并输出及截断标记 |
@@ -41,14 +41,21 @@ fsutil hardlink list "$env:APPDATA\gooeshell\mcp-bridge.json"
 | `transfer_between_servers` | `sessionId`、`targetSessionId`、绝对 `source`、绝对 `destinationDir`；可选 `route` | 直推 / 反向拉取进入队列，返回 `transferId` |
 | `read_transfer` | `transferId` | 传输、校验、速度和路线状态；最近 200 项在程序运行期间保留 |
 | `stop_transfer` | `transferId` | 请求取消；之后使用 `read_transfer` 确认结束 |
+| `show_in_app` | `kind=activity`；或 `kind=task` 与 `sessionId`、`taskId`；或 `kind=log` 与 `sessionId`、绝对 `path`；或 `kind=transfer` 与 `transferId` | 请求在 GooeShell 显示命令活动、任务输出、跟踪日志或展开传输队列 |
 
-首次服务器指纹继续在 GooeShell 窗口中确认。没有可用密码时会返回 `AUTH_REQUIRED`，请在应用中连接或保存该连接的凭据，再重试；不用把密码写进聊天内容。
+AI 通过 `connect` 建立新连接时默认使用 `hostKeyPolicy=once`：自动接受目标服务器和跳板机给出的指纹，本次不核验已保存指纹，也不保存新指纹。仅当用户明确要求持久保存时使用 `hostKeyPolicy=save`；它会接受并保存本次目标服务器及跳板机指纹，已有不同记录会被替换。为了确保保存实际生效，`save` 会建立新的桥接连接，而不复用已有会话。**自动接受指纹不能验证服务器身份，可能将登录凭据交给冒充服务器；同一会话的后续连接仍会检查指纹是否改变。**普通桌面连接的确认方式和已有地址策略不受影响。没有可用密码时会返回 `AUTH_REQUIRED`，请在应用中连接或保存该连接的凭据，再重试；不用把密码写进聊天内容。
 
 ## 新建连接
 
 先用 `list_connection_options` 查找已有共享登录身份和侧边栏分组的编号，再调用 `create_connection`。`port` 默认 22，`auth` 默认 `password`；选用共享登录身份时使用 `loginIdentityId`，用户名由该身份提供。也可传入用户名并选择 `key`（`privateKeyPath` 为本机绝对路径）或 `agent`。`jumpHost` 可提供一层跳板机的 `host`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`rememberHost` 和 `reuseConnection`；默认端口 22、记住指纹、允许复用。目标连接支持 `groupId`、图标、编码、侧边栏收藏和 Bash 命令识别选项。
 
-接口不会接收密码、sudo 密码、私钥内容或口令。需要这些凭据时，请在 GooeShell 中保存身份或连接时输入。接口不建立 SSH 会话、不修改已有地址的指纹策略；连接时仍遵循现有主机指纹设置。相同地址、端口、身份验证及跳板机配置会返回已有连接（`created=false`），不会改写名称、收藏或凭据；同一地址的不同账号或身份可以分别保存。随后需要连接时，使用返回的 `connectionId` 调用 `connect`。CLI 操作名为 `list-connection-options` 和 `create-connection`。
+接口不会接收密码、sudo 密码、私钥内容或口令。需要这些凭据时，请在 GooeShell 中保存身份或连接时输入。接口不建立 SSH 会话、不修改已有地址的指纹策略；AI 随后调用 `connect` 时按上面的指纹选项处理。相同地址、端口、身份验证及跳板机配置会返回已有连接（`created=false`），不会改写名称、收藏或凭据；同一地址的不同账号或身份可以分别保存。随后需要连接时，使用返回的 `connectionId` 调用 `connect`。CLI 操作名为 `list-connection-options` 和 `create-connection`。
+
+## 在窗口中查看 AI 活动
+
+顶部“AI”活动按钮可展开独立面板。短命令显示命令文本、实时输出及实际退出码，后台任务显示启动状态并可点击查看；不会向已有终端输入内容。AI 也可使用 `show_in_app` 请求显示指定后台任务或持续跟踪普通日志文件；面板展开时约每两秒刷新，收起后停止读取。传输可通过同一接口展开现有文件管理与传输队列，查看进度、速度和剩余时间。
+
+活动记录仅保存在当前程序运行期间，最多保留最近 40 条。短命令输出受 64 KiB 上限约束，远程日志显示最近约 64 KiB；后台任务内容是 tmux 最近输出，并非完整日志。日志与任务依赖对应 SSH 会话；面板会显示读取错误和未知退出状态，不会把未知状态当成成功。
 
 ## 在服务器上编辑文本
 

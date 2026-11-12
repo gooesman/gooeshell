@@ -35,6 +35,7 @@ interface Session {
   id: string;
   profile: HostProfile;
   skipHostKeyVerification: boolean;
+  bridgeHostKeyDecision?: 'once' | 'save';
   credentials: Credentials;
   jumpCredentials: Credentials;
   skipJumpHostKeyVerification: boolean;
@@ -61,6 +62,7 @@ interface JumpTransport {
   profile: JumpHostProfile;
   credentials: Credentials;
   skipHostKeyVerification: boolean;
+  bridgeHostKeyDecision?: 'once' | 'save';
   storedFingerprint?: string;
   fingerprint?: string;
   client: Client;
@@ -171,6 +173,12 @@ export class SshService {
       throw new Error('此会话的后续连接返回了不同的服务器指纹，连接已拒绝，请重新连接并核实服务器身份。');
     }
     if (skip) { owner.fingerprint = fingerprint; return true; }
+    if (owner.bridgeHostKeyDecision) {
+      if (owner.bridgeHostKeyDecision === 'save') await this.saveFingerprint(trustKey, fingerprint);
+      if (owner.closed || this.stopped) return false;
+      owner.fingerprint = fingerprint;
+      return true;
+    }
     const previousFingerprint = profile.rememberHost
       ? (await this.trustStore()).hosts[trustKey]?.fingerprint
       : undefined;
@@ -239,7 +247,7 @@ export class SshService {
     // Passwords/private keys never become a map key, diagnostic or stored identifier.
     const hash = createHash('sha256');
     for (const value of [JSON.stringify([endpoint(profile), profile.username, profile.auth, profile.rememberHost,
-      session.skipJumpHostKeyVerification]), credentials.password ?? '', credentials.privateKey ?? '',
+      session.skipJumpHostKeyVerification, session.bridgeHostKeyDecision]), credentials.password ?? '', credentials.privateKey ?? '',
       credentials.passphrase ?? '', typeof credentials.agent === 'string' ? credentials.agent : '']) {
       const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
       hash.update(String(bytes.length)).update(':').update(bytes);
@@ -252,7 +260,7 @@ export class SshService {
     if (Buffer.isBuffer(credentials.privateKey)) credentials.privateKey = Buffer.from(credentials.privateKey);
     const jump: JumpTransport = {
       id: randomUUID(), poolKey, profile: { ...session.profile.jumpHost! }, credentials,
-      skipHostKeyVerification: session.skipJumpHostKeyVerification, storedFingerprint,
+      skipHostKeyVerification: session.skipJumpHostKeyVerification, bridgeHostKeyDecision: session.bridgeHostKeyDecision, storedFingerprint,
       client: new Client(), ready: Promise.resolve(), sessions: new Set(), abort: new AbortController(), closed: false, established: false,
     };
     this.jumps.add(jump);
@@ -287,7 +295,7 @@ export class SshService {
   private acquireJump(session: Session): Promise<JumpTransport> {
     return session.jumpReady ??= (async () => {
       const profile = session.profile.jumpHost!;
-      const storedFingerprint = profile.rememberHost && !session.skipJumpHostKeyVerification
+      const storedFingerprint = profile.rememberHost && !session.skipJumpHostKeyVerification && session.bridgeHostKeyDecision !== 'once'
         ? (await this.trustStore()).hosts[endpoint(profile)]?.fingerprint : undefined;
       if (session.closed || this.stopped) throw new Error('连接已关闭');
       const poolKey = profile.reuseConnection ? this.jumpPoolKey(session) : undefined;
@@ -505,6 +513,7 @@ export class SshService {
     } catch (error) { eraseCredentials(credentials); eraseCredentials(jumpCredentials); throw error; }
     const session: Session = {
       id: randomUUID(), profile, skipHostKeyVerification: request.skipHostKeyVerification === true,
+      bridgeHostKeyDecision: request.bridgeOnly ? request.bridgeHostKeyDecision : undefined,
       credentials, jumpCredentials, skipJumpHostKeyVerification: request.skipJumpHostKeyVerification === true,
       abort: new AbortController(), clients: new Set(), forwards: new Set(), pendingBytes: 0,
       terminalReady: false, terminalCols: 100, terminalRows: 30, closed: false,
@@ -931,7 +940,7 @@ export class SshService {
   }
 
   bridgeExec(request:BridgeCommand&{requestId:string;password?:string}){
-    return this.bridgeOperation(request,(client,encoding,signal)=>executeBridgeCommand(client,request,encoding,signal,request.password));
+    return this.bridgeOperation(request,(client,encoding,signal)=>executeBridgeCommand(client,request,encoding,signal,request.password,text=>this.emit({type:'aiOutput',id:request.requestId,text})));
   }
   bridgeStartTask(request:BridgeTaskStart&{requestId:string;password?:string}){
     return this.bridgeOperation(request,(client,encoding,signal)=>startBridgeTask(client,request,encoding,signal,request.password));

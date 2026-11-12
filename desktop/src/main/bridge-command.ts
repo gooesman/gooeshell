@@ -8,7 +8,7 @@ export function bridgeScript(request:Pick<BridgeCommand,'command'|'cwd'>):string
   if(request.cwd!==undefined&&(typeof request.cwd!=='string'||!request.cwd.startsWith('/')||request.cwd.length>2048||request.cwd.includes('\0')))throw new Error('工作目录必须是远程绝对路径');
   return(request.cwd?'cd '+quote(request.cwd)+' && ':'')+'exec /bin/sh -c '+quote(request.command)+' < /dev/null';
 }
-export function executeBridgeCommand(client:Client,request:BridgeCommand,encoding:string,signal:AbortSignal,password?:string):Promise<BridgeCommandResult>{
+export function executeBridgeCommand(client:Client,request:BridgeCommand,encoding:string,signal:AbortSignal,password?:string,onOutput?:(text:string)=>void):Promise<BridgeCommandResult>{
   const script=bridgeScript(request);
   if(!Number.isInteger(request.timeoutMs)||request.timeoutMs<100||request.timeoutMs>60000||typeof request.sudo!=='boolean')throw new Error('命令选项无效');
   if(password!==undefined&&/[\0\r\n]/.test(password))throw new Error('sudo 密码包含不支持的换行字符，请在终端中手动认证');
@@ -16,21 +16,23 @@ export function executeBridgeCommand(client:Client,request:BridgeCommand,encodin
   // Redirect inside the privileged shell: a cached/NOPASSWD sudo must never
   // leave an unread password available on the user's command stdin.
   const command=request.sudo?'sudo '+(password===undefined?'-n':'-S -p \'\'')+' -- /bin/sh -c '+quote(script):'/bin/sh -c '+quote(script);
-  return executeBridgeChannel(client,command,encoding,signal,request.timeoutMs,request.sudo&&password!==undefined?Buffer.from(password+'\n','utf8'):undefined);
+  return executeBridgeChannel(client,command,encoding,signal,request.timeoutMs,request.sudo&&password!==undefined?Buffer.from(password+'\n','utf8'):undefined,onOutput);
 }
-export function executeBridgeChannel(client:Client,command:string,encoding:string,signal:AbortSignal,timeoutMs:number,input?:Buffer):Promise<BridgeCommandResult>{
+export function executeBridgeChannel(client:Client,command:string,encoding:string,signal:AbortSignal,timeoutMs:number,input?:Buffer,onOutput?:(text:string)=>void):Promise<BridgeCommandResult>{
   signal.throwIfAborted();
   return new Promise((resolve,reject)=>{
     let stream:ClientChannel|undefined,settled=false,bytes=0,truncated=false,exitCode:number|null=null,exitSignal:string|null=null;
     const stdout:Buffer[]=[],stderr:Buffer[]=[];
-    const finish=(error?:Error)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',abort);if(error){stream?.destroy();reject(error);}else resolve({stdout:iconv.decode(Buffer.concat(stdout),encoding),stderr:iconv.decode(Buffer.concat(stderr),encoding),exitCode,signal:exitSignal,truncated});};
+    const outDecoder=iconv.getDecoder(encoding),errDecoder=iconv.getDecoder(encoding);let pending='',outputTimer:ReturnType<typeof setTimeout>|undefined;
+    const flush=()=>{if(outputTimer)clearTimeout(outputTimer);outputTimer=undefined;if(pending){onOutput?.(pending);pending='';}};
+    const finish=(error?:Error)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',abort);if(onOutput){pending+=(outDecoder.end()||'')+(errDecoder.end()||'');flush();}if(error){stream?.destroy();reject(error);}else resolve({stdout:iconv.decode(Buffer.concat(stdout),encoding),stderr:iconv.decode(Buffer.concat(stderr),encoding),exitCode,signal:exitSignal,truncated});};
     const abort=()=>finish(new Error('MCP 命令已取消；已启动的独立 tmux 任务会继续运行'));
     const timer=setTimeout(()=>finish(new Error('命令执行超时；后台任务请使用 start_task，并通过 read_task 确认状态')),timeoutMs);
-    const append=(chunks:Buffer[],data:Buffer)=>{const take=Math.min(data.length,Math.max(0,65536-bytes));if(take)chunks.push(Buffer.from(data.subarray(0,take)));bytes+=take;if(take<data.length)truncated=true;};
+    const append=(chunks:Buffer[],data:Buffer,decoder:typeof outDecoder)=>{const take=Math.min(data.length,Math.max(0,65536-bytes));if(take){const part=Buffer.from(data.subarray(0,take));chunks.push(part);if(onOutput){pending+=decoder.write(part);if(!outputTimer)outputTimer=setTimeout(flush,100);}}bytes+=take;if(take<data.length)truncated=true;};
     signal.addEventListener('abort',abort,{once:true});
     try{client.exec(command,(error,channel)=>{
       if(settled){channel?.destroy();return;}if(error){finish(new Error(error.message));return;}stream=channel;
-      channel.on('data',(data:Buffer)=>append(stdout,data));channel.stderr.on('data',(data:Buffer)=>append(stderr,data));
+      channel.on('data',(data:Buffer)=>append(stdout,data,outDecoder));channel.stderr.on('data',(data:Buffer)=>append(stderr,data,errDecoder));
       channel.once('error',(error:Error)=>finish(error));channel.once('exit',(code:number,signal?:string)=>{exitCode=Number.isInteger(code)?code:null;exitSignal=signal||null;});channel.once('close',()=>finish());
       channel.end(input);
     });}catch(error){finish(error instanceof Error?error:new Error('命令启动失败'));}

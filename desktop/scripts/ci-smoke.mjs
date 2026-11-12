@@ -175,7 +175,7 @@ try {
   const mcpTransport=new StdioClientTransport({...mcpEnabled.result.value.config,stderr:'pipe'});let mcpErrors='';
   mcpTransport.stderr.on('data',bytes=>mcpErrors+=bytes.toString());
   mcpClient=new McpClient({name:'gooeshell-package-check',version:'1.0.0'});await mcpClient.connect(mcpTransport);
-  assert.deepEqual((await mcpClient.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer']);
+  assert.deepEqual((await mcpClient.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer','show_in_app']);
   const mcpConnections=await mcpClient.callTool({name:'list_connections',arguments:{}});
   assert.equal(mcpConnections.isError,undefined);assert.deepEqual(JSON.parse(mcpConnections.content[0].text),[]);
   const descriptorFile=mcpEnabled.result.value.config.args[1];
@@ -212,7 +212,7 @@ try {
   await call('Runtime.evaluate',{expression:'window.gooeshell.setMcpEnabled(false)',returnByValue:true,awaitPromise:true});
   assert.equal((await mcpClient.callTool({name:'list_sessions',arguments:{}})).isError,true);
   await mcpClient.close();mcpClient=undefined;assert.equal(mcpErrors,'');
-  state.mcp={stdio:true,tools:17,revoked:true,descriptorRecovery:true,cli:true,remoteHelper:helperCheck};
+  state.mcp={stdio:true,tools:18,revoked:true,descriptorRecovery:true,cli:true,remoteHelper:helperCheck};
   const fileRoot = await fs.mkdtemp(path.join(output, 'smoke-files-'));
   const selected = path.join(fileRoot, 'selected'), leaf = path.join(selected, 'new.txt');
   const keep = path.join(fileRoot, 'keep.txt'); await fs.writeFile(keep, 'outside selected tree');

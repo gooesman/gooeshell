@@ -22,7 +22,7 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   t.after(async()=>{await client.close();await bridge.stop();});
   await bridge.load();assert.equal(bridge.status().enabled,false);
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer']);
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer','show_in_app']);
   assert.equal((await client.callTool({name:'list_connections',arguments:{}})).isError,true,'disabled bridge cannot be used');
   await bridge.setEnabled(true);
   const descriptor=JSON.parse(await fs.readFile(bridge.file,'utf8')),url=`http://127.0.0.1:${descriptor.port}/call`;
@@ -36,10 +36,13 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   assert.equal((await request({tool:'create_connection',arguments:{host:'fixture.invalid',username:'test',password:'must-not-be-accepted'}})).status,400);
   assert.equal((await request({tool:'start_task',arguments:{sessionId:'fixture',command:'true',password:'must-not-be-accepted'}})).status,400);
   assert.equal((await request({tool:'read_task',arguments:{sessionId:'fixture',taskId:'bad; kill-server'}})).status,400);
+  assert.equal((await request({tool:'show_in_app',arguments:{kind:'log',sessionId:'fixture',path:'relative'}})).status,400);
+  assert.equal((await request({tool:'connect',arguments:{connectionId:'fixture',hostKeyPolicy:'unsafe'}})).status,400);
   assert.equal(calls.length,0,'untrusted and invalid requests never reach connection logic');
   const listed=await client.callTool({name:'list_connections',arguments:{}});
   assert.equal(listed.isError,undefined);assert.match(JSON.stringify(listed),/Fixture/);
   assert.equal((await client.callTool({name:'connect',arguments:{connectionId:'fixture'}})).isError,undefined);
+  const saved=await request({tool:'connect',arguments:{connectionId:'fixture',hostKeyPolicy:'save'}});assert.equal(saved.status,200);
   assert.equal((await client.callTool({name:'run_command',arguments:{sessionId:'session',command:'x',timeoutMs:999999}})).isError,true);
   const pending=client.callTool({name:'run_command',arguments:{sessionId:'session',command:'pending'}});
   const end=Date.now()+5000;while(!calls.includes('run_command')){assert.ok(Date.now()<end);await new Promise(resolve=>setTimeout(resolve,10));}
