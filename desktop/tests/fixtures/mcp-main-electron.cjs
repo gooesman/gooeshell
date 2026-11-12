@@ -57,7 +57,7 @@ const server=new Server({hostKeys:[key]},peer=>{
     const session=accept();session.on('pty',accept=>accept?.());session.on('window-change',accept=>accept?.());
     session.on('shell',accept=>{shells++;const stream=accept();stream.write('FIXTURE>');stream.on('data',bytes=>foreground+=bytes.toString());});
     session.on('exec',(accept,_reject,info)=>{
-      commands.push(info.command);lastInput='';const stream=accept();stream.on('data',bytes=>lastInput+=bytes.toString());
+      commands.push(info.command);const sudo=info.command.startsWith('sudo ');if(sudo)lastInput='';const stream=accept();stream.on('data',bytes=>{if(sudo)lastInput+=bytes.toString();});
       if(info.command.includes('AI_STREAM_TEST'))stream.on('end',()=>{stream.write('AI_STREAM_FIRST');setTimeout(()=>{if(!stream.destroyed){stream.write('_END');stream.exit(0);stream.end();}},1200);});
       else if(realShell){
         const run=linux('/usr/bin/env',[`MCP_FIXTURE_ROOT=${linuxRoot}`,`PATH=${linuxRoot}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,'/bin/sh','-c',info.command]);
