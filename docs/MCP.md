@@ -27,7 +27,7 @@ fsutil hardlink list "$env:APPDATA\gooeshell\mcp-bridge.json"
 | `list_connections` | 无 | 保存的连接编号、名称、地址、用户名和登录身份名称 |
 | `list_sessions` | 无 | 当前 SSH 会话编号；`source=terminal` 属于普通终端，`source=mcp` 属于桥接 |
 | `list_connection_options` | 无 | 可用于新建连接的分组和共享登录身份的编号、名称、用户名及密码是否已保存，不包含密码 |
-| `create_connection` | `host`；可选 `name`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`groupId`、`icon`、`encoding`、`favorite`、`shellIntegration` 和 `jumpHost` | 保存 SSH 连接并返回编号与 `created`；默认收藏，不建立连接 |
+| `create_connection` | `host`；可选 `name`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`groupId`、`icon`、`encoding`、`favorite`、`shellIntegration` 和 `jumpHost` | 保存 SSH 连接并返回编号与 `created`；默认不加入侧边栏，不建立连接 |
 | `connect` | `connectionId`；可选 `hostKeyPolicy`：`once`（默认）或 `save` | 优先复用同配置的已连接会话；否则使用保存的身份在后台建立连接 |
 | `run_command` | `sessionId`、`command`；可选 `cwd`、`sudo`、`timeoutMs` | `stdout`、`stderr`、`exitCode`、`signal`、`truncated` |
 | `start_task` | `sessionId`、`command`；可选 `cwd`、`sudo` | `taskId`、tmux 会话/窗口/窗格编号、当前真实状态与退出码 |
@@ -47,7 +47,7 @@ AI 通过 `connect` 建立新连接时默认使用 `hostKeyPolicy=once`：自动
 
 ## 新建连接
 
-先用 `list_connection_options` 查找已有共享登录身份和侧边栏分组的编号，再调用 `create_connection`。`port` 默认 22，`auth` 默认 `password`；选用共享登录身份时使用 `loginIdentityId`，用户名由该身份提供。也可传入用户名并选择 `key`（`privateKeyPath` 为本机绝对路径）或 `agent`。`jumpHost` 可提供一层跳板机的 `host`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`rememberHost` 和 `reuseConnection`；默认端口 22、记住指纹、允许复用。目标连接支持 `groupId`、图标、编码、侧边栏收藏和 Bash 命令识别选项。
+先用 `list_connection_options` 查找已有共享登录身份和侧边栏分组的编号，再调用 `create_connection`。`port` 默认 22，`auth` 默认 `password`；选用共享登录身份时使用 `loginIdentityId`，用户名由该身份提供。也可传入用户名并选择 `key`（`privateKeyPath` 为本机绝对路径）或 `agent`。`jumpHost` 可提供一层跳板机的 `host`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`rememberHost` 和 `reuseConnection`；默认端口 22、记住指纹、允许复用。目标连接支持 `groupId`、图标、编码和 Bash 命令识别选项。`favorite` 默认 `false`，只有用户明确要求加入侧边栏时才传 `true`。
 
 接口不会接收密码、sudo 密码、私钥内容或口令。需要这些凭据时，请在 GooeShell 中保存身份或连接时输入。接口不建立 SSH 会话、不修改已有地址的指纹策略；AI 随后调用 `connect` 时按上面的指纹选项处理。相同地址、端口、身份验证及跳板机配置会返回已有连接（`created=false`），不会改写名称、收藏或凭据；同一地址的不同账号或身份可以分别保存。随后需要连接时，使用返回的 `connectionId` 调用 `connect`。CLI 操作名为 `list-connection-options` 和 `create-connection`。
 

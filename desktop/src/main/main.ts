@@ -367,6 +367,8 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'deleteHistory':return store.deleteHistory(value);
    case 'saveGroup':return store.saveGroup(value);
    case 'deleteGroup':return store.deleteGroup(value);
+   case 'moveConnections':return store.moveConnections(value);
+   case 'moveConnectionGroup':return store.moveConnectionGroup(value);
    case 'credentialStatus':return connectionCredentialStatus(value);
    case 'saveCredentials':return identityMutation(async()=>{
     const profile=(await resolveLoginIdentities(identities,await store.resolveConnection(cleanProfile(value.profile)),{targetPassword:false,jumpPassword:false})).profile;const saved=(await store.connections()).find(candidate=>candidate.id===profile.id);

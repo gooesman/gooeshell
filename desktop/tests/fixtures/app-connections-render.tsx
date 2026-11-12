@@ -17,6 +17,7 @@ const control = {
   calls, holdConnect: false, clipboardText: '',
   releaseConnect: () => { held?.(); held = null; },
   state: () => api.connections(),
+  addConnection: async (id:string,groupId:string) => { await api.saveConnection({profile:{...initial.profiles[0],id,name:id,host:`${id}.example.test`,groupId},favorite:true}); eventListeners.forEach(handler=>handler({type:'connectionsChanged'})); },
   commandLibrary: () => api.commandLibrary(),
   settings: () => api.initial().then(value => value.settings),
   disconnect: (id: string) => api.disconnect(id),

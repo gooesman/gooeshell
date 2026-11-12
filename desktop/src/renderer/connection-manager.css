@@ -57,7 +57,7 @@
 .connection-sidebar.collapsed .sidebar-actions .item-label { display: none; }
 .sidebar.connection-sidebar.collapsed .connection-heading { display: flex; justify-content: center; padding: 0 7px 9px; }
 .sidebar.connection-sidebar.collapsed .connection-heading > span { display: none; }
-.sidebar.connection-sidebar.collapsed .connection-heading .icon-button { width: 30px; height: 26px; }
+.sidebar.connection-sidebar.collapsed .connection-heading .icon-button { width: 20px; height: 26px; }
 .connection-sidebar.collapsed .connection-group { margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
 .connection-sidebar.collapsed .connection-group:last-child { border: 0; }
 .connection-sidebar.collapsed .hosts { overflow-x: hidden; }
@@ -85,3 +85,17 @@
 .identity-select select { min-width: 0; flex: 1; }
 .identity-select .connection-inline-note { margin-top: 7px; }
 .connection-auth-dialog .checkbox-row { margin-top: 15px; font-size: 11px; }
+.connection-heading-actions { display:flex; align-items:center; gap:2px; }
+.connection-manage-bar { display:flex; align-items:center; gap:8px; padding:4px 12px 8px; color:var(--text-muted); font-size:11px; }
+.connection-manage-bar span { flex:1; text-align:center; }
+.connection-manage-bar button { border:0; background:transparent; color:var(--text-muted); cursor:pointer; }
+.connection-manage-bar button:hover:not(:disabled) { color:var(--text); }
+.connection-manage-bar button:disabled { opacity:.45; cursor:default; }
+.connection-sidebar .host.managing { cursor:grab; }
+.connection-sidebar .host.managing:active { cursor:grabbing; }
+.connection-sidebar .host.managing.checked { border-color:var(--border-strong); background:var(--surface-selected); }
+.connection-sidebar .manage-check { flex:none; color:var(--text-muted); }
+.connection-sidebar .host.checked .manage-check { color:var(--text); }
+.connection-group-heading { display:flex; align-items:center; }
+.group-drag-handle { display:flex; align-items:center; color:var(--text-muted); cursor:grab; }
+.group-drag-handle:active { cursor:grabbing; }

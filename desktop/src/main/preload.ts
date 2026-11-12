@@ -11,6 +11,7 @@ const api: DesktopApi = {
   initial:()=>call('initial'),saveProfile:p=>call('saveProfile',p),deleteProfile:id=>call('deleteProfile',id),
   connections:()=>call('connections'),saveConnection:r=>call('saveConnection',r),deleteConnection:id=>call('deleteConnection',id),deleteHistory:id=>call('deleteHistory',id),
   saveGroup:g=>call('saveGroup',g),deleteGroup:id=>call('deleteGroup',id),
+  moveConnections:r=>call('moveConnections',r),moveConnectionGroup:r=>call('moveConnectionGroup',r),
   commandLibrary:()=>call('commandLibrary'),saveCommandGroup:g=>call('saveCommandGroup',g),deleteCommandGroup:id=>call('deleteCommandGroup',id),
   saveCommand:c=>call('saveCommand',c),deleteCommand:id=>call('deleteCommand',id),sendCommand:r=>call('sendCommand',r),
   credentialStatus:p=>call('credentialStatus',p),saveCredentials:r=>call('saveCredentials',r),forgetCredentials:id=>call('forgetCredentials',id),forgetJumpCredentials:p=>call('forgetJumpCredentials',p),

@@ -3,6 +3,8 @@ import type {McpStatus,AiView,AiActivity,BridgeTaskResult} from './mcp';
 import type {UpdateRelease} from './update';
 export type ConnectionIcon = 'server' | 'cloud' | 'database' | 'router' | 'code' | 'folder';
 export interface ConnectionGroup { id: string; name: string; icon: ConnectionIcon; order: number; }
+export interface MoveConnectionsRequest { ids:string[]; groupId?:string; beforeId?:string; }
+export interface MoveConnectionGroupRequest { id:string; beforeId?:string; }
 export type CredentialRemember = 'never' | 'session' | 'persistent';
 export interface JumpCredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; updateSharedIdentity?: boolean; }
 export interface CredentialUpdate { remember: CredentialRemember; password?: string; passphrase?: string; sudoPassword?: string; sudoUsesLogin: boolean; jump?: JumpCredentialUpdate; updateSharedIdentity?: boolean; }
@@ -160,6 +162,8 @@ export interface DesktopApi {
   deleteHistory(id: string): Promise<void>;
   saveGroup(group: ConnectionGroup): Promise<void>;
   deleteGroup(id: string): Promise<void>;
+  moveConnections(request:MoveConnectionsRequest):Promise<void>;
+  moveConnectionGroup(request:MoveConnectionGroupRequest):Promise<void>;
   credentialStatus(profile: HostProfile): Promise<CredentialStatus>;
   saveCredentials(request: { profile: HostProfile; credentials: CredentialUpdate }): Promise<void>;
   forgetCredentials(profileId: string): Promise<void>;

@@ -7,7 +7,7 @@ import {connectionIdentity,connectionConfigurationIdentity} from '../shared/conn
 import {cleanJumpProfile} from './jump-profile';
 import {normalizeTerminalPalette} from '../shared/terminal-palettes';
 import {normalizeEditorExtension} from '../shared/external-editor';
-import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,ConnectionGroup,ConnectionIcon} from '../shared/types';
+import type {HostProfile,AppSettings,ConnectionHistoryEntry,HostKeyPreference,ConnectionGroup,ConnectionIcon,MoveConnectionsRequest,MoveConnectionGroupRequest} from '../shared/types';
 const connectionIcons=new Set<ConnectionIcon>(['server','cloud','database','router','code','folder']);
 function identifier(input:unknown,label='连接'):string{
   if(typeof input!=='string'||!input.trim()||input.length>255||/[\0\r\n]/.test(input))throw new Error(`${label}标识无效`);
@@ -224,6 +224,35 @@ export class Store {
   async deleteConnection(id:string){const safe=identifier(id);return this.catalog(catalog=>{
     catalog.records=catalog.records.filter(record=>record.profile.id!==safe);catalog.history=catalog.history.filter(entry=>entry.connectionId!==safe);
   },true);}
+  async moveConnections(request:MoveConnectionsRequest):Promise<void>{
+    if(!request||!Array.isArray(request.ids)||!request.ids.length||request.ids.length>10000)throw new Error('请选择要移动的连接');
+    const ids=request.ids.map(value=>identifier(value)),selected=new Set(ids);
+    if(selected.size!==ids.length)throw new Error('连接选择重复');
+    const groupId=request.groupId?identifier(request.groupId,'分组'):undefined,beforeId=request.beforeId?identifier(request.beforeId):undefined;
+    return this.catalog(catalog=>{
+      if(groupId&&!catalog.groups.some(group=>group.id===groupId))throw new Error('目标分组不存在，请重新加载');
+      const byId=new Map(catalog.records.map(record=>[record.profile.id,record]));
+      const moved=ids.map(id=>byId.get(id));
+      if(moved.some(record=>!record||!record.favorite))throw new Error('所选连接已变化，请重新加载');
+      const remaining=catalog.records.filter(record=>!selected.has(record.profile.id));
+      const target=beforeId?remaining.findIndex(record=>record.profile.id===beforeId&&record.favorite&&record.profile.groupId===groupId):-1;
+      if(beforeId&&target<0)throw new Error('目标连接已变化，请重新加载');
+      for(const record of moved){if(groupId)record!.profile.groupId=groupId;else delete record!.profile.groupId;}
+      let last=-1;remaining.forEach((record,index)=>{if(record.favorite&&record.profile.groupId===groupId)last=index;});
+      remaining.splice(beforeId?target:last<0?remaining.length:last+1,0,...moved as ConnectionRecord[]);catalog.records=remaining;
+    },true);
+  }
+  async moveConnectionGroup(request:MoveConnectionGroupRequest):Promise<void>{
+    if(!request)throw new Error('分组移动请求无效');
+    const id=identifier(request.id,'分组'),beforeId=request.beforeId?identifier(request.beforeId,'分组'):undefined;
+    return this.catalog(catalog=>{
+      const group=catalog.groups.find(value=>value.id===id);if(!group)throw new Error('所选分组不存在，请重新加载');
+      const remaining=catalog.groups.filter(value=>value.id!==id);
+      const index=beforeId?remaining.findIndex(value=>value.id===beforeId):remaining.length;
+      if(index<0)throw new Error('目标分组不存在，请重新加载');
+      remaining.splice(index,0,group);catalog.groups=remaining.map((value,order)=>({...value,order}));
+    },true);
+  }
   async groups():Promise<ConnectionGroup[]>{return this.catalog(catalog=>catalog.groups);}
   async saveGroup(group:ConnectionGroup):Promise<void>{const safe=cleanGroup(group);return this.catalog(catalog=>{
     const index=catalog.groups.findIndex(value=>value.id===safe.id);if(index<0)catalog.groups.push(safe);else catalog.groups[index]=safe;

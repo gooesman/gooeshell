@@ -25,6 +25,7 @@ test('full App creates independent home tabs, connects in place, and preserves c
   for (const name of ['compactSidebarPreservesGroupActions', 'nativeMenusTargetSameNameTerminals', 'sidebarStatusUsesConnectionIdentity']) assert.equal(result.checks[name], true, name);
   for (const name of ['onlineRefreshShortcutPreservesWorkspace', 'homeRefreshShortcutPreservesWorkspace', 'settingsRefreshShortcutPreservesDraft']) assert.equal(result.checks[name], true, name);
   assert.equal(result.checks.simplifiedToolbarAndSettingsEntry, true);
+  assert.equal(result.checks.sidebarBatchManagement, true);
   assert.equal(result.checks.maximizeShortcutPreservesWorkspace, true);
   assert.equal(result.checks.pasteQueueOverridesCustomAppShortcut, true);
   for (const name of ['pasteWholeAfterCollapsedTabSwitch', 'pasteLinesAfterCollapsedTabSwitch', 'pasteEditorAfterCollapsedTabSwitch', 'pasteChoiceAfterFilesCollapse']) assert.equal(result.checks[name], true, name);

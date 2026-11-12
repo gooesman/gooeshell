@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {promises as fs} from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import {Store} from '../src/main/store';
+import type {HostProfile} from '../src/shared/types';
+
+test('sidebar moves persist connection and group order without changing credentials or hidden records',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-sidebar-order-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const store=new Store(root);
+  for(const [id,order] of [['a',0],['b',1],['c',2]] as const)await store.saveGroup({id,name:id,icon:'folder',order});
+  const profile=(id:string,groupId?:string):HostProfile=>({id,name:id,host:`${id}.invalid`,port:22,username:'test',auth:'password',rememberHost:true,encoding:'utf8',...(groupId?{groupId}:{})});
+  for(const [id,group] of [['one','a'],['hidden','a'],['two','a'],['three','b'],['four','b'],['five',undefined]] as const)await store.saveConnection(profile(id,group),id!=='hidden');
+  await store.recordConnection(profile('one','a'),true,true);
+  await store.moveConnections({ids:['one','two'],groupId:'b',beforeId:'four'});
+  let current=await store.profiles();assert.deepEqual(current.map(value=>value.id),['three','one','two','four','five']);
+  assert.deepEqual(current.filter(value=>value.groupId==='b').map(value=>value.id),['three','one','two','four']);
+  assert.equal((await store.connections()).find(value=>value.id==='hidden')?.groupId,'a');
+  assert.equal((await store.history())[0].profile.groupId,'b');
+  await store.moveConnections({ids:['four'],groupId:undefined,beforeId:'five'});
+  current=await new Store(root).profiles();assert.deepEqual(current.filter(value=>!value.groupId).map(value=>value.id),['four','five']);
+  await store.moveConnectionGroup({id:'c',beforeId:'a'});assert.deepEqual((await new Store(root).groups()).map(value=>value.id),['c','a','b']);
+  const before=await fs.readFile(path.join(root,'connections.json'),'utf8');
+  await assert.rejects(store.moveConnections({ids:['one','missing'],groupId:'a'}),/已变化/);
+  await assert.rejects(store.moveConnections({ids:['hidden'],groupId:'a'}),/已变化/);
+  await assert.rejects(store.moveConnections({ids:['one'],groupId:'a',beforeId:'three'}),/目标连接已变化/);
+  await assert.rejects(store.moveConnections({ids:['one'],groupId:'missing'}),/目标分组不存在/);
+  await assert.rejects(store.moveConnectionGroup({id:'c',beforeId:'missing'}),/目标分组不存在/);
+  assert.equal(await fs.readFile(path.join(root,'connections.json'),'utf8'),before,'invalid moves do not write partial changes');
+});

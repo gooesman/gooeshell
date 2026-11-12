@@ -154,11 +154,40 @@ async function run() {
   assert.equal(await connectCount(), 0);
   result.checks.groupCreateMoveAndSort = true;
 
+  phase = 'sidebar management selects, drags and deletes connections';
+  await evaluate(`window.appConnectionsFixture.addConnection('fixture-one','development').then(()=>window.appConnectionsFixture.addConnection('fixture-two','development'))`);
+  await until(()=>evaluate(`document.querySelectorAll('.host').length===3`),'fixture connections');
+  await click('管理连接');
+  const firstHost='[aria-label^="fixture-one，"]',secondHost='[aria-label^="fixture-two，"]';
+  await evaluate(`document.querySelector(${JSON.stringify(firstHost)}).click();document.querySelector(${JSON.stringify(secondHost)}).click()`);
+  assert.equal(await connectCount(),0);assert.match(await evaluate(`document.querySelector('.connection-manage-bar').textContent`),/已选 2/);
+  await picture('dark-management');
+  await evaluate(`(()=>{const source=document.querySelector(${JSON.stringify(firstHost)}),target=document.querySelector(${JSON.stringify(groupToggle)}).closest('.connection-group-heading'),data=new DataTransfer();source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:data}));target.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:data}));target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data}));source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:data}));})()`);
+  await until(()=>evaluate(`document.getElementById(${JSON.stringify('connection-group-'+newGroupId)}).querySelectorAll('.host').length===3`),'selected connections moved');
+  await evaluate(`(()=>{const source=document.querySelector(${JSON.stringify(secondHost)}),target=document.querySelector(${JSON.stringify(firstHost)}),r=target.getBoundingClientRect(),data=new DataTransfer();source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:data}));target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data,clientY:r.top+1}));source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:data}));})()`);
+  // Both selected rows are moved together; dropping onto another selected row is a no-op.
+  await delay(100);assert.equal(await connectCount(),0);
+  await evaluate(`document.querySelector(${JSON.stringify(firstHost)}).click()`);
+  await evaluate(`(()=>{const source=document.querySelector(${JSON.stringify(secondHost)}),target=[...document.getElementById(${JSON.stringify('connection-group-'+newGroupId)}).querySelectorAll('.host')].find(e=>e.textContent.includes('开发工作站')),r=target.getBoundingClientRect(),data=new DataTransfer();source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:data}));target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data,clientY:r.top+1}));source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:data}));})()`);
+  await until(()=>evaluate(`document.getElementById(${JSON.stringify('connection-group-'+newGroupId)}).querySelector('.host').textContent.includes('fixture-two')`),'connection reordered');
+  await evaluate(`document.querySelector(${JSON.stringify(firstHost)}).click()`);
+  await evaluate(`(()=>{const source=document.querySelector('.connection-group[aria-label="开发环境"] .group-drag-handle'),target=document.querySelector(${JSON.stringify(groupToggle)}).closest('.connection-group-heading'),r=target.getBoundingClientRect(),data=new DataTransfer();source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:data}));target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data,clientY:r.top+1}));source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:data}));})()`);
+  await until(()=>evaluate(`document.querySelector('.connection-group').getAttribute('aria-label')==='开发环境'`),'group dragged');
+  await evaluate(`(()=>{const source=document.querySelector('.connection-group[aria-label="实验设备"] .group-drag-handle'),target=document.querySelector('.connection-group[aria-label="开发环境"] .connection-group-heading'),r=target.getBoundingClientRect(),data=new DataTransfer();source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:data}));target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data,clientY:r.top+1}));source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:data}));})()`);
+  await until(()=>evaluate(`document.querySelector('.connection-group').getAttribute('aria-label')==='实验设备'`),'group order restored');
+  await click('删除');await until(()=>evaluate(`document.querySelector('[role="dialog"]')?.textContent.includes('2 个连接')`),'bulk delete confirmation');
+  assert.equal(await evaluate(`window.appConnectionsFixture.state().then(state=>state.profiles.length)`),3);
+  await click('取消');await noDialog();await click('删除');await click('确认删除');await noDialog();
+  await until(()=>evaluate(`document.querySelectorAll('.host').length===1`),'selected connections deleted');
+  await click('完成连接管理');assert.equal(await connectCount(),0);result.checks.sidebarBatchManagement=true;
+
   phase = 'compact sidebar preserves groups, folding and native group actions';
   await mouse(groupToggle);
   assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), true);
   await click('折叠侧边栏');
   await until(() => evaluate(`document.querySelector('#server-sidebar').classList.contains('collapsed')`), 'sidebar folded');
+  await click('管理连接');await until(()=>evaluate(`!document.querySelector('#server-sidebar').classList.contains('collapsed') && Boolean(document.querySelector('.connection-manage-bar'))`),'management expands collapsed sidebar');
+  await click('完成连接管理');await click('折叠侧边栏');
   assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), true, 'collapsing sidebar must retain the group folding state');
   await mouse(groupToggle);
   assert.equal(await evaluate(`document.getElementById(${JSON.stringify('connection-group-' + newGroupId)}).hidden`), false);

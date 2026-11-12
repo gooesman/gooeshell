@@ -21,7 +21,9 @@ test('MCP connection creation keeps credentials private, resolves identities and
   assert.throws(()=>parse({host:'a.invalid',username:'alice',jumpHost:{host:'hop.invalid',username:'bob',password:'secret'}}));
   assert.throws(()=>parse({host:'a.invalid',username:'alice',port:70000}));
   const signal=new AbortController().signal;
-  const request=parse({name:'主机',host:'a.invalid',loginIdentityId:identity.id,groupId:'group'});
+  const hidden=await createBridgeConnection(store,identities,parse({name:'不收藏',host:'hidden.invalid',loginIdentityId:identity.id}),signal);
+  assert.equal(hidden.created,true);assert.equal((await store.profiles()).length,0);assert((await store.connections()).some(item=>item.id===hidden.connectionId));
+  const request=parse({name:'主机',host:'a.invalid',loginIdentityId:identity.id,groupId:'group',favorite:true});
   const created=await createBridgeConnection(store,identities,request,signal);
   assert.equal(created.created,true);assert.equal(created.username,'alice');
   assert.equal((await store.profiles()).length,1);assert.equal((await store.profiles())[0].groupId,'group');
@@ -52,5 +54,5 @@ test('CLI creates a connection through the shared bridge without exposing creden
   },async()=>{});
   t.after(()=>bridge.stop());await bridge.setEnabled(true);const output:string[]=[];
   const code=await cli(['--bridge',bridge.file,'create-connection',JSON.stringify({host:'cli.invalid',username:'alice'})],new AbortController().signal,value=>output.push(value));
-  assert.equal(code,0);assert.equal(JSON.parse(output[0]).created,true);assert.equal((await store.profiles())[0].host,'cli.invalid');
+  assert.equal(code,0);assert.equal(JSON.parse(output[0]).created,true);assert.equal((await store.profiles()).length,0);assert.equal((await store.connections())[0].host,'cli.invalid');
 });
