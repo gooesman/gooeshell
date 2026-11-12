@@ -87,6 +87,9 @@ async function run(){
   await evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='复制 Codex 配置').click()`);
   await until(()=>copied.includes('[mcp_servers.gooeshell]'),'Codex configuration');
   assert(copied.includes('ELECTRON_RUN_AS_NODE'));assert(!copied.includes('Bearer'));
+  await evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='复制 AI 使用指引').click()`);
+  await until(()=>copied.includes('GooeShell MCP 使用指引'),'AI guide copied');
+  assert.equal(copied,require('../../dist-main/shared/mcp-instructions.js').GOOESHELL_MCP_INSTRUCTIONS);assert(!copied.includes('fixture-secret'));
   const image=await Promise.race([window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true}).catch(error=>{if(String(error).includes('UnknownVizError')){report.screenshotError=String(error);return null;}throw error;}),delay(2000)]);
   if(image)await fs.writeFile(path.join(artifacts,'settings.png'),image.toPNG());
   await evaluate(`[...document.querySelectorAll('.settings-dialog .modal-footer button')].find(button=>button.textContent==='关闭').click()`);
@@ -101,6 +104,7 @@ async function run(){
   transport=new StdioClientTransport({...config,env:{...config.env},stderr:'pipe'});
   let stderr='';transport.stderr.on('data',bytes=>stderr+=bytes.toString());
   client=new Client({name:'gooeshell-packaged-fixture',version:'1.0.0'});await client.connect(transport);
+  assert.equal(client.getInstructions(),copied,'copied guide must match the initialized MCP instructions');report.checks.aiUsageGuide=true;
   phase='create a saved connection without connecting';
   await call('saveGroup',{id:'mcp-group',name:'MCP 测试组',icon:'folder',order:0});
   const choices=await tool('list_connection_options');assert(choices.groups.some(item=>item.id==='mcp-group'));assert(choices.identities.some(item=>item.id===identity.id&&item.username==='fixture-user'&&item.hasPassword));assert(!JSON.stringify(choices).includes('fixture-secret'));

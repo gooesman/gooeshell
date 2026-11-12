@@ -29,11 +29,11 @@ export const mcpTools = {
     schema:z.strictObject({connectionId:z.string().min(1).max(255),hostKeyPolicy:z.enum(['once','save']).default('once')}), readOnly:false,
   },
   run_command: {
-    description:'Run a short command through an existing SSH connection on an independent channel. Each call has a fresh /bin/sh; use cwd for its working directory. sudo=true privately uses GooeShell credentials. Returns the actual command stdout, stderr and exit status. For background or longer work use start_task/read_task; do not infer task completion from tmux send-keys returning successfully. Never type credentials into terminal panes.',
+    description:'Run a short command on an independent SSH channel with a fresh /bin/sh; use cwd for its working directory. sudo=true uses GooeShell credentials privately. Returns command stdout, stderr and exit status. For long-running tasks or when the user wants to watch progress, use start_task on the actual foreground command, then show_in_app(kind=task); do not hide it behind nohup or &. A successful launcher or status probe is not proof that the underlying task finished. Never type credentials into terminal panes.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),command:z.string().min(1).max(65536),cwd:z.string().max(2048).startsWith('/').optional(),sudo:z.boolean().default(false),timeoutMs:z.number().int().min(100).max(60000).default(30000)}), readOnly:false,
   },
   start_task: {
-    description:'Start a background command in a new managed tmux window, visible to the user in session gooeshell-ai. Requires tmux on the server. sudo=true privately supplies GooeShell credentials through a one-time owner-only pipe, never pane keystrokes, command arguments or files containing the password. Returns taskId and observed state; use read_task for completion and the actual exit code. Closing MCP or SSH does not stop an already launched task. On a start timeout, inspect gooeshell-ai before retrying: execution may already have started.',
+    description:'Start the actual long-running non-interactive command in a managed tmux window. Do not wrap the target in nohup, &, or self-daemonization: those make the launcher exit before the real process. By default call show_in_app(kind=task, sessionId, taskId) after starting so the user can watch, unless the user asks not to; the open view refreshes about every 2 seconds. Requires tmux and Python 3. sudo=true privately supplies GooeShell credentials, never pane keystrokes or command arguments. Use read_task for actual state and exit code, and do not equate launcher success with completion of detached children. Closing MCP or SSH does not stop an already launched task. On start timeout inspect gooeshell-ai before retrying.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),command:z.string().min(1).max(65536),cwd:z.string().max(2048).startsWith('/').optional(),sudo:z.boolean().default(false)}),readOnly:false,
   },
   read_task: {
@@ -45,7 +45,7 @@ export const mcpTools = {
     schema:z.strictObject({sessionId:z.string().min(1).max(255),taskId:z.string().uuid()}),readOnly:false,
   },
   read_log: {
-    description:'Read a bounded UTF-8 log chunk from an absolute regular file path. Continue with nextOffset and cursor; rotated/truncated files reset to offset 0 and report reset=true. This reads a file, not tmux scrollback. Poll no faster than once per second. Does not use sudo.',
+    description:'Read a bounded UTF-8 log chunk from an absolute regular file path. When continuously monitoring a log, by default use show_in_app(kind=log, sessionId, path) so the user can watch unless they ask not to; the open view refreshes about every 2 seconds. Continue reading with nextOffset and cursor; rotated/truncated files reset to offset 0 and report reset=true. This reads a file, not tmux scrollback. Poll no faster than once per second. Does not use sudo.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/'),offset:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),cursor:z.string().max(128).optional(),maxBytes:z.number().int().min(1).max(16384).default(16384)}),readOnly:true,
   },
   read_remote_text: {
@@ -77,7 +77,7 @@ export const mcpTools = {
     schema:z.strictObject({transferId:z.string().uuid()}),readOnly:false,
   },
   show_in_app: {
-    description:'Show AI command activity, a managed tmux task, a remote log or a transfer in the GooeShell window. Task and log views refresh while open; transfer opens the existing queue. This does not type into or alter the user terminal. Showing a view is not proof that a task succeeded.',
+    description:'When the user wants to watch, request GooeShell to show AI activity, a managed task, an existing remote log or a transfer. After start_task use kind=task with sessionId and taskId; for an existing log use kind=log with sessionId and an absolute path; for transfers use kind=transfer with transferId. Task and log views refresh about every 2 seconds only while open. requested=true means the request was sent, not that the user saw it or that the task succeeded. Never type into or alter the user terminal.',
     schema:z.discriminatedUnion('kind',[
       z.strictObject({kind:z.literal('activity')}),
       z.strictObject({kind:z.literal('task'),sessionId:z.string().min(1).max(255),taskId:z.string().uuid()}),

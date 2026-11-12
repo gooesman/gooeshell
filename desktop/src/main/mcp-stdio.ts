@@ -3,10 +3,11 @@ import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import type {CallToolResult} from '@modelcontextprotocol/sdk/types.js';
 import {mcpTools} from './mcp-tools';
 import {callBridge} from './bridge-client';
+import {GOOESHELL_MCP_INSTRUCTIONS} from '../shared/mcp-instructions';
 
 export async function start(file:string){
   if(!file)throw new Error('请从 GooeShell 的 MCP 设置复制接入配置');
-  const server=new McpServer({name:'gooeshell',version:require('../../package.json').version});
+  const server=new McpServer({name:'gooeshell',version:require('../../package.json').version},{instructions:GOOESHELL_MCP_INSTRUCTIONS});
   for(const [name,tool] of Object.entries(mcpTools)){
     server.registerTool(name,{description:tool.description,inputSchema:tool.schema,annotations:{readOnlyHint:tool.readOnly}},async(args:unknown,extra:{signal:AbortSignal}):Promise<CallToolResult>=>{
       try{

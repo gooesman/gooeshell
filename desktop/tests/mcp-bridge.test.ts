@@ -7,6 +7,7 @@ import {createServer} from 'node:net';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {McpBridge} from '../src/main/mcp-bridge';
+import {GOOESHELL_MCP_INSTRUCTIONS} from '../src/shared/mcp-instructions';
 
 test('MCP stdio bridge authenticates locally, validates calls and revokes in-flight access',async t=>{
   const base=path.resolve('test-output');await fs.mkdir(base,{recursive:true});const root=await fs.mkdtemp(path.join(base,'mcp-bridge-'));
@@ -22,7 +23,10 @@ test('MCP stdio bridge authenticates locally, validates calls and revokes in-fli
   t.after(async()=>{await client.close();await bridge.stop();});
   await bridge.load();assert.equal(bridge.status().enabled,false);
   await client.connect(transport);
-  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer','show_in_app']);
+  assert.equal(client.getInstructions(),GOOESHELL_MCP_INSTRUCTIONS,'the MCP initialize handshake supplies the full guide');
+  const tools=(await client.listTools()).tools;
+  assert.deepEqual(tools.map(tool=>tool.name),['list_connections','list_sessions','list_connection_options','create_connection','connect','run_command','start_task','read_task','stop_task','read_log','read_remote_text','write_remote_text','edit_remote_text','transfer_file','transfer_between_servers','read_transfer','stop_transfer','show_in_app']);
+  for(const name of ['run_command','start_task','read_log','show_in_app'])assert.match(tools.find(tool=>tool.name===name)?.description||'',/show_in_app|show AI activity/);
   assert.equal((await client.callTool({name:'list_connections',arguments:{}})).isError,true,'disabled bridge cannot be used');
   await bridge.setEnabled(true);
   const descriptor=JSON.parse(await fs.readFile(bridge.file,'utf8')),url=`http://127.0.0.1:${descriptor.port}/call`;
