@@ -58,6 +58,28 @@ call('stop', task, payload={'password': password})
 result = wait(task)
 assert result['exitCode'] == 143, result
 
+task = start('trap "" TERM; echo stubborn=$$; while :; do sleep 1; done', True, password)
+for _ in range(50):
+    output = read(task)['output']
+    if 'stubborn=' in output:
+        stubborn = int(output.split('stubborn=', 1)[1].split()[0])
+        break
+    time.sleep(0.1)
+else:
+    raise AssertionError('stubborn root process did not start')
+call('stop', task, payload={'password': password})
+wait(task)
+for _ in range(50):
+    try:
+        state = pathlib.Path('/proc', str(stubborn), 'stat').read_text().split(') ', 1)[1][0]
+        if state == 'Z':
+            break
+    except FileNotFoundError:
+        break
+    time.sleep(0.1)
+else:
+    raise AssertionError('stubborn root child survived cancellation')
+
 task = start('printf "should-not-run\\n"', True, 'incorrect-fixture-password')
 result = wait(task)
 assert result['exitCode'] != 0 and 'should-not-run' not in result['output'], result

@@ -187,6 +187,11 @@ def supervise(payload, directory, ready_fd):
                     pass
                 stop_password = None
                 deadline = None
+            elif deadline is not None:
+                # Keep the group leader unreaped until escalation. Otherwise sudo
+                # can exit on TERM while a child ignores it, and the PID could
+                # be reused before the remaining process group is stopped.
+                continue
             code = child.poll()
             if code is not None:
                 # Drain data already in the pipe without waiting for detached descendants.
