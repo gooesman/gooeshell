@@ -58,6 +58,9 @@ jobs:
       - name: Install Linux display and Chinese font dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 fonts-noto-cjk tmux openssh-server rsync
+      - name: Real sudo task fallback regression in disposable container
+        if: runner.os == 'Linux'
+        run: docker run --rm -v "$PWD:/fixture:ro" --entrypoint /bin/sh ubuntu:22.04 /fixture/tests/fixtures/fallback-real-sudo-container.sh
       - name: Real server-to-server SSH transfer and cleanup regression
         if: runner.os == 'Linux'
         env:

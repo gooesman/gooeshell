@@ -17,7 +17,7 @@ test('actual desktop MCP settings bridge stored identities, sudo, SSH reuse and 
   const result=JSON.parse(await fs.readFile(path.join(artifacts,'result.json'),'utf8').catch(()=>{throw new Error('Missing MCP report: '+logs);}));
   t.diagnostic('MCP desktop artifacts: '+artifacts);assert.equal(code,0,JSON.stringify(result,null,2)+logs);
   for(const check of ['settingsAndConfig','aiUsageGuide','createConnection','sidebarStorageMoves','descriptorRecovery','identityAndTransportReuse','foregroundPreserved','aiActivity','managedSudo','disableKeepsForeground','backgroundUsesStoredIdentity','missingPasswordStaysInApp','revokePendingAndOwnedConnections'])assert.equal(result.checks[check],true,check);
-  if(result.realShell)assert.equal(result.checks.realShellCwdAndCachedSudo,true);
+  if(result.realShell)for(const check of ['realShellCwdAndCachedSudo','noTmuxManagedTasks','noTmuxSurvivesReconnect'])assert.equal(result.checks[check],true,check);
   if(result.tmuxAvailable)for(const check of ['realTmuxParallelPanes','managedTaskExitStates','privateTmuxSudo','taskSurvivesReconnect','liveTaskAndLog'])assert.equal(result.checks[check],true,check);
   assert.equal(result.success,true);
 });

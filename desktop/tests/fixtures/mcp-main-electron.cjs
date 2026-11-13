@@ -14,7 +14,7 @@ const userData=path.join(artifacts,'user-data');mkdirSync(userData,{recursive:tr
 safeStorage.isEncryptionAvailable=()=>false;safeStorage.isAsyncEncryptionAvailable=async()=>false;
 let copied='';clipboard.writeText=text=>{copied=text;};
 const report={success:false,checks:{},errors:[]},peers=new Set(),children=new Set(),commands=[];
-let window,client,transport,survivor,foreground='',authentications=0,shells=0,lastInput='',holdAuth=false,heldAuth=false,phase='startup';
+let window,client,transport,survivor,fallbackSurvivor,foreground='',authentications=0,shells=0,lastInput='',holdAuth=false,heldAuth=false,forceFallback=false,phase='startup';
 const progress=setInterval(()=>{void fs.writeFile(path.join(artifacts,'progress.json'),JSON.stringify({phase,lastScript:report.lastScript,window:!!window}));},1000);progress.unref();
 process.on('unhandledRejection',error=>{report.errors.push(String(error));void fs.writeFile(path.join(artifacts,'unexpected-error.json'),JSON.stringify(report));});
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -41,6 +41,8 @@ fi
 exec "$@"
 `;
   linuxSync('/usr/bin/env',['python3','-c','import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.mkdir(mode=0o700); (p/"bin").mkdir(); f=p/"bin"/"sudo"; f.write_text(sys.argv[2]); f.chmod(0o700); (p/"dir\u0027s 中文").mkdir()',linuxRoot,sudo]);
+  const pythonPath=linuxSync('/bin/sh',['-c','command -v python3']).trim();
+  linuxSync('/usr/bin/env',['python3','-c','import pathlib,sys; p=pathlib.Path(sys.argv[1]); (p/"fallback-bin").mkdir(); (p/"home").mkdir(mode=0o700); (p/"fallback-bin"/"python3").symlink_to(sys.argv[2]); (p/"fallback-bin"/"sudo").symlink_to(p/"bin"/"sudo")',linuxRoot,pythonPath]);
   try{tmux=linuxSync('/bin/sh',['-c','command -v tmux']).trim().length>0;}catch{}
   if(tmux){
     const executable=linuxSync('/bin/sh',['-c','command -v tmux']).trim();
@@ -60,7 +62,7 @@ const server=new Server({hostKeys:[key]},peer=>{
       commands.push(info.command);const sudo=info.command.startsWith('sudo ');if(sudo)lastInput='';const stream=accept();stream.on('data',bytes=>{if(sudo)lastInput+=bytes.toString();});
       if(info.command.includes('AI_STREAM_TEST'))stream.on('end',()=>{stream.write('AI_STREAM_FIRST');setTimeout(()=>{if(!stream.destroyed){stream.write('_END');stream.exit(0);stream.end();}},1200);});
       else if(realShell){
-        const run=linux('/usr/bin/env',[`MCP_FIXTURE_ROOT=${linuxRoot}`,`PATH=${linuxRoot}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,'/bin/sh','-c',info.command]);
+        const run=linux('/usr/bin/env',[`MCP_FIXTURE_ROOT=${linuxRoot}`,...(forceFallback?[`HOME=${linuxRoot}/home`,`PATH=${linuxRoot}/fallback-bin`]:[`PATH=${linuxRoot}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`]),'/bin/sh','-c',info.command]);
         const child=spawn(run.program,run.args,{windowsHide:true,stdio:['pipe','pipe','pipe']});children.add(child);
         child.stdin.on('error',()=>{});stream.pipe(child.stdin);child.stdout.on('data',bytes=>stream.write(bytes));child.stderr.on('data',bytes=>stream.stderr.write(bytes));
         stream.on('close',()=>{if(child.exitCode===null)child.kill();});child.on('error',error=>{stream.stderr.write(error.message);stream.exit(1);stream.end();});
@@ -162,6 +164,28 @@ async function run(){
     const cached=await tool('run_command',{sessionId:reused.id,command:'cat',sudo:true});assert.equal(cached.stdout,'','cached sudo must not expose an unread password to the command');
     report.checks.realShellCwdAndCachedSudo=true;
   }
+  if(realShell){
+    phase='fallback without tmux';forceFallback=true;
+    linuxSync('/bin/rm',['-f',linuxRoot+'/cached']);
+    const finished=async task=>{let value=task;await until(async()=>{value=await tool('read_task',{sessionId:reused.id,taskId:task.taskId});return value.state==='exited';},'fallback completion');return value;};
+    const ok=await finished(await tool('start_task',{sessionId:reused.id,command:"printf 'FALLBACK_中文\\n'; exit 0",cwd:linuxRoot+"/dir's 中文"}));
+    assert.equal(ok.backend,'process');assert.equal(ok.exitCode,0);assert.match(ok.output,/FALLBACK_中文/);assert.match(ok.logPath,/\.gooeshell\/tasks\//);
+    const failed=await finished(await tool('start_task',{sessionId:reused.id,command:"printf 'FALLBACK_ERROR\\n' >&2; exit 7"}));assert.equal(failed.exitCode,7);assert.match(failed.output,/FALLBACK_ERROR/);
+    const running=await tool('start_task',{sessionId:reused.id,command:"printf 'FALLBACK_LIVE\\n'; /bin/sleep 30"});assert.equal(running.backend,'process');
+    await tool('show_in_app',{kind:'task',sessionId:reused.id,taskId:running.taskId});
+    await until(()=>evaluate(`document.querySelector('.ai-watch')?.innerText.includes('FALLBACK_LIVE')`),'fallback output in AI view');
+    const stopped=await tool('stop_task',{sessionId:reused.id,taskId:running.taskId});assert.equal(stopped.state,'exited');assert.equal(stopped.exitCode,143);
+    await evaluate(`document.querySelector('[aria-label="收起 AI 活动"]').click()`);
+    const privileged=await finished(await tool('start_task',{sessionId:reused.id,command:'printf FALLBACK_SUDO_OK',sudo:true}));assert.equal(privileged.exitCode,0);assert.match(privileged.output,/FALLBACK_SUDO_OK/);
+    const elevated=await tool('start_task',{sessionId:reused.id,command:'/bin/sleep 30',sudo:true});const elevatedStop=await tool('stop_task',{sessionId:reused.id,taskId:elevated.taskId});assert.equal(elevatedStop.exitCode,143);
+    await call('saveCredentials',{profile,credentials:{remember:'session',sudoUsesLogin:false,sudoPassword:'fixture-wrong-secret'}});
+    const denied=await finished(await tool('start_task',{sessionId:reused.id,command:'printf MUST_NOT_RUN',sudo:true}));assert.equal(denied.exitCode,1);assert.match(denied.output,/Denied/);assert(!denied.output.includes('fixture-wrong-secret'));
+    await call('saveCredentials',{profile,credentials:{remember:'session',sudoUsesLogin:false,sudoPassword:'fixture-sudo-secret'}});
+    linuxSync('/usr/bin/env',['python3','-c','import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=sys.argv[2].encode(); assert all(s not in f.read_bytes() for f in p.rglob("*") if f.is_file())',linuxRoot+'/home/.gooeshell/tasks','fixture-sudo-secret']);
+    assert(!commands.join('\n').includes('fixture-sudo-secret'));assert.equal(foreground,'');
+    fallbackSurvivor=await tool('start_task',{sessionId:reused.id,command:'/bin/sleep 2; printf FALLBACK_SURVIVED'});
+    forceFallback=false;report.checks.noTmuxManagedTasks=true;
+  }
   if(tmux){
     phase='parallel tmux panes and detached log inspection';
     const prefix=`tmux -S '${linuxRoot}/tmux.sock'`;
@@ -224,6 +248,7 @@ async function run(){
   await call('setMcpEnabled',true);
   const background=await tool('connect',{connectionId:profile.id});assert.equal(background.reused,false);assert.equal(background.source,'mcp');assert.equal(shells,1);
   await tool('run_command',{sessionId:background.id,command:'printf BACKGROUND_OK'});report.checks.backgroundUsesStoredIdentity=true;
+  if(fallbackSurvivor){forceFallback=true;let status;await until(async()=>{status=await tool('read_task',{sessionId:background.id,taskId:fallbackSurvivor.taskId});return status.state==='exited';},'fallback survives reconnect');assert.equal(status.exitCode,0);assert.match(status.output,/FALLBACK_SURVIVED/);forceFallback=false;report.checks.noTmuxSurvivesReconnect=true;}
   if(survivor){let status;await until(async()=>{status=await tool('read_task',{sessionId:background.id,taskId:survivor.taskId});return status.state==='exited';},'background task survives SSH disconnect');assert.equal(status.exitCode,0);assert.match(status.output,/SURVIVES_SSH_DISCONNECT/);report.checks.taskSurvivesReconnect=true;}
   const missing={...profile,id:'missing',loginIdentityId:undefined,username:'fixture-user'};await call('saveConnection',{profile:missing,favorite:true});
   const noPassword=await client.callTool({name:'connect',arguments:{connectionId:'missing'}});assert.equal(noPassword.isError,true);assert.match(noPassword.content[0].text,/AUTH_REQUIRED/);report.checks.missingPasswordStaysInApp=true;

@@ -948,8 +948,8 @@ export class SshService {
   bridgeReadTask(request:BridgeTaskRead&{requestId:string}){
     return this.bridgeOperation(request,(client,encoding,signal)=>readBridgeTask(client,request,encoding,signal));
   }
-  bridgeStopTask(request:BridgeTaskRead&{requestId:string}){
-    return this.bridgeOperation(request,(client,encoding,signal)=>stopBridgeTask(client,request,encoding,signal));
+  bridgeStopTask(request:BridgeTaskRead&{requestId:string;password?:string}){
+    return this.bridgeOperation(request,(client,encoding,signal)=>stopBridgeTask(client,request,encoding,signal,request.password));
   }
   bridgeReadLog(request:BridgeLogRead&{requestId:string}){
     return this.bridgeOperation(request,(client,encoding,signal)=>readBridgeLog(client,request,encoding,signal));

@@ -32,8 +32,8 @@ fsutil hardlink list "$env:APPDATA\gooeshell\mcp-bridge.json"
 | `create_connection` | `host`；可选 `name`、`port`、`username`、`auth`、`privateKeyPath`、`loginIdentityId`、`groupId`、`icon`、`encoding`、`favorite`、`shellIntegration` 和 `jumpHost` | 保存 SSH 连接并返回编号与 `created`；默认不加入侧边栏，不建立连接 |
 | `connect` | `connectionId`；可选 `hostKeyPolicy`：`once`（默认）或 `save` | 优先复用同配置的已连接会话；否则使用保存的身份在后台建立连接 |
 | `run_command` | `sessionId`、`command`；可选 `cwd`、`sudo`、`timeoutMs` | `stdout`、`stderr`、`exitCode`、`signal`、`truncated` |
-| `start_task` | `sessionId`、`command`；可选 `cwd`、`sudo` | `taskId`、tmux 会话/窗口/窗格编号、当前真实状态与退出码 |
-| `read_task` | `sessionId`、`taskId`；可选 `tailLines`（默认 200，范围 1–1000） | `running` / `finishing` / `exited`、`exitCode`、`signal`、最近合并输出及截断标记 |
+| `start_task` | `sessionId`、`command`；可选 `cwd`、`sudo` | `taskId`、使用的任务后端、当前状态与退出码；tmux 模式另有窗口编号 |
+| `read_task` | `sessionId`、`taskId`；可选 `tailLines`（默认 200，范围 1–1000） | `running` / `finishing` / `exited` / `unknown`、`exitCode`、`signal`、最近合并输出及截断标记 |
 | `stop_task` | `sessionId`、`taskId` | 停止受管任务并等待真实退出；早期未启用托管停止的任务需手动停止 |
 | `read_log` | `sessionId`、绝对 `path`；可选 `offset`、`cursor`、`maxBytes` | 最多 16 KiB 的 UTF-8 增量、下一偏移量、游标、EOF 和轮转 / 截断重置状态 |
 | `read_remote_text` | `sessionId`、绝对 `path`；可选 `encoding` | 读取远程文本、版本、编码、BOM 与换行信息 |
@@ -57,7 +57,7 @@ AI 通过 `connect` 建立新连接时默认使用 `hostKeyPolicy=once`：自动
 
 顶部“AI”活动按钮可展开独立面板。短命令显示命令文本、实时输出及实际退出码，后台任务显示启动状态并可点击查看；不会向已有终端输入内容。AI 也可使用 `show_in_app` 请求显示指定后台任务或持续跟踪普通日志文件；面板展开时约每两秒刷新，收起后停止读取。传输可通过同一接口展开现有文件管理与传输队列，查看进度、速度和剩余时间。
 
-活动记录仅保存在当前程序运行期间，最多保留最近 40 条。短命令输出受 64 KiB 上限约束，远程日志显示最近约 64 KiB；后台任务内容是 tmux 最近输出，并非完整日志。日志与任务依赖对应 SSH 会话；面板会显示读取错误和未知退出状态，不会把未知状态当成成功。
+活动记录仅保存在当前程序运行期间，最多保留最近 40 条。短命令输出受 64 KiB 上限约束，远程日志显示最近约 64 KiB；后台任务显示有限的最近输出，并非完整日志。日志与任务依赖对应 SSH 会话；面板会显示读取错误和未知退出状态，不会把未知状态当成成功。
 
 ## 在服务器上编辑文本
 
@@ -77,19 +77,21 @@ AI 可以使用 `read_remote_text` 读取目标文件，然后使用返回的 `r
 
 ## 后台任务与安全 sudo
 
-短命令继续使用 `run_command`，不需要 tmux。长时间或需要人在终端查看的命令使用 `start_task`，例如 `command="journalctl -f -n 30 --no-pager"`；需要提权时同时传 `sudo=true`。服务器需安装 tmux 和 Python 3，未安装会明确报错，不会自动安装。
+短命令继续使用 `run_command`，不需要 tmux。长时间或需要查看输出的命令使用 `start_task`，例如 `command="journalctl -f -n 30 --no-pager"`；需要提权时同时传 `sudo=true`。服务器需要 Python 3；有 tmux 时使用 tmux，没有时自动回退到受管进程，不会自动安装软件。
 
 每个任务创建独立窗口，放在 `gooeshell-ai` 会话内；不会向用户当前窗格输入命令。`start_task` 返回 `taskId` 后，使用 `read_task` 获取实际完成状态：只有 `state=exited` 且 `exitCode=0` 才能判定成功。外层 Shell 等待任务并把实际等待状态写入该窗格的私有选项，信号终止采用 Shell 状态（例如 SIGTERM 为 143）；不会据此猜测信号名称。tmux 能提供外层终止信号时才填充 `signal`。终端已关闭、但退出状态尚未收到时返回 `finishing` 与 null，稍后再查；旧版 tmux 的外层进程被强制杀死时，状态可能无法补齐，不推测成功。快速失败的命令可直接在启动结果中返回失败退出码；不把“任务已创建”当成“命令成功”。查询间隔由客户端安排，避免连续轮询。
 
 sudo 密码只经 SSH 标准输入和一次性 FIFO（命名管道）传递。管道位于随机的 0700 临时目录内，创建时使用 077 权限掩码；密码不写入普通文件、命令参数、环境变量、tmux 输入缓冲或 Shell 历史。接收端打开后立即移除管道路径和目录；被授权命令的 stdin 固定为空，并关闭传递用文件描述符，因此认证缓存/免密分支未读取的密码不会流入任务。服务器原有 sudo 权限及 requiretty 规则仍有效，不修改 sudoers。
 
-`stop_task` 通过任务标识定位本版创建的受管窗格，向专用进程组发送终止信号，必要时强制停止，并等待实际退出状态。主动脱离进程组或自行守护化的后代不在保证范围内；旧版任务需在终端手动停止。
+`stop_task` 通过任务标识定位受管任务，向专用进程组发送终止信号，必要时强制停止，并等待实际退出状态。回退模式下停止提权任务也需要 sudo 授权发送信号；有限制的 sudoers 可能允许启动命令但不允许停止，失败时会明确报错，不修改 sudoers。主动脱离进程组或自行守护化的后代不在保证范围内；旧版任务需在终端手动停止。
 
 `read_log` 读取普通文件，不跟随符号链接；将上次 `nextOffset` 和 `cursor` 一起传给下一次调用。轮转、更短截断和边界内容变化会返回 `reset=true` 并从新文件开始；如果截断后重新增长并保留相同的边界内容，无法保证检测出来。文件采用 UTF-8，无法解码的字节会替换。`--watch` 的使用见 [CLI](CLI.md)。
 
 运行 `tmux attach -t gooeshell-ai` 可以查看任务。完成的窗格会保留，便于核对输出；可用 tmux 正常关闭不再需要的窗口。输出是最近的终端滚动内容（stdout/stderr 合并，可能含 tmux 的完成提示），并非完整持久日志；重要长日志由命令自行保存到合适文件。删除窗格或重启 tmux 后无法恢复其退出状态，会明确报错。重新连接同一服务器、同一用户后可用新的 `sessionId` 查询原 `taskId`。
 
-任务启动超时或连接中断时，任务可能已经启动；先查看 `gooeshell-ai`，不要直接重试造成重复执行。该功能适合非交互命令，不向任意既有 tmux 窗格的密码提示填入密码。
+没有 tmux 时，回退模式把状态和最近日志保存在服务器用户目录的 `~/.gooeshell/tasks/<taskId>/`，目录仅该用户可访问；SSH 断开后任务继续，可使用同一账号重连并按 `taskId` 读取。返回的 `logPath` 是滚动日志文件，达到约 2 MiB 后保留最近约 1 MiB；`read_task` 返回的内容还有 8 KiB 上限。日志、状态文件需要用户按需清理。服务器重启或任务管理进程异常消失、且没有完成记录时，返回 `unknown`，不会猜测退出码；此时也不会根据旧进程编号贸然停止任务。回退模式的 sudo 密码只经过 SSH 标准输入、受限的本机进程间通道和匿名管道，不写入状态、日志、参数或环境变量。
+
+任务启动超时或连接中断时，任务可能已经启动；先使用错误提供的 `taskId` 查询，tmux 模式还可查看 `gooeshell-ai`，不要直接重试造成重复执行。该功能适合非交互命令，不向任意既有 tmux 窗格的密码提示填入密码。
 
 ## 手动 tmux 工作方式
 
@@ -110,7 +112,7 @@ tmux capture-pane -p -S -200 -t %1
 
 使用同一登录用户，在普通终端运行 `tmux attach -t gooeshell-ai` 即可查看。按服务器配置的脱离快捷键返回自己的 Shell；tmux 默认是 Ctrl+B 再按 D。MCP 不创建额外任务数据库，任务、窗口和滚动历史由 tmux 管理。工具返回的是 tmux 控制命令的退出码，长期任务的执行结果需再读取相应窗格。
 
-关闭桥接会撤销在途请求并释放桥接自己新建的 SSH 连接，保留普通终端连接；独立 tmux 任务继续在服务器运行。AI 继续调度、分析日志需要客户端和 GooeShell 保持在线。该本机 stdio 配置不能直接给云端 API 使用。
+关闭桥接会撤销在途请求并释放桥接自己新建的 SSH 连接，保留普通终端连接；已启动的受管任务继续在服务器运行。AI 继续调度、分析日志需要客户端和 GooeShell 保持在线。该本机 stdio 配置不能直接给云端 API 使用。
 
 ## 文件传输
 

@@ -26,7 +26,7 @@ export function executeBridgeChannel(client:Client,command:string,encoding:strin
     const outDecoder=iconv.getDecoder(encoding),errDecoder=iconv.getDecoder(encoding);let pending='',outputTimer:ReturnType<typeof setTimeout>|undefined;
     const flush=()=>{if(outputTimer)clearTimeout(outputTimer);outputTimer=undefined;if(pending){onOutput?.(pending);pending='';}};
     const finish=(error?:Error)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',abort);if(onOutput){pending+=(outDecoder.end()||'')+(errDecoder.end()||'');flush();}if(error){stream?.destroy();reject(error);}else resolve({stdout:iconv.decode(Buffer.concat(stdout),encoding),stderr:iconv.decode(Buffer.concat(stderr),encoding),exitCode,signal:exitSignal,truncated});};
-    const abort=()=>finish(new Error('MCP 命令已取消；已启动的独立 tmux 任务会继续运行'));
+    const abort=()=>finish(new Error('MCP 命令已取消；已启动的受管后台任务会继续运行'));
     const timer=setTimeout(()=>finish(new Error('命令执行超时；后台任务请使用 start_task，并通过 read_task 确认状态')),timeoutMs);
     const append=(chunks:Buffer[],data:Buffer,decoder:typeof outDecoder)=>{const take=Math.min(data.length,Math.max(0,65536-bytes));if(take){const part=Buffer.from(data.subarray(0,take));chunks.push(part);if(onOutput){pending+=decoder.write(part);if(!outputTimer)outputTimer=setTimeout(flush,100);}}bytes+=take;if(take<data.length)truncated=true;};
     signal.addEventListener('abort',abort,{once:true});

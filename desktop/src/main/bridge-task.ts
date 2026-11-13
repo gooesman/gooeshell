@@ -1,4 +1,6 @@
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import type {Client} from 'ssh2';
 import type {BridgeTaskStart,BridgeTaskRead,BridgeTaskResult} from '../shared/mcp';
@@ -6,6 +8,8 @@ import {bridgeScript,executeBridgeChannel,quote} from './bridge-command';
 
 const sessionName='gooeshell-ai';
 const taskIdPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const fallbackSource=readFileSync(path.join(__dirname,'fallback-task.py'),'utf8');
+const fallbackCommand=(action:'start'|'read'|'stop',taskId?:string,lines?:number,encoding?:string)=>`python3 -c ${quote(fallbackSource)} ${action}${taskId?' '+taskId:''}${lines?' '+lines:''}${encoding?' '+quote(encoding):''}`;
 export function taskLaunch(command:BridgeTaskStart,taskId:string,password?:string):string{
   if(!taskIdPattern.test(taskId)||typeof command.sudo!=='boolean')throw new Error('后台任务参数无效');
   if(password!==undefined&&/[\0\r\n]/.test(password))throw new Error('sudo 密码包含不支持的换行字符');
@@ -50,8 +54,26 @@ delivered=1
 printf 'GOOESHELL_TASK %s %s\\n' "$window" "$pane"
 `;
 }
-export async function stopBridgeTask(client:Client,request:Pick<BridgeTaskRead,'sessionId'|'taskId'>,encoding:string,signal:AbortSignal):Promise<BridgeTaskResult>{
+export async function stopBridgeTask(client:Client,request:Pick<BridgeTaskRead,'sessionId'|'taskId'>,encoding:string,signal:AbortSignal,password?:string):Promise<BridgeTaskResult>{
   if(!taskIdPattern.test(request.taskId))throw new Error('后台任务参数无效');
+  if(password!==undefined&&/[\0\r\n]/.test(password))throw new Error('sudo 密码包含不支持的换行字符');
+  const initial=await readBridgeTask(client,{...request,tailLines:200},encoding,signal);
+  if(initial.state==='exited')return initial;
+  if(initial.state==='unknown')throw new Error('任务状态未知，无法安全确认进程身份或停止任务');
+  if(initial.backend==='process'){
+    const input=Buffer.from(JSON.stringify({password})+'\n','utf8');
+    try{
+      const stopped=await executeBridgeChannel(client,fallbackCommand('stop',request.taskId),encoding,signal,15000,input);
+      if(stopped.exitCode!==0){const current=await readBridgeTask(client,{...request,tailLines:200},encoding,signal);if(current.state==='exited')return current;throw new Error(stopped.stderr.trim()||'停止任务失败');}
+    }finally{input.fill(0);}
+    for(let attempt=0;attempt<30;attempt++){
+      const state=await readBridgeTask(client,{...request,tailLines:200},encoding,signal);
+      if(state.state==='exited')return state;
+      if(state.state==='unknown')throw new Error('停止后任务状态未知，请检查服务器');
+      await delay(250,undefined,{signal});
+    }
+    throw new Error('已请求停止，但尚未确认进程退出，请继续 read_task 检查');
+  }
   const command=`set -eu
 pane=$(tmux list-panes -a -F '#{@gooeshell_mcp_task} #{pane_id}' | awk '$1 == "${request.taskId}" {print $2; exit}')
 [ -n "$pane" ] || { printf '任务窗格不存在\\n' >&2; exit 1; }
@@ -72,15 +94,39 @@ fi
 }
 export async function startBridgeTask(client:Client,request:BridgeTaskStart,encoding:string,signal:AbortSignal,password?:string):Promise<BridgeTaskResult>{
   const taskId=randomUUID();
-  const result=await executeBridgeChannel(client,taskLaunch(request,taskId,password),encoding,signal,15000,request.sudo&&password!==undefined?Buffer.from(password+'\n','utf8'):undefined);
+  const script=bridgeScript(request);
+  if(typeof request.sudo!=='boolean'||(password!==undefined&&/[\0\r\n]/.test(password)))throw new Error('后台任务认证参数无效');
+  const probe=await executeBridgeChannel(client,"command -v python3 >/dev/null 2>&1 || { printf '托管后台任务需要 Python 3\\n' >&2; exit 1; }; if command -v tmux >/dev/null 2>&1; then printf tmux; else printf process; fi",encoding,signal,10000);
+  if(probe.exitCode!==0)throw new Error(probe.stderr.trim()||'无法检查后台任务所需环境');
+  if(probe.stdout.trim()==='process'){
+    const input=Buffer.from(JSON.stringify({taskId,script,sudo:request.sudo,...(request.sudo&&password!==undefined?{password}:{})})+'\n','utf8');
+    try{
+      let started;
+      try{started=await executeBridgeChannel(client,fallbackCommand('start'),encoding,signal,15000,input);}
+      catch(error){throw new Error(`任务启动结果未知，请先用 read_task 检查任务 ${taskId}，不要直接重复启动：${String(error)}`);}
+      if(started.exitCode!==0||!started.stdout.includes('GOOESHELL_PROCESS_STARTED'))throw new Error(`任务未确认启动，请先用 read_task 检查任务 ${taskId}：${started.stderr.trim()||'未收到启动确认'}`);
+    }finally{input.fill(0);}
+    try{return await readBridgeTask(client,{sessionId:request.sessionId,taskId,tailLines:20},encoding,signal);}
+    catch(error){throw new Error(`任务 ${taskId} 已收到启动确认，但暂时无法读取状态，请先查询再决定是否重试：${String(error)}`);}
+  }
+  if(probe.stdout.trim()!=='tmux')throw new Error('无法识别服务器后台任务能力');
+  let result;
+  try{result=await executeBridgeChannel(client,taskLaunch(request,taskId,password),encoding,signal,15000,request.sudo&&password!==undefined?Buffer.from(password+'\n','utf8'):undefined);}
+  catch(error){throw new Error(`任务启动结果未知，请先用 read_task 检查任务 ${taskId} 或查看 gooeshell-ai，再决定是否重试：${String(error)}`);}
   if(result.exitCode!==0)throw new Error(result.stderr.trim()||'后台任务未能启动');
   const location=/^GOOESHELL_TASK (@\d+) (%\d+)$/m.exec(result.stdout);
-  if(!location)throw new Error('未收到后台任务编号，任务可能已启动；请在 GooeShell 中检查 gooeshell-ai 会话');
-  return readBridgeTask(client,{sessionId:request.sessionId,taskId,tailLines:20},encoding,signal);
+  if(!location)throw new Error(`未收到后台任务启动确认，请先用 read_task 检查任务 ${taskId} 或查看 gooeshell-ai`);
+  try{return await readBridgeTask(client,{sessionId:request.sessionId,taskId,tailLines:20},encoding,signal);}
+  catch(error){throw new Error(`任务 ${taskId} 已收到启动确认，但暂时无法读取状态，请先查询再决定是否重试：${String(error)}`);}
 }
 export async function readBridgeTask(client:Client,request:BridgeTaskRead,encoding:string,signal:AbortSignal):Promise<BridgeTaskResult>{
   if(!taskIdPattern.test(request.taskId)||!Number.isInteger(request.tailLines)||request.tailLines<1||request.tailLines>1000)throw new Error('后台任务参数无效');
-  const command=`set -eu
+  const command=`if command -v python3 >/dev/null 2>&1; then
+${fallbackCommand('read',request.taskId,request.tailLines,['utf8','gb18030','big5'].includes(encoding)?encoding:'utf8')}
+code=$?
+if [ "$code" -ne 42 ]; then exit "$code"; fi
+fi
+set -eu
 pane=$(tmux list-panes -a -F '#{@gooeshell_mcp_task} #{pane_id}' | awk '$1 == "${request.taskId}" {print $2; exit}')
 [ -n "$pane" ] || { printf '任务窗格不存在，无法确认退出状态\\n' >&2; exit 1; }
 tmux display-message -p -t "$pane" 'GOOESHELL_STATE #{window_id} #{pane_id} #{pane_dead} #{@gooeshell_mcp_exit_code} #{pane_dead_status} #{pane_dead_signal}'
@@ -88,6 +134,11 @@ tmux capture-pane -p -J -S -${request.tailLines} -t "$pane"
 `;
   const result=await executeBridgeChannel(client,command,encoding,signal,15000);
   if(result.exitCode!==0)throw new Error(result.stderr.trim()||'无法读取后台任务');
+  if(result.stdout.startsWith('GOOESHELL_PROCESS ')){
+    let value:BridgeTaskResult;try{value=JSON.parse(result.stdout.slice('GOOESHELL_PROCESS '.length));}catch{throw new Error('后台任务状态无法识别');}
+    if(value.taskId!==request.taskId||value.backend!=='process'||!['running','exited','unknown'].includes(value.state)||!(value.exitCode===null||Number.isInteger(value.exitCode)))throw new Error('后台任务状态无效');
+    return value;
+  }
   const meta=/^GOOESHELL_STATE (@\d+) (%\d+) ([01]) (-|\d+) (\d*) (\S*)\r?\n/.exec(result.stdout);
   if(!meta)throw new Error('后台任务状态无法识别，不推测执行成功');
   let output=result.stdout.slice(meta[0].length).replace(/[ \t]+$/gm,'').replace(/\n+$/,'');
@@ -98,5 +149,5 @@ tmux capture-pane -p -J -S -${request.tailLines} -t "$pane"
   // PTY EOF can arrive before waitpid: a dead pane without a status is still
   // finishing, not a completed command with a fabricated success code.
   const dead=meta[3]==='1',code=meta[4]!=='-'?Number(meta[4]):dead&&meta[5]?Number(meta[5]):null,signalName=dead&&meta[6]?meta[6]:null,exited=code!==null||signalName!==null;
-  return{taskId:request.taskId,sessionName,windowId:meta[1],paneId:meta[2],state:exited?'exited':dead?'finishing':'running',exitCode:code,signal:signalName,output:lines.slice(-request.tailLines).join('\n'),truncated:result.truncated||lines.length>request.tailLines};
+  return{taskId:request.taskId,sessionName,windowId:meta[1],paneId:meta[2],backend:'tmux',state:exited?'exited':dead?'finishing':'running',exitCode:code,signal:signalName,output:lines.slice(-request.tailLines).join('\n'),truncated:result.truncated||lines.length>request.tailLines};
 }

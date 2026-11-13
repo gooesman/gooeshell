@@ -33,15 +33,15 @@ export const mcpTools = {
     schema:z.strictObject({sessionId:z.string().min(1).max(255),command:z.string().min(1).max(65536),cwd:z.string().max(2048).startsWith('/').optional(),sudo:z.boolean().default(false),timeoutMs:z.number().int().min(100).max(60000).default(30000)}), readOnly:false,
   },
   start_task: {
-    description:'Start the actual long-running non-interactive command in a managed tmux window. Do not wrap the target in nohup, &, or self-daemonization: those make the launcher exit before the real process. By default call show_in_app(kind=task, sessionId, taskId) after starting so the user can watch, unless the user asks not to; the open view refreshes about every 2 seconds. Requires tmux and Python 3. sudo=true privately supplies GooeShell credentials, never pane keystrokes or command arguments. Use read_task for actual state and exit code, and do not equate launcher success with completion of detached children. Closing MCP or SSH does not stop an already launched task. On start timeout inspect gooeshell-ai before retrying.',
+    description:'Start the actual long-running non-interactive command as a managed task, using tmux if present or a detached supervised process otherwise. Python 3 is required; nothing is installed automatically. Do not wrap the target in nohup, &, or self-daemonization. By default call show_in_app(kind=task, sessionId, taskId) so the user can watch, unless asked not to. sudo=true supplies GooeShell credentials privately. Closing MCP or SSH does not stop an already launched task. If startup is uncertain, inspect the taskId in the error with read_task before retrying.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),command:z.string().min(1).max(65536),cwd:z.string().max(2048).startsWith('/').optional(),sudo:z.boolean().default(false)}),readOnly:false,
   },
   read_task: {
-    description:'Read a managed background task by taskId on the same server/login. Returns running/finishing/exited, actual exitCode or signal when available, and recent merged terminal output. finishing means terminal EOF arrived before process exit status; check again later. A non-exited task or null exit code is not success. Output is tmux scrollback, not a complete durable log. If the user removed its pane or tmux server restarted, completion cannot be recovered. Do not poll continuously; wait between checks or do other work.',
+    description:'Read a managed task on the same server/login. Returns backend, running/finishing/exited/unknown, actual exitCode or signal when available, recent merged output and truncation. unknown means the supervisor disappeared without a result; never infer success. Output is limited, not a complete log; process backend exposes logPath with a bounded rolling log. Do not poll continuously.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),taskId:z.string().uuid(),tailLines:z.number().int().min(1).max(1000).default(200)}),readOnly:true,
   },
   stop_task: {
-    description:'Stop only a GooeShell-managed tmux task by its taskId. Sends TERM to its dedicated process group and waits for the actual completion status. Does not kill unrelated panes or the tmux server. Older tasks without managed cancellation must be stopped manually.',
+    description:'Stop a GooeShell-managed task by its taskId, targeting only its dedicated process group and waiting for actual completion. Elevated tasks require sudo permission to signal the group. Unknown tasks cannot be safely stopped. Older tmux tasks without managed cancellation must be stopped manually.',
     schema:z.strictObject({sessionId:z.string().min(1).max(255),taskId:z.string().uuid()}),readOnly:false,
   },
   read_log: {

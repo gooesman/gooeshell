@@ -555,8 +555,8 @@ if(primaryInstance)app.whenReady().then(async()=>{
   if(name==='transfer_between_servers')return{transferId:await remote('serverTransfer',args)};
   const profile=sessionProfiles.get(args.sessionId);if(!profile)throw new Error('SSH 会话已断开，请先调用 connect');
   if(name==='read_remote_text'||name==='write_remote_text'||name==='edit_remote_text')return bridgeRemoteText(name,args,signal,remote,()=>sessionProfiles.get(args.sessionId)===profile);
-  let password:string|undefined;
-  if(args.sudo){const saved=await credentials.get(profile);password=saved.sudoUsesLogin?(profile.loginIdentityId?sessionLoginPasswords.get(args.sessionId):saved.password):saved.sudoPassword;}
+  let password:string|undefined,credentialError:unknown;
+  if(args.sudo||name==='stop_task'){try{const saved=await credentials.get(profile);password=saved.sudoUsesLogin?(profile.loginIdentityId?sessionLoginPasswords.get(args.sessionId):saved.password):saved.sudoPassword;}catch(error){if(name!=='stop_task')throw error;credentialError=error;}}
   signal.throwIfAborted();
   if(sessionProfiles.get(args.sessionId)!==profile)throw new Error('SSH 会话已断开，请重新连接');
   const requestId=randomUUID(),cancel=()=>{void remote('cancelBridgeExec',requestId).catch(()=>{});};
@@ -568,7 +568,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
    const result=await remote(method,{...args,requestId,password});
    if(activity)sendEvent({type:'aiActivity',activity:{...activity,state:'finished',output:name==='run_command'?[result.stdout,result.stderr].filter(Boolean).join(''):result.output,exitCode:result.exitCode,truncated:result.truncated,...(result.taskId?{taskId:result.taskId}:{})}});
    return result;
-  }catch(error){if(activity)sendEvent({type:'aiActivity',activity:{...activity,state:'failed',output:error instanceof Error?error.message:String(error)}});throw error;}
+  }catch(error){if(activity)sendEvent({type:'aiActivity',activity:{...activity,state:'failed',output:error instanceof Error?error.message:String(error)}});if(name==='stop_task'&&credentialError)throw new Error(`${String(error)}；读取已保存 sudo 凭据失败：${String(credentialError)}`);throw error;}
   finally{signal.removeEventListener('abort',cancel);}
  },async()=>{if(shuttingDown){bridgeSessions.clear();return;}await Promise.all([...bridgeSessions].map(id=>remote('disconnect',id).catch(()=>{})));bridgeSessions.clear();});
  ipcMain.on('gooeshell:terminal',(event,method,args)=>{

@@ -23,7 +23,7 @@ export async function cli(argv:string[],signal:AbortSignal,write:(value:string)=
   let value:any;
   do{
     value=await callBridge(file,name,input,signal);write(JSON.stringify(value));
-    if(!watch||value.state==='exited'||['completed','failed','cancelled'].includes(value.state))break;
+    if(!watch||value.state==='exited'||value.state==='unknown'||['completed','failed','cancelled'].includes(value.state))break;
     if(name==='read_log')input.offset=value.nextOffset;
     await delay(1000,undefined,{signal});
   }while(!signal.aborted);
