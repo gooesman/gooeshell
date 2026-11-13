@@ -78,12 +78,15 @@ export const mcpTools = {
   },
   show_in_app: {
     description:'When the user wants to watch, request GooeShell to show AI activity, a managed task, an existing remote log or a transfer. After start_task use kind=task with sessionId and taskId; for an existing log use kind=log with sessionId and an absolute path; for transfers use kind=transfer with transferId. Task and log views refresh about every 2 seconds only while open. requested=true means the request was sent, not that the user saw it or that the task succeeded. Never type into or alter the user terminal.',
-    schema:z.discriminatedUnion('kind',[
-      z.strictObject({kind:z.literal('activity')}),
-      z.strictObject({kind:z.literal('task'),sessionId:z.string().min(1).max(255),taskId:z.string().uuid()}),
-      z.strictObject({kind:z.literal('log'),sessionId:z.string().min(1).max(255),path:z.string().min(1).max(2048).startsWith('/')}),
-      z.strictObject({kind:z.literal('transfer'),transferId:z.string().uuid()}),
-    ]),readOnly:false,
+    schema:z.strictObject({kind:z.enum(['activity','task','log','transfer']),sessionId:z.string().min(1).max(255).optional(),taskId:z.string().uuid().optional(),path:z.string().min(1).max(2048).startsWith('/').optional(),transferId:z.string().uuid().optional()}).superRefine((value,context)=>{
+      const required={activity:[],task:['sessionId','taskId'],log:['sessionId','path'],transfer:['transferId']} as const;
+      const fields=['sessionId','taskId','path','transferId'] as const;
+      for(const field of fields){
+        const expected=(required[value.kind] as readonly string[]).includes(field);
+        if(expected&&value[field]===undefined)context.addIssue({code:'custom',path:[field],message:`${value.kind} 需要 ${field}`});
+        if(!expected&&value[field]!==undefined)context.addIssue({code:'custom',path:[field],message:`${value.kind} 不接受 ${field}`});
+      }
+    }),readOnly:false,
   },
 };
 export type McpToolName = keyof typeof mcpTools;

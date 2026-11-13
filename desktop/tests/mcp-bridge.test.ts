@@ -9,6 +9,31 @@ import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {McpBridge} from '../src/main/mcp-bridge';
 import {GOOESHELL_MCP_INSTRUCTIONS} from '../src/shared/mcp-instructions';
 
+test('show_in_app publishes a flat object and preserves per-kind validation through MCP',async t=>{
+  const base=path.resolve('test-output');await fs.mkdir(base,{recursive:true});const root=await fs.mkdtemp(path.join(base,'mcp-show-schema-'));
+  const views:unknown[]=[];
+  const bridge=new McpBridge(root,{command:process.execPath,args:[],env:{}},async(_name,args)=>{views.push(args);return{requested:true,view:args};},async()=>{});
+  const client=new Client({name:'show-schema-test',version:'1.0.0'});
+  const transport=new StdioClientTransport({command:process.execPath,args:['--import','tsx',path.resolve('src/main/mcp-stdio.ts'),bridge.file],stderr:'pipe'});
+  t.after(async()=>{await client.close();await bridge.stop();});
+  await bridge.setEnabled(true);await client.connect(transport);
+  const schema=(await client.listTools()).tools.find(tool=>tool.name==='show_in_app')?.inputSchema;
+  assert.ok(schema);assert.equal(schema.type,'object');assert.equal(schema.additionalProperties,false);
+  assert.deepEqual(Object.keys(schema.properties||{}).sort(),['kind','path','sessionId','taskId','transferId']);
+  assert.deepEqual(schema.required,['kind']);
+  const id='12345678-1234-4234-8234-123456789abc';
+  const valid=[{kind:'activity'},{kind:'task',sessionId:'fixture',taskId:id},{kind:'log',sessionId:'fixture',path:'/tmp/fixture.log'},{kind:'transfer',transferId:id}];
+  for(const args of valid)assert.notEqual((await client.callTool({name:'show_in_app',arguments:args})).isError,true,JSON.stringify(args));
+  assert.deepEqual(views,valid);
+  const descriptor=JSON.parse(await fs.readFile(bridge.file,'utf8'));
+  for(const args of [{kind:'activity',sessionId:'fixture'},{kind:'task',sessionId:'fixture'},{kind:'task',sessionId:'fixture',taskId:id,path:'/tmp/extra'},{kind:'log',sessionId:'fixture',path:'relative'},{kind:'transfer',transferId:'bad'},{kind:'unknown'},{kind:'activity',extra:true}]){
+    assert.equal((await client.callTool({name:'show_in_app',arguments:args})).isError,true,JSON.stringify(args));
+    const response=await fetch(`http://127.0.0.1:${descriptor.port}/call`,{method:'POST',headers:{authorization:'Bearer '+descriptor.token},body:JSON.stringify({tool:'show_in_app',arguments:args})});
+    assert.equal(response.status,400,JSON.stringify(args));
+  }
+  assert.deepEqual(views,valid,'invalid requests do not reach the application');
+});
+
 test('MCP stdio bridge authenticates locally, validates calls and revokes in-flight access',async t=>{
   const base=path.resolve('test-output');await fs.mkdir(base,{recursive:true});const root=await fs.mkdtemp(path.join(base,'mcp-bridge-'));
   let cancelled=false;const calls:string[]=[];
