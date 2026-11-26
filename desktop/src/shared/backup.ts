@@ -18,7 +18,7 @@ export function pickSettings(settings:Partial<AppSettings>, sections:SettingSect
 export interface BackupCatalog {
   settings:SettingSection[];
   groups:Pick<ConnectionGroup,'id'|'name'>[];
-  connections:{id:string;name:string;host:string;groupId?:string;identityIds:string[]}[];
+  connections:{id:string;name:string;host:string;groupId?:string;identityIds:string[];hasPrivateKey?:boolean}[];
   identities:{id:string;name:string;username:string}[];
   commandCount:number;
   commandGroupCount:number;
@@ -32,6 +32,7 @@ export interface BackupSelection {
   identityIds:string[];
   commands:boolean;
   secrets:boolean;
+  privateKeys?:boolean;
   hostPreferences:boolean;
 }
 export function ordinarySelection(catalog:BackupCatalog):BackupSelection {

@@ -134,11 +134,11 @@ export interface DesktopApi {
   installUpdate():Promise<boolean>;
   cancelUpdate():Promise<void>;
   backupContents():Promise<BackupCatalog>;
-  exportConfig(request:{passphrase:string;selection:BackupSelection}):Promise<string|null>;
+  exportConfig(request:{passphrase:string;selection:BackupSelection}):Promise<{file:string;omitted:number}|null>;
   chooseConfig():Promise<boolean>;
   discardConfigPreview():Promise<void>;
   previewConfig(passphrase:string):Promise<BackupCatalog>;
-  importConfig(selection:BackupSelection):Promise<{added:number;skipped:number;identities:number;groups:number;commands:number}>;
+  importConfig(selection:BackupSelection):Promise<{added:number;skipped:number;privateKeys:number;identities:number;groups:number;commands:number}>;
   mcpStatus(): Promise<McpStatus>;
   setMcpEnabled(enabled: boolean): Promise<McpStatus>;
   listLoginIdentities(): Promise<LoginIdentityList>;

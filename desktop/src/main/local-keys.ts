@@ -7,6 +7,31 @@ import { utils } from 'ssh2';
 
 const run = promisify(execFile);
 const MAX_KEY = 1024 * 1024;
+export function checkBackupKey(bytes:Buffer) {
+  if (!bytes.length || bytes.length>MAX_KEY) throw new Error('SSH 私钥必须小于或等于 1 MiB');
+  const parsed=utils.parseKey(bytes);
+  if (parsed instanceof Error && /^Encrypted .*private .*key detected, but no passphrase given$/i.test(parsed.message)) return;
+  if (parsed instanceof Error || Array.isArray(parsed) || !parsed.isPrivateKey()) throw new Error('文件不是支持的 SSH 私钥');
+}
+
+export async function readBackupKey(file:string):Promise<Buffer> {
+  const handle=await fs.open(file,'r');
+  try {
+    const stat=await handle.stat();
+    if (!stat.isFile() || !stat.size || stat.size>MAX_KEY) throw new Error('SSH 私钥必须是 1 MiB 以内的普通文件');
+    const bytes=Buffer.alloc(stat.size+1);
+    let offset=0;
+    while(offset<bytes.length){
+      const {bytesRead}=await handle.read(bytes,offset,bytes.length-offset,offset);
+      if(!bytesRead)break;
+      offset+=bytesRead;
+    }
+    if(offset!==stat.size)throw new Error('读取期间私钥文件发生了变化');
+    const key=bytes.subarray(0,offset);
+    checkBackupKey(key);
+    return key;
+  } finally {await handle.close();}
+}
 export interface PreparedLocalKey { keyId: string; publicKey: string; fingerprint: string; privateKeyPath?: string; name: string }
 export interface ResolvedLocalKey { publicKey: string; privateKeyPath?: string; passphrase?: string }
 type KeyGenerator = (options: utils.KeyPairOptions) => Promise<utils.KeyPairReturn>;
@@ -69,9 +94,16 @@ export class LocalKeyStore {
     if (!name || name.length > 120 || /[\x00-\x1f]/.test(name)) throw new Error('请输入 1 至 120 个字符的密钥名称');
     const passphrase = secret(request.passphrase);
     const pair = await generateVerifiedEd25519KeyPair(passphrase);
+    const generated = await this.privateDirectory('ed25519-');
+    const privateKeyPath = path.join(generated, 'id_ed25519');
+    await fs.writeFile(privateKeyPath, pair.private, { mode: 0o600, flag: 'wx' });
+    await fs.writeFile(`${privateKeyPath}.pub`, `${pair.public}\n`, { mode: 0o644, flag: 'wx' });
+    return this.remember(name, canonicalPublicKey(pair.public), privateKeyPath, passphrase);
+  }
+  private async privateDirectory(prefix:string) {
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
     if (!(await fs.lstat(this.directory)).isDirectory()) throw new Error('密钥目录不能是符号链接');
-    const generated = path.join(this.directory, `ed25519-${randomUUID()}`);
+    const generated = path.join(this.directory, prefix+randomUUID());
     await fs.mkdir(generated, { mode: 0o700 });
     // Windows mode bits do not restrict ACLs. Set this new, private directory before writing secrets.
     if (process.platform === 'win32') {
@@ -80,10 +112,28 @@ export class LocalKeyStore {
       if (!/^S-1-(?:\d+-)*\d+$/.test(sid)) throw new Error('无法确认当前 Windows 用户，未写入私钥');
       await run('icacls.exe', [generated, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F'], { windowsHide: true });
     }
-    const privateKeyPath = path.join(generated, 'id_ed25519');
-    await fs.writeFile(privateKeyPath, pair.private, { mode: 0o600, flag: 'wx' });
-    await fs.writeFile(`${privateKeyPath}.pub`, `${pair.public}\n`, { mode: 0o644, flag: 'wx' });
-    return this.remember(name, canonicalPublicKey(pair.public), privateKeyPath, passphrase);
+    return generated;
+  }
+  async restore(bytes:Buffer):Promise<string> {
+    checkBackupKey(bytes);
+    const digest=createHash('sha256').update(bytes).digest('hex');
+    const directory=path.join(this.directory,'backup-'+digest), file=path.join(directory,'private-key');
+    const existing=async()=>{
+      if (!(await fs.lstat(this.directory)).isDirectory() || !(await fs.lstat(directory)).isDirectory() ||
+          !(await fs.lstat(file)).isFile() || !(await readBackupKey(file)).equals(bytes)) throw new Error('已恢复的私钥文件与备份不一致');
+      return file;
+    };
+    try {return await existing();} catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    const stage=await this.privateDirectory('restore-');
+    const temp=path.join(stage,'private-key');
+    try {
+      await fs.writeFile(temp,bytes,{flag:'wx',mode:0o600});
+      try {await fs.rename(stage,directory);} catch(error) {
+        if(!['EEXIST','ENOTEMPTY','EPERM','EACCES'].includes((error as NodeJS.ErrnoException).code??''))throw error;
+        return await existing();
+      }
+      return file;
+    } finally {await fs.unlink(temp).catch(()=>{});await fs.rmdir(stage).catch(()=>{});}
   }
   resolve(keyId: string): ResolvedLocalKey {
     const item = this.keys.get(keyId);

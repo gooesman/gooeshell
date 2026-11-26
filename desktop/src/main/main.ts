@@ -30,7 +30,7 @@ import {launchExternalEditor,externalEditorCommand,externalEditorForFile} from '
 import {checkForUpdate,type UpdatePlatform} from './update-check';
 import {downloadUpdate} from './update-download';
 import {prepareWindowsUpdate,launchWindowsUpdate,type WindowsUpdatePlan} from './update-install';
-import {encryptBackup,decryptBackup} from './portable-backup';
+import {encryptBackup,decryptBackup,validateBackupPassword} from './portable-backup';
 import {backupCatalog,readPortableConfig,collectPortableConfig,importPortableConfig,validatePortableConfig,type PortableConfig} from './portable-config';
 import type {UpdateAsset,UpdateRelease} from '../shared/update';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
@@ -227,14 +227,20 @@ if(primaryInstance)app.whenReady().then(async()=>{
      win.close();return true;
     }finally{updatePreparing=false;}
    }
-   case 'backupContents':return backupCatalog(await readPortableConfig(store,identities,commands));
+   case 'backupContents':return backupCatalog(await readPortableConfig(store,identities,commands),true);
    case 'exportConfig':{
     if(!value||typeof value.passphrase!=='string'||!value.selection)throw new Error('备份选项无效');
-    const choice=await dialog.showSaveDialog(win,{title:'导出加密配置备份',defaultPath:path.join(app.getPath('documents'),'GooeShell-backup.gsbak'),filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
+    validateBackupPassword(value.passphrase);
+    const choice=await dialog.showSaveDialog(win,{title:value.selection.privateKeys?'导出包含 SSH 私钥的加密备份':'导出加密配置备份',defaultPath:path.join(app.getPath('documents'),'GooeShell-backup.gsbak'),filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
     if(choice.canceled||!choice.filePath)return null;
-    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.selection));
+    const omitted=new Set<string>();
+    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.selection,label=>omitted.add(label)));
+    if(omitted.size){
+      const answer=await dialog.showMessageBox(win,{type:'warning',title:'部分已保存的凭据无法读取',message:'以下项目的已保存密码或私钥口令无法读取',detail:[...omitted].join('\n')+'\n\n继续将跳过以上凭据。所选私钥文件和其他可读取的凭据仍会导出。若私钥有口令，恢复后需要手动输入。',buttons:['取消','跳过这些凭据并导出'],defaultId:0,cancelId:0,noLink:true});
+      if(answer.response!==1)return null;
+    }
     const encrypted=await encryptBackup(data,value.passphrase);const temporary=path.join(path.dirname(choice.filePath),'.gooeshell-backup-'+randomUUID()+'.tmp');
-    try{await fs.writeFile(temporary,encrypted,{flag:'wx',mode:0o600});try{await fs.link(temporary,choice.filePath);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('目标备份已存在，请选择其他文件名');throw error;}return choice.filePath;}
+    try{await fs.writeFile(temporary,encrypted,{flag:'wx',mode:0o600});try{await fs.link(temporary,choice.filePath);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('目标备份已存在，请选择其他文件名');throw error;}return {file:choice.filePath,omitted:omitted.size};}
     finally{await fs.unlink(temporary).catch(()=>{});}
    }
    case 'chooseConfig':{
@@ -254,7 +260,7 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'importConfig':{
     if(!value||!backupPreview)throw new Error('请先验证备份');
     const backup=backupPreview;clearBackupPreview();
-    return identityMutation(()=>importPortableConfig(backup,store,identities,credentials,commands,value));
+    return identityMutation(()=>importPortableConfig(backup,store,identities,credentials,commands,value,localKeys));
    }
    case 'mcpStatus':return{...await mcpBridge!.refreshStatus(),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};
    case 'setMcpEnabled':return{...await mcpBridge!.setEnabled(value),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};

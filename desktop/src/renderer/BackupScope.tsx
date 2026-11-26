@@ -35,6 +35,7 @@ export default function BackupScope({catalog,value,onChange,restore=false,disabl
   function changeRecords(patch:Partial<BackupSelection>) {
     const next = {...value,...patch};
     if (!next.connectionIds.length && !next.identityIds.length) next.secrets=false;
+    if (!catalog.connections.some(c=>c.hasPrivateKey && next.connectionIds.includes(c.id))) next.privateKeys=false;
     onChange(next);
   }
   const totalConnections = catalog.connections.length + catalog.groups.length;
@@ -58,7 +59,7 @@ export default function BackupScope({catalog,value,onChange,restore=false,disabl
   return <fieldset className="backup-scope" disabled={disabled}>
     <legend>{restore?'恢复范围':'备份范围'}</legend>
     <div className="backup-actions">
-      <button type="button" className="text-button" onClick={()=>onChange({...all,secrets:value.secrets,hostPreferences:value.hostPreferences})}>全选</button>
+      <button type="button" className="text-button" onClick={()=>onChange({...all,privateKeys:value.privateKeys,secrets:value.secrets,hostPreferences:value.hostPreferences})}>全选</button>
       <button type="button" className="text-button" onClick={()=>onChange(emptySelection)}>清空</button>
     </div>
     <div className="backup-categories">
@@ -83,6 +84,8 @@ export default function BackupScope({catalog,value,onChange,restore=false,disabl
     </div>
     {needed.size>0 && <p className="settings-description">所选连接和跳板机引用了 {needed.size} 个未选身份。仅保留用户名，或
       <button type="button" className="text-button" onClick={()=>changeRecords({identityIds:toggle(value.identityIds,[...needed],true)})}>带上关联身份</button>。</p>}
+    {catalog.connections.some(c=>c.hasPrivateKey) && <Check label={restore?'恢复所选连接和跳板机的 SSH 私钥文件':'包含所选连接和跳板机的 SSH 私钥文件'} checked={!!value.privateKeys}
+      disabled={!catalog.connections.some(c=>conn.has(c.id)&&c.hasPrivateKey)} onChange={privateKeys=>onChange({...value,privateKeys})}/>}
     {(!restore || catalog.hasSecrets) && <Check label="包含所选连接和身份长期保存的密码和私钥口令" checked={value.secrets}
       disabled={!conn.size&&!identities.size} onChange={secrets=>onChange({...value,secrets})}/>}
     {catalog.hosts.length>0 && <><Check label={catalog.hosts.length+' 个地址的跳过指纹验证设置'} checked={value.hostPreferences}
