@@ -282,5 +282,8 @@ export class Store {
   }
   async saveProfile(profile:HostProfile){await this.saveConnection(profile,true);}
   async deleteProfile(id:string){const safe=identifier(id);return this.catalog(catalog=>{const record=catalog.records.find(value=>value.profile.id===safe);if(record)record.favorite=false;},true);}
+  async mergeSettings(patch:Partial<AppSettings>){
+    return this.serial('settings.json',async()=>this.write('settings.json',cleanSettings({...await this.settings(),...patch})));
+  }
   async saveSettings(settings:AppSettings){const safe=cleanSettings(settings);return this.serial('settings.json',()=>this.write('settings.json',safe));}
 }

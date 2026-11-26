@@ -31,7 +31,7 @@ import {checkForUpdate,type UpdatePlatform} from './update-check';
 import {downloadUpdate} from './update-download';
 import {prepareWindowsUpdate,launchWindowsUpdate,type WindowsUpdatePlan} from './update-install';
 import {encryptBackup,decryptBackup} from './portable-backup';
-import {collectPortableConfig,importPortableConfig,validatePortableConfig,type PortableConfig} from './portable-config';
+import {backupCatalog,readPortableConfig,collectPortableConfig,importPortableConfig,validatePortableConfig,type PortableConfig} from './portable-config';
 import type {UpdateAsset,UpdateRelease} from '../shared/update';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
@@ -227,11 +227,12 @@ if(primaryInstance)app.whenReady().then(async()=>{
      win.close();return true;
     }finally{updatePreparing=false;}
    }
+   case 'backupContents':return backupCatalog(await readPortableConfig(store,identities,commands));
    case 'exportConfig':{
-    if(!value||typeof value.passphrase!=='string'||typeof value.includeSecrets!=='boolean')throw new Error('备份选项无效');
+    if(!value||typeof value.passphrase!=='string'||!value.selection)throw new Error('备份选项无效');
     const choice=await dialog.showSaveDialog(win,{title:'导出加密配置备份',defaultPath:path.join(app.getPath('documents'),'GooeShell-backup.gsbak'),filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
     if(choice.canceled||!choice.filePath)return null;
-    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.includeSecrets));
+    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.selection));
     const encrypted=await encryptBackup(data,value.passphrase);const temporary=path.join(path.dirname(choice.filePath),'.gooeshell-backup-'+randomUUID()+'.tmp');
     try{await fs.writeFile(temporary,encrypted,{flag:'wx',mode:0o600});try{await fs.link(temporary,choice.filePath);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('目标备份已存在，请选择其他文件名');throw error;}return choice.filePath;}
     finally{await fs.unlink(temporary).catch(()=>{});}
@@ -248,12 +249,12 @@ if(primaryInstance)app.whenReady().then(async()=>{
     try{const stat=await file.stat();if(!stat.isFile()||stat.size>45*1024*1024)throw new Error('备份必须是小于 45 MiB 的普通文件');const data=Buffer.alloc(stat.size+1);let offset=0;while(offset<data.length){const {bytesRead}=await file.read(data,offset,data.length-offset,offset);if(!bytesRead)break;offset+=bytesRead;}if(offset!==stat.size)throw new Error('备份读取期间发生变化，请重新选择');text=data.subarray(0,offset).toString('utf8');}finally{await file.close();}
     backupPreview=validatePortableConfig(await decryptBackup(text,value));
     backupTimer=setTimeout(clearBackupPreview,5*60_000);backupTimer.unref();
-    const backup=backupPreview;return{connections:backup.connections.length,groups:backup.groups.length,identities:backup.identities.length,commands:backup.commands.commands.length,hasSecrets:backup.identities.some(item=>!!item.password)||backup.connections.some(item=>!!item.credentials||!!item.jumpCredentials),skipVerificationHosts:backup.hostKeyPreferences.map(({host,port})=>({host,port}))};
+    return backupCatalog(backupPreview);
    }
    case 'importConfig':{
-    if(!value||typeof value.applySettings!=='boolean'||typeof value.applyHostPreferences!=='boolean'||!backupPreview)throw new Error('请先验证备份');
+    if(!value||!backupPreview)throw new Error('请先验证备份');
     const backup=backupPreview;clearBackupPreview();
-    return identityMutation(()=>importPortableConfig(backup,store,identities,credentials,commands,value.applySettings,value.applyHostPreferences));
+    return identityMutation(()=>importPortableConfig(backup,store,identities,credentials,commands,value));
    }
    case 'mcpStatus':return{...await mcpBridge!.refreshStatus(),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};
    case 'setMcpEnabled':return{...await mcpBridge!.setEnabled(value),cliPath:app.isPackaged?path.join(process.resourcesPath,'cli',process.platform==='win32'?'gooeshell-cli.cmd':'gooeshell-cli'):undefined};

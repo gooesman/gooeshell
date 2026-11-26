@@ -1,3 +1,4 @@
+import type {BackupCatalog,BackupSelection} from './backup';
 import type {FontFamilyInfo} from './font-types';
 import type {McpStatus,AiView,AiActivity,BridgeTaskResult} from './mcp';
 import type {UpdateRelease} from './update';
@@ -132,11 +133,12 @@ export interface DesktopApi {
   downloadUpdate(name:string):Promise<{file:string;canInstall:boolean}|null>;
   installUpdate():Promise<boolean>;
   cancelUpdate():Promise<void>;
-  exportConfig(request:{passphrase:string;includeSecrets:boolean}):Promise<string|null>;
+  backupContents():Promise<BackupCatalog>;
+  exportConfig(request:{passphrase:string;selection:BackupSelection}):Promise<string|null>;
   chooseConfig():Promise<boolean>;
   discardConfigPreview():Promise<void>;
-  previewConfig(passphrase:string):Promise<{connections:number;groups:number;identities:number;commands:number;hasSecrets:boolean;skipVerificationHosts:{host:string;port:number}[]}>;
-  importConfig(options:{applySettings:boolean;applyHostPreferences:boolean}):Promise<{added:number;skipped:number;identities:number;groups:number;commands:number}>;
+  previewConfig(passphrase:string):Promise<BackupCatalog>;
+  importConfig(selection:BackupSelection):Promise<{added:number;skipped:number;identities:number;groups:number;commands:number}>;
   mcpStatus(): Promise<McpStatus>;
   setMcpEnabled(enabled: boolean): Promise<McpStatus>;
   listLoginIdentities(): Promise<LoginIdentityList>;

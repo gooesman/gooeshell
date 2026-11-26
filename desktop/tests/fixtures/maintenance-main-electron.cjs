@@ -21,19 +21,49 @@ const call=(method,...args)=>evalJs(`window.gooeshell[${JSON.stringify(method)}]
 async function until(code){for(let i=0;i<200;i++){if(await evalJs(code))return;await wait(50);}throw new Error('Timed out: '+code);}
 async function click(label){const query=`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)}&&!b.disabled)`;await until(`Boolean(${query})`);await evalJs(`${query}.click()`);}
 async function fill(selector,value){await evalJs(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.focus();e.select();})()`);await window.webContents.insertText(value);}
+function scope(legend) {return `[...document.querySelectorAll('fieldset')].find(e=>e.querySelector('legend')?.textContent===${JSON.stringify(legend)})`;}
+async function scopeClick(legend,selector,label){
+ const query=`[...(${scope(legend)}?.querySelectorAll(${JSON.stringify(selector)})||[])].find(e=>e.textContent.includes(${JSON.stringify(label)}))`;
+ await until(`Boolean(${query})`);await evalJs(`${query}.click()`);
+}
 async function run(){
  await until('Boolean(window.gooeshell && document.querySelector(".connection-home"))');
  const profile={id:'fixture-profile',name:'Fixture only',host:'fixture.invalid',port:22,username:'fixture',auth:'password',rememberHost:true,encoding:'utf8'};
  await call('saveConnection',{profile,favorite:true,credentials:{remember:'persistent',password:'fixture-secret',sudoUsesLogin:true}});
+ const identity=await call('saveLoginIdentity',{name:'Fixture identity',username:'fixture',remember:'session'});
+ await call('saveGroup',{id:'fixture-group',name:'Demo group',order:0,icon:'cloud'});
+ await call('saveConnection',{profile:{...profile,id:'second',name:'Second server',host:'second.invalid',groupId:'fixture-group',loginIdentityId:identity.id},favorite:true});
  await call('setHostKeyPreference',{host:'fixture.invalid',port:22,skipVerification:true});
  await evalJs('document.querySelector(\'.titlebar [aria-label="设置"]\').click()');await click('更新与备份');
  phase='check and download';await click('检查更新');await until('document.body.innerText.includes("发现新版本 9.9.9")');
  await click('下载 '+assetName);await until('document.body.innerText.includes("更新包下载并校验完成")');assert.deepEqual(await fs.readFile(archive),payload);result.checks.update=true;
- phase='export';await evalJs('document.querySelector(\'input[type="checkbox"]\').click()');await fill('#backup-export-password','fixture-passphrase');await fill('#backup-export-confirm','fixture-passphrase');await click('导出配置');await until('document.body.innerText.includes("加密备份已导出")');
- assert(!(await fs.readFile(backup,'utf8')).includes('fixture-secret'));await call('deleteConnection',profile.id);await call('setHostKeyPreference',{host:'fixture.invalid',port:22,skipVerification:false});assert.equal((await call('connections')).connections.length,0);
+ phase='export';await scopeClick('备份范围','button','清空');
+ await scopeClick('备份范围','summary','选择分组和连接');await scopeClick('备份范围','label','Demo group');
+ await until('document.body.innerText.includes("引用了 1 个未选身份")');await scopeClick('备份范围','button','带上关联身份');
+ await scopeClick('备份范围','summary','选择身份');
+ assert(await evalJs(`[...${scope('备份范围')}.querySelectorAll('label')].find(e=>e.textContent.includes('Fixture identity')).querySelector('input').checked`));
+ await scopeClick('备份范围','label','Fixture only');
+ await scopeClick('备份范围','label','长期保存的密码');await scopeClick('备份范围','label','跳过指纹验证设置');await fill('#backup-export-password','fixture-passphrase');await fill('#backup-export-confirm','fixture-passphrase');await click('导出配置');await until('document.body.innerText.includes("加密备份已导出")');
+ assert(!(await fs.readFile(backup,'utf8')).includes('fixture-secret'));await call('deleteConnection',profile.id);await call('deleteConnection','second');await call('deleteLoginIdentity',identity.id);await call('setHostKeyPreference',{host:'fixture.invalid',port:22,skipVerification:false});assert.equal((await call('connections')).connections.length,0);
  phase='wrong password';await click('选择备份文件');await until('Boolean(document.querySelector("#backup-import-password"))');await fill('#backup-import-password','wrong-passphrase');await click('验证并预览');await until('document.body.innerText.includes("备份密码错误或文件已损坏")');assert.equal((await call('connections')).connections.length,0);
- phase='import';await fill('#backup-import-password','fixture-passphrase');await click('验证并预览');await until('document.body.innerText.includes("1 个连接")');assert.match(await evalJs('document.body.innerText'),/1 个地址的跳过指纹验证设置/);await evalJs('[...document.querySelectorAll("label")].find(e=>e.textContent.includes("1 个地址的跳过指纹验证设置")).querySelector("input").click()');await click('合并导入');await until('document.body.innerText.includes("导入完成：新增 1 个连接")');
- const imported=(await call('connections')).connections[0];assert.equal(imported.host,'fixture.invalid');assert.equal((await call('credentialStatus',imported)).hasPassword,true);assert.equal((await call('initial')).hostKeyPreferences[0].skipVerification,true);result.checks.backup=true;result.success=true;
+ phase='import';await fill('#backup-import-password','fixture-passphrase');await click('验证并预览');await until(`Boolean(${scope('恢复范围')})`);assert(!((await evalJs(`${scope('恢复范围')}.innerText`)).includes('快捷键与鼠标')));
+ await scopeClick('恢复范围','summary','选择分组和连接');await scopeClick('恢复范围','label','Demo group');
+ await scopeClick('恢复范围','label','登录身份');
+ await scopeClick('恢复范围','label','长期保存的密码');await scopeClick('恢复范围','label','跳过指纹验证设置');await click('合并导入');await until('document.body.innerText.includes("导入完成：新增 1 个连接")');
+ const imported=(await call('connections')).connections[0];assert.equal(imported.host,'fixture.invalid');assert.equal((await call('credentialStatus',imported)).hasPassword,true);assert.equal((await call('initial')).hostKeyPreferences[0].skipVerification,true);assert.equal((await call('listLoginIdentities')).identities.length,0);result.checks.backup=true;
+ phase='keyboard only';await fs.rename(backup,path.join(dir,'connection-backup.gsbak'));
+ const original=(await call('initial')).settings;
+ await call('saveSettings',{...original,copyOnSelect:true,shortcuts:{...original.shortcuts,paste:'Alt+V'}});
+ await scopeClick('备份范围','button','清空');await scopeClick('备份范围','label','快捷键与鼠标');
+ await fill('#backup-export-password','fixture-passphrase');await fill('#backup-export-confirm','fixture-passphrase');await click('导出配置');
+ await until('document.body.innerText.includes("加密备份已导出")');
+ await call('saveSettings',{...original,fontSize:27,externalEditorPath:'test-editor'});
+ await click('选择备份文件');await fill('#backup-import-password','fixture-passphrase');await click('验证并预览');
+ await scopeClick('恢复范围','label','快捷键与鼠标');await until('document.body.innerText.includes("将替换本机设置：快捷键与鼠标")');
+ await click('合并导入');await until('document.body.innerText.includes("导入完成：1 类设置")');
+ const next=(await call('initial')).settings;
+ assert.equal(next.shortcuts.paste,'Alt+V');assert.equal(next.copyOnSelect,true);assert.equal(next.fontSize,27);assert.equal(next.externalEditorPath,'test-editor');
+ assert.equal((await call('connections')).connections.length,1);result.checks.keyboardOnly=true;result.success=true;
 }
 app.on('browser-window-created',(_event,created)=>{window=created;window.on('show',()=>window.hide());window.webContents.once('did-finish-load',()=>void run().catch(async error=>{result.error=error.stack||String(error);try{result.body=await evalJs('document.body.innerText');}catch{}}).finally(async()=>{result.phase=phase;await fs.writeFile(path.join(dir,'result.json'),JSON.stringify(result));app.exit(result.success?0:1);}));});
 require('../../dist-main/main/main.js');

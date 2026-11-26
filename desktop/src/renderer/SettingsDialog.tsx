@@ -9,6 +9,7 @@ import TerminalColorSettings from './TerminalColorSettings';
 import LoginIdentityManager from './LoginIdentityManager';
 import McpSettings from './McpSettings';
 import ExternalEditorSettings from './ExternalEditorSettings';
+import {pickSettings} from '../shared/backup';
 import MaintenanceSettings from './MaintenanceSettings';
 function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
 function IconButton({ title, onClick }: { children: React.ReactNode; title: string; onClick: () => void }) { return <button type="button" className="icon-button" title={title} aria-label={title} onClick={onClick}><X size={15} strokeWidth={1.7} /></button>; }
@@ -37,7 +38,7 @@ export default function SettingsDialog({ settings, save, close, clearHistory, in
       {tab === 'editor' && <ExternalEditorSettings settings={draft} change={partial => setDraft(previous => ({ ...previous, ...partial }))} />}
       {tab === 'identities' && <LoginIdentityManager onChange={onIdentitiesChange} onBusyChange={setIdentityBusy} />}
       {tab === 'mcp' && <McpSettings onBusyChange={setIdentityBusy} />}
-      {tab === 'maintenance' && <MaintenanceSettings onBusyChange={setIdentityBusy} onImported={async next=>{if(next)setDraft(next);await onConfigImported?.(next);}} />}
+      {tab === 'maintenance' && <MaintenanceSettings onBusyChange={setIdentityBusy} onImported={async (next,sections)=>{if(next&&sections)setDraft(previous=>({...previous,...pickSettings(next,sections)}));await onConfigImported?.(next);}} />}
       {tab === 'about' && <><h3>GooeShell</h3><div className="about-version">图形 SSH 终端与文件工作区</div><p className="about-copy">面向 Windows 的 SSH 终端与文件管理工具。<br />终端采用 <strong>xterm.js</strong>，连接与文件传输使用 SSH。</p><p className="settings-description">此版本支持真实服务器连接、双栏文件浏览、文件传输、字体和快捷键设置。遇到权限不足时，可以仅为当前操作使用 sudo。</p><p className="settings-description">密码可选择不记住、本次使用期间记住，或使用系统加密长期记住。连接配置中不保存明文密码。</p></>}
       {error && <div className="form-error" role="alert">{error}</div>}
     </div></div></Modal>;
