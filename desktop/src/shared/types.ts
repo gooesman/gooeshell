@@ -134,7 +134,7 @@ export interface DesktopApi {
   installUpdate():Promise<boolean>;
   cancelUpdate():Promise<void>;
   backupContents():Promise<BackupCatalog>;
-  exportConfig(request:{passphrase:string;selection:BackupSelection}):Promise<{file:string;omitted:number}|null>;
+  exportConfig(request:{passphrase:string;selection:BackupSelection;keyPassphrases?:Record<string,string>}):Promise<{file:string;omitted:string[];warnings:string[]}|{missing:{id:string;label:string}[]}|null>;
   chooseConfig():Promise<boolean>;
   discardConfigPreview():Promise<void>;
   previewConfig(passphrase:string):Promise<BackupCatalog>;

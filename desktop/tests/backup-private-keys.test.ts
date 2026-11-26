@@ -10,7 +10,7 @@ import {IdentityStore} from '../src/main/identity-store';
 import {CommandStore} from '../src/main/command-store';
 import {LocalKeyStore,generateVerifiedEd25519KeyPair} from '../src/main/local-keys';
 import {jumpCredentialProfile} from '../src/main/jump-profile';
-import {collectPortableConfig,importPortableConfig,validatePortableConfig,backupCatalog,selectPortableConfig} from '../src/main/portable-config';
+import {collectPortableConfig,importPortableConfig,validatePortableConfig,backupCatalog,selectPortableConfig,completeBackupKeyPassphrases} from '../src/main/portable-config';
 import {encryptBackup,decryptBackup} from '../src/main/portable-backup';
 import type {HostProfile} from '../src/shared/types';
 
@@ -46,7 +46,12 @@ test('selected private keys survive removal of originals and authenticate two re
     if(phrases[i])await src[2].save(target,{remember:'persistent',sudoUsesLogin:true,passphrase:phrases[i]});
   }
   await src[0].saveConnection({...profile,id:'excluded',privateKeyPath:path.join(root,'absent')},true);
-  const portable=await collectPortableConfig(...src,scope);
+  const locked=new CredentialStore(path.join(root,'src'),{...cipher,decrypt:async()=>{throw Error('fixture lock');}});
+  const portable=await collectPortableConfig(src[0],src[1],locked,src[3],scope,()=>{});
+  const missing=completeBackupKeyPassphrases(portable);
+  assert.equal(missing.length,1);assert.equal(missing[0].label,'two');
+  assert.deepEqual(completeBackupKeyPassphrases(structuredClone(portable),{[missing[0].id]:''}),[]);
+  assert.deepEqual(completeBackupKeyPassphrases(portable,{[missing[0].id]:phrases[1]!}),[]);
   assert.equal(portable.version,3);
   const wire=await encryptBackup(portable,'fixture-backup-password');
   assert(!wire.includes('PRIVATE KEY'));assert(!wire.includes(phrases[1]!));
@@ -104,4 +109,27 @@ test('a failed decryption can be explicitly omitted while retaining a shared jum
   const imported=(await dst[0].connections())[0];
   assert.notEqual(imported.jumpHost?.privateKeyPath,file);
   assert.equal((await dst[2].get(jumpCredentialProfile(imported.jumpHost!))).sudoPassword,'readable-fixture');
+});
+
+test('a broken saved record is separate from whether the exported SSH key needs a passphrase',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'gooeshell-unlocked-key-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const src=stores(root), file=path.join(root,'test-key');
+  const target={...profile,privateKeyPath:file};
+  await src[0].saveConnection(target,true);
+  await src[2].save(target,{remember:'persistent',sudoUsesLogin:false,sudoPassword:'fixture-only'});
+  const locked=new CredentialStore(root,{...cipher,decrypt:async()=>{throw Error('fixture record unavailable');}});
+  const selection={...scope,connectionIds:[target.id]};
+  for(const phrase of [undefined,'fixture-ssh-passphrase']){
+    const pair=await generateVerifiedEd25519KeyPair(phrase);
+    await fs.writeFile(file,pair.private);
+    const issues:unknown[]=[];
+    const data=await collectPortableConfig(src[0],src[1],locked,src[3],selection,(_label,protection)=>issues.push(protection));
+    assert.deepEqual(issues,[phrase?'encrypted':'unprotected']);
+    assert.equal(Buffer.from(data.privateKeys![data.connections[0].privateKey!],'base64').toString(),pair.private);
+  }
+  await fs.unlink(file);
+  const issues:unknown[]=[];
+  await collectPortableConfig(src[0],src[1],locked,src[3],{...selection,privateKeys:false},(_label,protection)=>issues.push(protection));
+  assert.deepEqual(issues,[undefined]);
 });

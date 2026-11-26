@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {LocalKeyStore,checkBackupKey,readBackupKey} from './local-keys';
+import {LocalKeyStore,canonicalPublicKey,checkBackupKey,readBackupKey} from './local-keys';
 import {Store,cleanProfile,cleanGroup,cleanSettings,cleanHostKeyPreference} from './store';
 import {CredentialStore,type ConnectionSecrets} from './credential-store';
 import {IdentityStore} from './identity-store';
@@ -78,13 +78,16 @@ export function selectPortableConfig(data:PortableConfig, selection:BackupSelect
 }
 
 export async function collectPortableConfig(store:Store, identities:IdentityStore, credentials:CredentialStore,
-  commands:CommandStore, selection:BackupSelection, onUnavailable?:(label:string)=>void):Promise<PortableConfig> {
+  commands:CommandStore, selection:BackupSelection, onUnavailable?:(label:string,protection?:ReturnType<typeof checkBackupKey>)=>void):Promise<PortableConfig> {
   const data = await readPortableConfig(store,identities,commands);
   const result = selectPortableConfig(data,selection);
-  async function readSecret<T>(label:string, read:()=>Promise<T>) {
+  async function readSecret<T>(label:string, read:()=>Promise<T>, includedKey?:string) {
     try {return await read();} catch(error) {
       if(!onUnavailable || !(error instanceof Error) || !/^CREDENTIAL_(DECRYPT_FAILED|STORAGE_UNAVAILABLE):/.test(error.message))throw error;
-      onUnavailable(label);
+      if(includedKey){
+        const bytes=Buffer.from(result.privateKeys![includedKey],'base64');
+        try {onUnavailable(label,checkBackupKey(bytes));} finally {bytes.fill(0);}
+      }else onUnavailable(label);
     }
   }
   if (selection.privateKeys) {
@@ -123,16 +126,45 @@ export async function collectPortableConfig(store:Store, identities:IdentityStor
     for (const item of result.connections) {
       // The stored credentials belong to the original target and jump identity bindings.
       const original = profiles.get(item.profile.id)!;
-      const target = await readSecret('连接「'+original.name+'」',()=>credentials.get(original));
+      const target = await readSecret('连接「'+original.name+'」',()=>credentials.get(original),item.privateKey);
       if (target?.remember==='persistent') item.credentials=target;
       if (original.jumpHost) {
         const jump=original.jumpHost;
-        const hop = await readSecret('跳板机「'+jump.name+'」',()=>credentials.get(jumpCredentialProfile(jump)));
+        const hop = await readSecret('跳板机「'+jump.name+'」',()=>credentials.get(jumpCredentialProfile(jump)),item.jumpKey);
         if (hop?.remember==='persistent') item.jumpCredentials=hop;
       }
     }
   }
   return result;
+}
+/** User-entered replacements are verified against the exact embedded key and only saved in the backup. */
+export function completeBackupKeyPassphrases(data:PortableConfig, answers:Record<string,string>={}) {
+  const missing=new Map<string,Set<string>>(), checked=new Map<string,boolean>();
+  for(const item of data.connections){
+    for(const [digest,field,name] of [[item.privateKey,'credentials',item.profile.name],
+      [item.jumpKey,'jumpCredentials',item.profile.jumpHost?.name]] as const){
+      if(!digest || !name || item[field]?.passphrase)continue;
+      if(!checked.has(digest)){
+        const bytes=Buffer.from(data.privateKeys![digest],'base64');
+        try{
+          checked.set(digest,checkBackupKey(bytes)==='encrypted');
+          if(checked.get(digest) && Object.hasOwn(answers,digest) && answers[digest]!==''){
+            const text=answers[digest];
+            if(typeof text!=='string'||text.length>16384||text.includes('\0'))throw new Error('私钥口令无效');
+            try{canonicalPublicKey(bytes,text);}catch{throw new Error('「'+name+'」的私钥口令不正确，请重新输入原口令。');}
+          }
+        }finally{bytes.fill(0);}
+      }
+      if(!checked.get(digest))continue;
+      if(!Object.hasOwn(answers,digest)){
+        const names=missing.get(digest)??new Set<string>();
+        names.add(name);missing.set(digest,names);
+      }else if(answers[digest]){
+        item[field]={remember:'persistent',sudoUsesLogin:true,...item[field],passphrase:answers[digest]};
+      }
+    }
+  }
+  return [...missing].map(([id,names])=>({id,label:[...names].join('、')}));
 }
 function id(value:unknown){if(typeof value!=='string'||!value.trim()||value.length>255||/[\x00-\x1f\x7f]/.test(value))throw new Error('备份标识无效');return value;}
 function label(value:unknown){if(typeof value!=='string'||!value.trim()||value.length>255||/[\x00-\x1f\x7f]/.test(value))throw new Error('备份身份无效');return value.trim();}

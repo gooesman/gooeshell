@@ -8,7 +8,7 @@ if (!url || new URL(url).hostname !== '127.0.0.1' || !report || !process.env.GOO
 app.setPath('userData', process.env.GOOESHELL_CONNECTION_UI_DATA);
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 const result = { checks: {}, errors: [] };
-let window, forgotten = false, jumpForgotten = false, phase = 'startup';
+let window, forgotten = false, jumpForgotten = false, unreadable = false, phase = 'startup';
 const jumpPreset = { id: 'jump-existing', name: '公司网关', host: 'gateway.example.test', port: 2222, username: 'gateway-user', auth: 'password', rememberHost: true, reuseConnection: true };
 const identityPresets = [
   { id: 'shared-target', name: '开发登录身份', username: 'shared-developer', version: 1, remember: 'persistent', hasPassword: true, references: [] },
@@ -60,6 +60,7 @@ async function run() {
   ipcMain.handle('connection-ui:status', async (event, profile) => {
     assert.equal(event.sender, window.webContents);
     await delay(40);
+    if(unreadable)throw new Error('CREDENTIAL_DECRYPT_FAILED: fixture record unavailable');
     const existing = identityPresets.some(identity => identity.id === profile.loginIdentityId) || profile.id === 'one' && profile.host === 'dev.example.test' && profile.username === 'developer' && profile.auth === 'password' && !forgotten;
     const jumpExisting = identityPresets.some(identity => identity.id === profile.jumpHost?.loginIdentityId) || profile.jumpHost?.id === jumpPreset.id && profile.jumpHost?.host === jumpPreset.host && !jumpForgotten;
     const jump = profile.jumpHost ? { remember: jumpExisting ? 'persistent' : 'never', hasPassword: jumpExisting, hasPassphrase: false, hasSudoPassword: false, sudoUsesLogin: false, secureStorageAvailable: true } : undefined;
@@ -284,6 +285,13 @@ async function run() {
   const manual = await evaluate(`window.connectionFixture.actions.filter(action => action.type === 'save').at(-1).value`);
   assert.equal(manual.profile.loginIdentityId, undefined); assert.equal(manual.credentials.password, 'manual-fixture-password');
   result.checks.manualSelectionDoesNotKeepIdentityReference = true;
+
+  phase = 'unreadable stored credentials';
+  unreadable=true;await click('Edit fixture');await ready();
+  assert.equal(await evaluate(`document.querySelector('#credential-remember').selectedOptions[0].textContent`),'原保存状态无法读取');
+  await click('保存');
+  assert(await evaluate(`document.body.innerText.includes('请先选择密码与口令保存方式')`));
+  await click('关闭连接设置');unreadable=false;
 
   phase = 'forget stored secrets';
   await click('Edit fixture'); await ready();

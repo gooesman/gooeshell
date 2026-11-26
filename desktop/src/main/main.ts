@@ -31,7 +31,7 @@ import {checkForUpdate,type UpdatePlatform} from './update-check';
 import {downloadUpdate} from './update-download';
 import {prepareWindowsUpdate,launchWindowsUpdate,type WindowsUpdatePlan} from './update-install';
 import {encryptBackup,decryptBackup,validateBackupPassword} from './portable-backup';
-import {backupCatalog,readPortableConfig,collectPortableConfig,importPortableConfig,validatePortableConfig,type PortableConfig} from './portable-config';
+import {backupCatalog,readPortableConfig,collectPortableConfig,completeBackupKeyPassphrases,importPortableConfig,validatePortableConfig,type PortableConfig} from './portable-config';
 import type {UpdateAsset,UpdateRelease} from '../shared/update';
 import type {AppEvent,CredentialStatus,CredentialUpdate,FileListing,HostProfile,JumpHostProfile} from '../shared/types';
 let win:BrowserWindow;let worker:Worker;let store:Store;let credentials:CredentialStore;let identities:IdentityStore;let localKeys:LocalKeyStore;let commands:CommandStore;let localPty:LocalPtyService;let shuttingDown=false;let workerAvailable=false;
@@ -231,16 +231,28 @@ if(primaryInstance)app.whenReady().then(async()=>{
    case 'exportConfig':{
     if(!value||typeof value.passphrase!=='string'||!value.selection)throw new Error('备份选项无效');
     validateBackupPassword(value.passphrase);
-    const choice=await dialog.showSaveDialog(win,{title:value.selection.privateKeys?'导出包含 SSH 私钥的加密备份':'导出加密配置备份',defaultPath:path.join(app.getPath('documents'),'GooeShell-backup.gsbak'),filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
+    const chooseFile=()=>dialog.showSaveDialog(win,{title:value.selection.privateKeys?'导出包含 SSH 私钥的加密备份':'导出加密配置备份',defaultPath:path.join(app.getPath('documents'),'GooeShell-backup.gsbak'),filters:[{name:'GooeShell 配置备份',extensions:['gsbak']}]});
+    const needsInput=new Set<string>(), warnings=new Set<string>();
+    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.selection,(label,protection)=>{
+      if(protection==='unprotected')warnings.add(label+'的私钥已备份。这把私钥没有口令，换电脑后可以直接用它登录。GooeShell 以前为此项记住的密码未备份。');
+      else if(protection==='encrypted')warnings.add(label+'的私钥已备份。GooeShell 以前为此项记住的密码未备份。');
+      else needsInput.add(label);
+    }));
+    if(value.selection.secrets && value.selection.privateKeys){
+      const missing=completeBackupKeyPassphrases(data,value.keyPassphrases);
+      if(missing.length)return {missing};
+    }
+    const choice=await chooseFile();
     if(choice.canceled||!choice.filePath)return null;
-    const omitted=new Set<string>();
-    const data=await identityMutation(()=>collectPortableConfig(store,identities,credentials,commands,value.selection,label=>omitted.add(label)));
-    if(omitted.size){
-      const answer=await dialog.showMessageBox(win,{type:'warning',title:'部分已保存的凭据无法读取',message:'以下项目的已保存密码或私钥口令无法读取',detail:[...omitted].join('\n')+'\n\n继续将跳过以上凭据。所选私钥文件和其他可读取的凭据仍会导出。若私钥有口令，恢复后需要手动输入。',buttons:['取消','跳过这些凭据并导出'],defaultId:0,cancelId:0,noLink:true});
+    if(needsInput.size){
+      const hasKeyLogin=data.connections.some(({profile})=>profile.auth==='key'||profile.jumpHost?.auth==='key');
+      const keyDetail=data.privateKeys?'你选中的 SSH 私钥文件也会保存。':hasKeyLogin?'这次只保存私钥路径。换电脑时，请另行复制私钥文件。':'';
+      const detail=[...needsInput].join('、')+' 原先记住的密码无法解密，不能写进备份。其他选中的内容仍会保存。'+keyDetail;
+      const answer=await dialog.showMessageBox(win,{type:'warning',title:'有些密码无法备份',message:'要保存一份缺少这些密码的备份吗？',detail,buttons:['返回','不带这些密码，保存备份'],defaultId:0,cancelId:0,noLink:true});
       if(answer.response!==1)return null;
     }
     const encrypted=await encryptBackup(data,value.passphrase);const temporary=path.join(path.dirname(choice.filePath),'.gooeshell-backup-'+randomUUID()+'.tmp');
-    try{await fs.writeFile(temporary,encrypted,{flag:'wx',mode:0o600});try{await fs.link(temporary,choice.filePath);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('目标备份已存在，请选择其他文件名');throw error;}return {file:choice.filePath,omitted:omitted.size};}
+    try{await fs.writeFile(temporary,encrypted,{flag:'wx',mode:0o600});try{await fs.link(temporary,choice.filePath);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw new Error('目标备份已存在，请选择其他文件名');throw error;}return {file:choice.filePath,omitted:[...needsInput],warnings:[...warnings]};}
     finally{await fs.unlink(temporary).catch(()=>{});}
    }
    case 'chooseConfig':{

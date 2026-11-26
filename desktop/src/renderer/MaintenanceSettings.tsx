@@ -15,6 +15,7 @@ export default function MaintenanceSettings({onBusyChange,onImported}:{onBusyCha
  const [catalog,setCatalog]=useState<BackupCatalog|null>(null),[preview,setPreview]=useState<BackupCatalog|null>(null);
  const [exportScope,setExportScope]=useState<BackupSelection>(emptySelection),[importScope,setImportScope]=useState<BackupSelection>(emptySelection);
  const [exportFeedback,setExportFeedback]=useState(false);
+ const [missingKeys,setMissingKeys]=useState<{id:string;label:string}[]>([]),[keyAnswers,setKeyAnswers]=useState<Record<string,string>>({});
  const [revision,setRevision]=useState(0);
  useEffect(()=>{
    let active=true;
@@ -26,6 +27,16 @@ export default function MaintenanceSettings({onBusyChange,onImported}:{onBusyCha
  useEffect(()=>()=>{void api.discardConfigPreview();},[]);
  useEffect(()=>{onBusyChange(busy);return()=>onBusyChange(false);},[busy,onBusyChange]);
  const perform=async(fn:()=>Promise<void>,forExport=false)=>{setExportFeedback(forExport);setError('');setNotice('');setBusy(true);try{await fn();}catch(error){setError(message(error));}finally{setProgress(null);setBusy(false);}};
+ async function exportBackup(skipMissing:boolean){
+   if(exportPassword!==exportConfirm)throw new Error('两次输入的备份密码不一致');
+   const keyPassphrases=skipMissing?Object.fromEntries(missingKeys.map(key=>[key.id,''])):keyAnswers;
+   const result=await api.exportConfig({passphrase:exportPassword,selection:exportScope,keyPassphrases});
+   if(!result)return;
+   if('missing' in result){setMissingKeys(result.missing);return;}
+   setMissingKeys([]);setKeyAnswers({});setExportPassword('');setExportConfirm('');
+   const note='加密备份已导出。'+(result.omitted.length?'未包含以下项目原先记住的密码：'+result.omitted.join('、')+'。':'');
+   setNotice(note+result.warnings.join(' ')+(skipMissing?'这份备份没有包含刚才提示填写的私钥口令，换电脑后需要自己输入。':''));
+ }
  return <>
   <h3>检查更新</h3>
   <p className="settings-description">从官方 GitHub 获取正式版并校验下载文件。Windows 可确认退出后更新；macOS 和 Linux 请使用下载的更新包安装。</p>
@@ -36,10 +47,16 @@ export default function MaintenanceSettings({onBusyChange,onImported}:{onBusyCha
   {downloaded&&<div className="settings-description">{downloaded.canInstall&&<button className="button primary" disabled={busy} onClick={()=>void perform(async()=>{if(await api.installUpdate())setNotice('正在关闭；如取消退出，可再次尝试安装。');})}>安装并重启</button>} <button className="text-button" onClick={()=>void api.showInFolder(downloaded.file)}>在文件夹中显示更新包</button></div>}
   <h3 style={{marginTop:28}}>配置备份</h3>
   <p className="settings-description">选择要导出的内容，并设置备份密码。换电脑时可勾选 SSH 私钥文件。有私钥口令时也请勾选已保存的口令。背景图片仅保存路径。</p>
-  {catalog&&<BackupScope catalog={catalog} value={exportScope} onChange={setExportScope} disabled={busy}/>}
+  {catalog&&<BackupScope catalog={catalog} value={exportScope} onChange={next=>{setExportScope(next);setMissingKeys([]);setKeyAnswers({});}} disabled={busy}/>}
   <div className="form-field" style={{marginTop:12}}><label htmlFor="backup-export-password">设置备份密码（至少 8 个字符）</label><input id="backup-export-password" type="password" autoComplete="new-password" value={exportPassword} disabled={busy} onChange={e=>setExportPassword(e.target.value)}/></div>
   <div className="form-field"><label htmlFor="backup-export-confirm">再次输入备份密码</label><input id="backup-export-confirm" type="password" autoComplete="new-password" value={exportConfirm} disabled={busy} onChange={e=>setExportConfirm(e.target.value)}/></div>
-  <button className="button secondary" disabled={busy||!catalog||!hasSelection(exportScope)} onClick={()=>void perform(async()=>{if(exportPassword!==exportConfirm)throw new Error('两次输入的备份密码不一致');const result=await api.exportConfig({passphrase:exportPassword,selection:exportScope});if(result){setExportPassword('');setExportConfirm('');setNotice(result.omitted?'加密备份已导出，已按确认跳过无法读取的凭据。':'加密备份已导出。');}},true)}>导出配置</button>
+  {missingKeys.map(key=><div className="form-field" key={key.id}><label htmlFor={'recovery-'+key.id}>{key.label} 的原私钥口令</label>
+    <input id={'recovery-'+key.id} className="backup-key-passphrase" type="password" autoComplete="off" disabled={busy}
+      value={keyAnswers[key.id]??''} onChange={e=>setKeyAnswers({...keyAnswers,[key.id]:e.target.value})}/></div>)}
+  {missingKeys.length>0&&<p className="settings-description">要在新电脑上直接登录，请填这把私钥原来的口令。可以把口令一起备份，也可以只带走私钥文件。</p>}
+  <button className="button secondary" disabled={busy||!catalog||!hasSelection(exportScope)||missingKeys.some(key=>!keyAnswers[key.id])}
+    onClick={()=>void perform(()=>exportBackup(false),true)}>{missingKeys.length?'验证口令并导出':'导出配置'}</button>
+  {missingKeys.length>0&&<button type="button" className="text-button" disabled={busy} onClick={()=>void perform(()=>exportBackup(true),true)}>保存备份，私钥口令以后再填</button>}
   {exportFeedback&&notice&&<p className="settings-description" role="status">{notice}</p>}{exportFeedback&&error&&<div className="form-error" role="alert">{error}</div>}
   <h3 style={{marginTop:24}}>导入配置</h3>
   <p className="settings-description">选择备份文件，输入密码后可挑选要恢复的内容。连接、身份和命令将与本机记录合并。</p>

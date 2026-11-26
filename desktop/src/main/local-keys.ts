@@ -7,11 +7,12 @@ import { utils } from 'ssh2';
 
 const run = promisify(execFile);
 const MAX_KEY = 1024 * 1024;
-export function checkBackupKey(bytes:Buffer) {
+export function checkBackupKey(bytes:Buffer):'encrypted'|'unprotected' {
   if (!bytes.length || bytes.length>MAX_KEY) throw new Error('SSH 私钥必须小于或等于 1 MiB');
   const parsed=utils.parseKey(bytes);
-  if (parsed instanceof Error && /^Encrypted .*private .*key detected, but no passphrase given$/i.test(parsed.message)) return;
+  if (parsed instanceof Error && /^Encrypted .*private .*key detected, but no passphrase given$/i.test(parsed.message)) return 'encrypted';
   if (parsed instanceof Error || Array.isArray(parsed) || !parsed.isPrivateKey()) throw new Error('文件不是支持的 SSH 私钥');
+  return 'unprotected';
 }
 
 export async function readBackupKey(file:string):Promise<Buffer> {

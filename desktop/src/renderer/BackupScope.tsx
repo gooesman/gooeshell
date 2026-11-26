@@ -88,6 +88,7 @@ export default function BackupScope({catalog,value,onChange,restore=false,disabl
       disabled={!catalog.connections.some(c=>conn.has(c.id)&&c.hasPrivateKey)} onChange={privateKeys=>onChange({...value,privateKeys})}/>}
     {(!restore || catalog.hasSecrets) && <Check label="包含所选连接和身份长期保存的密码和私钥口令" checked={value.secrets}
       disabled={!conn.size&&!identities.size} onChange={secrets=>onChange({...value,secrets})}/>}
+    {!restore && value.privateKeys && value.secrets && <p className="settings-description">没有口令的私钥可直接备份。如果以前记住的密码无法备份，导出后会告诉你是哪条连接。</p>}
     {catalog.hosts.length>0 && <><Check label={catalog.hosts.length+' 个地址的跳过指纹验证设置'} checked={value.hostPreferences}
       onChange={hostPreferences=>onChange({...value,hostPreferences})}/>
       <details><summary>查看地址</summary><div className="backup-list">{catalog.hosts.map(item=><div key={JSON.stringify(item)}>{item.host}:{item.port}</div>)}</div></details>
