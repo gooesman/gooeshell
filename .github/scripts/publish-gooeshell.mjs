@@ -5,12 +5,13 @@ import { createReadStream, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const repository = process.env.GITHUB_REPOSITORY;
-const version = process.env.RELEASE_VERSION;
+const localDirectory = process.argv[2];
+const repository = process.env.GITHUB_REPOSITORY || 'gooesman/gooeshell';
+const version = localDirectory ? JSON.parse(await fs.readFile('desktop/package.json', 'utf8')).version : process.env.RELEASE_VERSION;
 const runId = process.env.SOURCE_RUN;
 assert.equal(repository, 'gooesman/gooeshell');
 assert.match(version || '', /^\d+\.\d+\.\d+$/);
-assert.match(runId || '', /^\d+$/);
+if (!localDirectory) assert.match(runId || '', /^\d+$/);
 const tag = `v${version}`;
 const notes = path.resolve('.github/release-notes', `${tag}.md`);
 await fs.access(notes);
@@ -41,34 +42,41 @@ function findRelease() {
   throw new Error('Release lookup exceeded its page limit');
 }
 
-const run = api(`actions/runs/${runId}`);
-assert.equal(run.status, 'completed');
-assert.equal(run.conclusion, 'success');
-assert.equal(run.path, '.github/workflows/gooeshell-windows.yml');
-assert.equal(run.event, 'push');
-assert.equal(run.head_branch, 'main');
-assert.equal(run.head_repository.full_name, repository);
-assert.match(run.head_sha, /^[a-f0-9]{40}$/);
-const revision = run.head_sha;
-const source = api(`contents/desktop/package.json?ref=${revision}`);
-assert.equal(JSON.parse(Buffer.from(source.content, 'base64').toString()).version, version);
-
-const jobs = api(`actions/runs/${runId}/jobs?per_page=100`).jobs;
-for (const name of ['win-x64', 'linux-remote']) {
-  assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `Missing successful job: ${name}`);
+const directory = localDirectory ? path.resolve(localDirectory) : await fs.mkdtemp(path.join(os.tmpdir(), 'gooeshell-release-'));
+let run;
+if (!localDirectory) {
+  run = api(`actions/runs/${runId}`);
+  assert.equal(run.status, 'completed');
+  assert.equal(run.conclusion, 'success');
+  assert.equal(run.path, '.github/workflows/gooeshell-windows.yml');
+  assert.ok(['push', 'workflow_dispatch'].includes(run.event));
+  assert.equal(run.head_branch, 'main');
+  assert.equal(run.head_repository.full_name, repository);
+  const jobs = api(`actions/runs/${runId}/jobs?per_page=100`).jobs;
+  for (const name of ['win-x64', 'linux-remote']) {
+    assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `Missing successful job: ${name}`);
+  }
+  const artifacts = api(`actions/runs/${runId}/artifacts?per_page=100`);
+  assert.ok(artifacts.total_count <= 100, 'Unexpected artifact pagination');
+  const matches = artifacts.artifacts.filter(item => item.name === 'gooeshell-win-x64');
+  assert.equal(matches.length, 1, 'Missing or duplicate Windows build');
+  assert.equal(matches[0].expired, false);
+  gh(['run', 'download', runId, '-R', repository, '-n', 'gooeshell-win-x64', '-D', directory]);
 }
-const artifacts = api(`actions/runs/${runId}/artifacts?per_page=100`);
-assert.ok(artifacts.total_count <= 100, 'Unexpected artifact pagination');
-const matches = artifacts.artifacts.filter(item => item.name === 'gooeshell-win-x64');
-assert.equal(matches.length, 1, 'Missing or duplicate Windows build');
-assert.equal(matches[0].expired, false);
-
-const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gooeshell-release-'));
-console.log(`Downloading verified Windows run ${runId}, version ${version}, source ${revision}`);
-gh(['run', 'download', runId, '-R', repository, '-n', 'gooeshell-win-x64', '-D', directory]);
 const manifestFile = 'BUILD-win-x64.json';
 const sumsFile = 'SHA256-win-x64.txt';
 const manifest = JSON.parse(await fs.readFile(path.join(directory, manifestFile), 'utf8'));
+const revision = manifest.revision;
+assert.match(revision, /^[a-f0-9]{40}$/);
+if (run) {
+  assert.equal(revision, run.head_sha);
+  assert.equal(manifest.buildUrl, run.html_url);
+} else {
+  const comparison = api(`compare/${revision}...main`);
+  assert.equal(comparison.merge_base_commit.sha, revision, 'Build source must be on GitHub main');
+}
+const source = api(`contents/desktop/package.json?ref=${revision}`);
+assert.equal(JSON.parse(Buffer.from(source.content, 'base64').toString()).version, version);
 const sums = await fs.readFile(path.join(directory, sumsFile), 'utf8');
 for (const record of [manifest, manifest.packageValidation]) {
   assert.equal(record.version, version);
@@ -76,7 +84,6 @@ for (const record of [manifest, manifest.packageValidation]) {
   assert.equal(record.target, 'win');
   assert.equal(record.arch, 'x64');
 }
-assert.equal(manifest.buildUrl, run.html_url);
 assert.equal(manifest.packageValidation.success, true);
 const zip = `GooeShell-${version}-win-x64.zip`;
 assert.equal(manifest.artifacts.length, 1);
@@ -86,7 +93,9 @@ const [checked] = manifest.packageValidation.packages;
 assert.equal(item.filename, zip);
 assert.equal(item.sourceFilename, zip);
 assert.equal(checked.name, zip);
-assert.equal(checked.verified.launched, true);
+for (const key of ['extraction', 'architecture', 'version', 'resources', 'revision', 'payload', 'launched']) {
+  assert.equal(checked.verified[key], true, `Missing final ZIP check: ${key}`);
+}
 assert.equal(checked.sha256, item.sha256);
 assert.equal(checked.bytes, item.bytes);
 const filename = path.join(directory, zip);

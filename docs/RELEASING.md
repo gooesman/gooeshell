@@ -10,29 +10,24 @@
 4. 保留当前版和可回退的上一版。检查运行进程、快捷方式与 MCP 配置引用的绝对路径，清理已停用的更早版本、试用版、重复 ZIP、临时构建和测试输出。把仍有用的验收报告归入对应版本目录。旧会话仍在使用的目录写入验证记录，下次清理时复查。
 5. 逐项核对清理范围。保留用户配置、私钥、素材、移动原型及用途未确认的诊断文件。清理结束后再次核对当前入口、回退入口和两份正式包。公开发布仍遵循下方流程。
 
-## 构建与验收
+## 从本机发布正式版
 
-1. 更新 `desktop/package.json`、锁文件根版本及 README 版本，并编写 `.github/release-notes/v版本.md`。
-2. 推送到 `main`，运行 **GooeShell Desktop**（`.github/workflows/gooeshell-windows.yml`）。手动构建可用于诊断，但正式发布脚本要求成功的 main 分支 push 构建。
-3. Windows x64 执行回环 SSH/SFTP、生产构建、真实界面回归和成品启动。生成便携 ZIP，解压核对版本、架构、资源、源码提交与包内容，实际启动解压的程序。
-4. Linux 独立任务在 Ubuntu 上验证回环 SSH/SFTP、服务器间直传及断点校验，在隔离容器中测试无 tmux 时的 sudo 受管任务。两项任务都须成功。
-5. 构建产物包含版本、提交号、平台、架构、安装包校验和与验收记录。只上传生成文件不等于验收成功。
+1. 更新版本号、README 和 `.github/release-notes/v版本.md`，将构建使用的源码推送到 `main`。
+2. 在 Windows 上构建并运行相关回归。用 `ci-package-check.mjs` 解压并启动最终 ZIP，核对架构、版本、资源、提交号和应用内容，再用 `ci-artifacts.mjs collect win x64` 生成构建记录和 SHA-256。已在本机交付时验收过的同一份 ZIP 可以直接使用。涉及 Linux 远端功能时，记录隔离 Linux 环境的实际测试结果。
+3. 在仓库根目录执行下面的命令，将末尾的目录换为对应版本。脚本核对 ZIP 与验收记录，检查构建提交已进入 GitHub 的 `main`。上传后逐项核对草稿附件，再标记为 Latest。保留现有的公开 Release。
 
-## 发布 Release
-
-在 Actions 运行 **Publish GooeShell release**（`gooeshell-release.yml`），填写成功的构建 run ID 与稳定版本号，例如：
-
-```sh
-gh workflow run gooeshell-release.yml --repo gooesman/gooeshell \
-  -f source_run=成功的构建ID -f version=1.3.5
+```powershell
+node .github/scripts/publish-gooeshell.mjs desktop/release/1.5.10-final
 ```
 
-PowerShell 可将上面的命令写成一行。发布脚本 `.github/scripts/publish-gooeshell.mjs` 检查构建来源、版本和两个任务的结果，再下载 Windows 构建产物。版本、提交号、最终 ZIP 启动记录、字节数和 SHA-256 均须匹配。随后创建或恢复草稿，上传 ZIP、校验文件与构建记录，核对三项附件后标记为 Latest。原版本的公开 Release 和标签继续保留。
+## 可选的云端构建
+
+需要独立复核时，在 Actions 中手动运行 **GooeShell Desktop**，选择 `main`。Windows 任务打包并启动最终 ZIP。Linux 任务验证回环 SSH/SFTP、服务器间直传和 sudo 受管任务。若要发布该次云端生成的包，再手动运行 **Publish GooeShell release**，填写成功构建的 run ID 和版本号。普通代码推送不会触发云端构建。
 
 ## 验证结果
 
 ```sh
-gh release view v1.3.5 --repo gooesman/gooeshell
+gh release view v1.5.10 --repo gooesman/gooeshell
 gh release list --repo gooesman/gooeshell
 ```
 

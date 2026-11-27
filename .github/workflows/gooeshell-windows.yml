@@ -1,14 +1,6 @@
 name: GooeShell Desktop
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    tags: ['v*']
-    paths:
-      - 'desktop/**'
-      - '.github/workflows/gooeshell-windows.yml'
-      - 'test-support/**'
-      - '.github/release-notes/**'
 permissions:
   contents: read
 concurrency:

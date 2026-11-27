@@ -43,7 +43,7 @@ async function windowsPackages() {
   const destination = path.join(work, 'zip'); await fs.mkdir(destination);
   // Paths travel as environment data, never as PowerShell source text.
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-    '$ErrorActionPreference="Stop"; Expand-Archive -LiteralPath $env:GOOESHELL_PACKAGE_SOURCE -DestinationPath $env:GOOESHELL_PACKAGE_DESTINATION'], {
+    '$ErrorActionPreference="Stop"; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($env:GOOESHELL_PACKAGE_SOURCE, $env:GOOESHELL_PACKAGE_DESTINATION)'], {
     env: { ...process.env, GOOESHELL_PACKAGE_SOURCE: source, GOOESHELL_PACKAGE_DESTINATION: destination },
     windowsHide: true, timeout: 120_000, stdio: 'pipe',
   });
