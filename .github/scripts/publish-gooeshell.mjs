@@ -53,56 +53,55 @@ const revision = run.head_sha;
 const source = api(`contents/desktop/package.json?ref=${revision}`);
 assert.equal(JSON.parse(Buffer.from(source.content, 'base64').toString()).version, version);
 
-const platforms = [['win','x64'], ['mac','arm64'], ['mac','x64'], ['linux','x64']];
+const jobs = api(`actions/runs/${runId}/jobs?per_page=100`).jobs;
+for (const name of ['win-x64', 'linux-remote']) {
+  assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `Missing successful job: ${name}`);
+}
 const artifacts = api(`actions/runs/${runId}/artifacts?per_page=100`);
 assert.ok(artifacts.total_count <= 100, 'Unexpected artifact pagination');
-for (const [target, arch] of platforms) {
-  const matches = artifacts.artifacts.filter(item => item.name === `gooeshell-${target}-${arch}`);
-  assert.equal(matches.length, 1, `Missing or duplicate ${target}-${arch} build`);
-  assert.equal(matches[0].expired, false);
-}
+const matches = artifacts.artifacts.filter(item => item.name === 'gooeshell-win-x64');
+assert.equal(matches.length, 1, 'Missing or duplicate Windows build');
+assert.equal(matches[0].expired, false);
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gooeshell-release-'));
-console.log(`Downloading verified run ${runId}, version ${version}, source ${revision}`);
-gh(['run', 'download', runId, '-R', repository, '-p', 'gooeshell-*', '-D', directory]);
-const files = [];
-const expectedAssets = new Map();
-for (const [target, arch] of platforms) {
-  const folder = path.join(directory, `gooeshell-${target}-${arch}`);
-  const manifestFile = `BUILD-${target}-${arch}.json`;
-  const sumsFile = `SHA256-${target}-${arch}.txt`;
-  const manifest = JSON.parse(await fs.readFile(path.join(folder, manifestFile), 'utf8'));
-  const sums = await fs.readFile(path.join(folder, sumsFile), 'utf8');
-  assert.equal(manifest.version, version);
-  assert.equal(manifest.revision, revision);
-  assert.equal(manifest.target, target);
-  assert.equal(manifest.arch, arch);
-  assert.equal(manifest.buildUrl, run.html_url);
-  assert.equal(manifest.packageValidation?.success, true, 'Publishing requires final-package launch verification');
-  assert.equal(manifest.packageValidation.revision, revision);
-  assert.equal(manifest.packageValidation.version, version);
-  assert.equal(manifest.packageValidation.target, target); assert.equal(manifest.packageValidation.arch, arch);
-  const extensions = target === 'win' ? ['zip'] : target === 'mac' ? ['zip', 'dmg'] : ['AppImage', 'deb'];
-  assert.deepEqual(manifest.artifacts.map(item => item.filename).sort(), extensions.map(ext => `GooeShell-${version}-${target}-${arch}.${ext}`).sort());
-  assert.equal(manifest.packageValidation.packages.length, extensions.length);
-  for (const item of manifest.artifacts) {
-    const verified = manifest.packageValidation.packages.filter(entry => entry.name === item.sourceFilename);
-    assert.equal(verified.length, 1); assert.equal(verified[0].sha256, item.sha256); assert.equal(verified[0].bytes, item.bytes);
-    const filename = path.join(folder, item.filename);
-    assert.equal((await fs.stat(filename)).size, item.bytes);
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(filename)) hash.update(chunk);
-    assert.equal(hash.digest('hex'), item.sha256, `Checksum mismatch: ${item.filename}`);
-    assert.ok(sums.split('\n').includes(`${item.sha256}  ${item.filename}`));
-    files.push(filename);
-    expectedAssets.set(item.filename, { size: item.bytes, digest: `sha256:${item.sha256}` });
-  }
-  for (const name of [manifestFile, sumsFile]) {
-    const filename = path.join(folder, name);
-    files.push(filename);
-    const bytes = await fs.readFile(filename);
-    expectedAssets.set(name, { size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` });
-  }
+console.log(`Downloading verified Windows run ${runId}, version ${version}, source ${revision}`);
+gh(['run', 'download', runId, '-R', repository, '-n', 'gooeshell-win-x64', '-D', directory]);
+const manifestFile = 'BUILD-win-x64.json';
+const sumsFile = 'SHA256-win-x64.txt';
+const manifest = JSON.parse(await fs.readFile(path.join(directory, manifestFile), 'utf8'));
+const sums = await fs.readFile(path.join(directory, sumsFile), 'utf8');
+for (const record of [manifest, manifest.packageValidation]) {
+  assert.equal(record.version, version);
+  assert.equal(record.revision, revision);
+  assert.equal(record.target, 'win');
+  assert.equal(record.arch, 'x64');
+}
+assert.equal(manifest.buildUrl, run.html_url);
+assert.equal(manifest.packageValidation.success, true);
+const zip = `GooeShell-${version}-win-x64.zip`;
+assert.equal(manifest.artifacts.length, 1);
+assert.equal(manifest.packageValidation.packages.length, 1);
+const [item] = manifest.artifacts;
+const [checked] = manifest.packageValidation.packages;
+assert.equal(item.filename, zip);
+assert.equal(item.sourceFilename, zip);
+assert.equal(checked.name, zip);
+assert.equal(checked.verified.launched, true);
+assert.equal(checked.sha256, item.sha256);
+assert.equal(checked.bytes, item.bytes);
+const filename = path.join(directory, zip);
+assert.equal((await fs.stat(filename)).size, item.bytes);
+const hash = createHash('sha256');
+for await (const chunk of createReadStream(filename)) hash.update(chunk);
+assert.equal(hash.digest('hex'), item.sha256, `Checksum mismatch: ${zip}`);
+assert.equal(sums.trimEnd(), `${item.sha256}  ${zip}`);
+const files = [filename];
+const expectedAssets = new Map([[zip, { size: item.bytes, digest: `sha256:${item.sha256}` }]]);
+for (const name of [manifestFile, sumsFile]) {
+  const file = path.join(directory, name);
+  files.push(file);
+  const bytes = await fs.readFile(file);
+  expectedAssets.set(name, { size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` });
 }
 
 const ref = api(`git/ref/tags/${tag}`, true);

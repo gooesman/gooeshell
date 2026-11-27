@@ -11,9 +11,9 @@
   <a href="https://github.com/gooesman/gooeshell/issues">反馈问题</a>
 </p>
 
-GooeShell 是 Windows 优先的桌面终端工具，也提供 macOS 和 Linux 构建。它把 SSH、本地终端、远程文件管理和文本编辑整合到可折叠的界面里：平时专注终端，需要时再展开文件区或命令库。
+GooeShell 是一款桌面终端工具，当前正式版面向 Windows x64。它把 SSH、本地终端、远程文件管理和文本编辑整合到可折叠的界面里：平时专注终端，需要时再展开文件区或命令库。
 
-当前源码版本：**1.5.10**。可下载版本和各平台安装包以 [Releases](https://github.com/gooesman/gooeshell/releases) 为准。
+当前源码版本：**1.5.10**。从 [Releases](https://github.com/gooesman/gooeshell/releases) 下载正式版。
 
 ![GooeShell 终端与文件工作空间](docs/images/workspace.png)
 
@@ -35,16 +35,9 @@ GooeShell 是 Windows 优先的桌面终端工具，也提供 macOS 和 Linux �
 
 ## 下载与打开
 
-无需自行安装 Node.js。下载后按平台打开：
+Windows x64 用户下载 `GooeShell-版本-win-x64.zip`，完整解压后打开 `GooeShell.exe`。程序自带运行环境，发布页附 SHA-256 校验文件和构建信息。
 
-| 平台 | 安装包 | 使用方式 |
-| --- | --- | --- |
-| Windows x64 | `GooeShell-版本-win-x64.zip` | 完整解压，打开 `GooeShell.exe`。 |
-| macOS Apple Silicon | `mac-arm64.dmg` / `.zip` | 将应用放入“应用程序”。 |
-| macOS Intel | `mac-x64.dmg` / `.zip` | 将应用放入“应用程序”。 |
-| Linux x64 | `.AppImage` / `.deb` | AppImage 添加执行权限后运行；Debian / Ubuntu 也可安装 DEB。 |
-
-macOS 最低版本为 13，当前构建尚未完成 Apple Developer ID 签名与公证。Linux 的构建与自动验收使用 Ubuntu 24.04；其他发行版仍需实机验证。每次正式发布附带 SHA-256 校验文件和构建信息。
+macOS 与 Linux 用户可下载历史版本。1.5.7 提供 macOS arm64/x64 的 ZIP 与 DMG，以及 Linux x64 的 AppImage 与 DEB。[历史跨平台版本 1.5.7](https://github.com/gooesman/gooeshell/releases/tag/v1.5.7)
 
 ## 开始使用
 
@@ -123,7 +116,7 @@ npm run pack     # 在当前系统打包
 | [MCP 接入](docs/MCP.md) / [CLI](docs/CLI.md) | 工具、连接复用、sudo、后台任务与日志。 |
 | [服务器之间传输](docs/SERVER-TRANSFER.md) | 路线、临时授权、断点、校验和限制。 |
 | [开发基线与后续方向](docs/DEVELOPMENT.md) | 合并后的功能基线、架构与开发约定。 |
-| [正式发布](docs/RELEASING.md) | 四平台构建、安装包验收和 Release 发布步骤。 |
+| [正式发布](docs/RELEASING.md) | Windows ZIP 验收、Linux 远端测试和 Release 发布步骤。 |
 | [测试记录](VALIDATION.md) / [性能验证](PERFORMANCE.md) | 已完成的验证与适用边界。 |
 | [参与开发](CONTRIBUTING.md) / [隐私说明](PRIVACY.md) | 开发入口、问题反馈与本地数据处理。 |
 
